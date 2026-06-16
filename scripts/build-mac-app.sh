@@ -8,6 +8,7 @@ contents_dir="${app_path}/Contents"
 macos_dir="${contents_dir}/MacOS"
 resources_dir="${contents_dir}/Resources"
 executable_name="Moonlight Companion"
+include_local_config="${MOONLIGHT_COMPANION_INCLUDE_LOCAL_CONFIG:-yes}"
 
 mkdir -p "$dist_dir"
 rm -rf "$app_path"
@@ -35,7 +36,7 @@ cp \
   "${resources_dir}/windows/"
 
 cp "${repo_dir}/config/moonlight-companion.conf.example" "${resources_dir}/config/"
-if [[ -f "${repo_dir}/config/moonlight-companion.conf" ]]; then
+if [[ "$include_local_config" == "yes" && -f "${repo_dir}/config/moonlight-companion.conf" ]]; then
   cp "${repo_dir}/config/moonlight-companion.conf" "${resources_dir}/config/"
 fi
 
