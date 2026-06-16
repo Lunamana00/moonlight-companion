@@ -174,6 +174,35 @@ open "dist/Moonlight Companion.app"
 
 The app bundle includes the Mac scripts, Windows agent scripts, and config files needed by the launcher. If `config/moonlight-companion.conf` exists when the app is built, it is copied into the local `dist/` app bundle.
 
+### Optional: Force Moonlight To Start On A Target Display
+
+If Moonlight keeps opening fullscreen on an external monitor instead of the MacBook Retina display, Moonlight Companion can temporarily make the target display the macOS main display before launch and then restore the original layout.
+
+Install `displayplacer`:
+
+```bash
+brew install displayplacer
+```
+
+Print the current layout:
+
+```bash
+displayplacer list
+```
+
+Copy the final `displayplacer ...` command as your restore reference, then create a launch layout where the target display has `origin:(0,0)` and the other displays keep the same relative positions around it.
+
+Enable it in `config/moonlight-companion.conf`:
+
+```bash
+MOONLIGHT_TEMP_MAIN_DISPLAY="yes"
+MOONLIGHT_DISPLAYPLACER_LAUNCH_COMMAND='displayplacer "id:TARGET_DISPLAY_ID res:1728x1117 hz:120 color_depth:8 enabled:true scaling:on origin:(0,0) degree:0" "id:OTHER_DISPLAY_ID res:2560x1440 hz:60 color_depth:8 enabled:true scaling:off origin:(-2560,-323) degree:0"'
+MOONLIGHT_DISPLAY_RESTORE_AFTER_LAUNCH="yes"
+MOONLIGHT_DISPLAY_RESTORE_DELAY_SECONDS="7"
+```
+
+The launcher captures the real current layout at runtime, applies the launch layout, starts Moonlight, waits for `MOONLIGHT_DISPLAY_RESTORE_DELAY_SECONDS`, and restores the captured layout. Keep this setting in local config only because display IDs and coordinates are machine-specific.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for runtime and clipboard sync diagrams.
