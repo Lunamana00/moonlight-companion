@@ -1,0 +1,332 @@
+import AppKit
+import CryptoKit
+import Foundation
+
+struct Manifest: Codable {
+    struct Item: Codable {
+        let name: String
+        let path: String
+        let isDirectory: Bool
+        let bytes: UInt64
+    }
+
+    let version: Int
+    let origin: String
+    let kind: String
+    let id: String
+    let bytes: UInt64
+    let textFile: String?
+    let imageFile: String?
+    let files: [Item]?
+}
+
+enum ClipError: Error, CustomStringConvertible {
+    case usage
+    case unsupported
+    case missingManifest
+    case invalidManifest
+    case importFailed(String)
+
+    var description: String {
+        switch self {
+        case .usage:
+            return "usage: moonclipctl export|import <payload-dir>"
+        case .unsupported:
+            return "unsupported-or-empty-clipboard"
+        case .missingManifest:
+            return "missing-manifest"
+        case .invalidManifest:
+            return "invalid-manifest"
+        case .importFailed(let message):
+            return "import-failed: \(message)"
+        }
+    }
+}
+
+let fm = FileManager.default
+let filenamesPasteboardType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+
+func sha256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+func sha256Hex(_ string: String) -> String {
+    sha256Hex(Data(string.utf8))
+}
+
+func ensureCleanDirectory(_ url: URL) throws {
+    if fm.fileExists(atPath: url.path) {
+        try fm.removeItem(at: url)
+    }
+    try fm.createDirectory(at: url, withIntermediateDirectories: true)
+}
+
+func writeJSON(_ manifest: Manifest, to url: URL) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(manifest)
+    try data.write(to: url)
+}
+
+func readManifest(from dir: URL) throws -> Manifest {
+    let url = dir.appendingPathComponent("manifest.json")
+    guard fm.fileExists(atPath: url.path) else {
+        throw ClipError.missingManifest
+    }
+    let data = try Data(contentsOf: url)
+    return try JSONDecoder().decode(Manifest.self, from: data)
+}
+
+func fileBytes(_ url: URL) -> UInt64 {
+    guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+          let size = attrs[.size] as? NSNumber else {
+        return 0
+    }
+    return size.uint64Value
+}
+
+func directoryBytes(_ url: URL) -> UInt64 {
+    var total: UInt64 = 0
+    if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]) {
+        for case let item as URL in enumerator {
+            if let values = try? item.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+               values.isRegularFile == true {
+                total += UInt64(values.fileSize ?? 0)
+            }
+        }
+    }
+    return total
+}
+
+func uniqueDestination(for source: URL, in directory: URL, used: inout Set<String>) -> URL {
+    let baseName = source.lastPathComponent.isEmpty ? "file" : source.lastPathComponent
+    let ext = (baseName as NSString).pathExtension
+    let stem = (baseName as NSString).deletingPathExtension
+    var candidate = baseName
+    var index = 2
+    while used.contains(candidate.lowercased()) || fm.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+        if ext.isEmpty {
+            candidate = "\(stem)-\(index)"
+        } else {
+            candidate = "\(stem)-\(index).\(ext)"
+        }
+        index += 1
+    }
+    used.insert(candidate.lowercased())
+    return directory.appendingPathComponent(candidate)
+}
+
+func hashFile(_ url: URL) throws -> String {
+    let data = try Data(contentsOf: url)
+    return sha256Hex(data)
+}
+
+func hashDirectory(_ url: URL) throws -> String {
+    var lines: [String] = []
+    guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey]) else {
+        return sha256Hex("")
+    }
+
+    let basePath = url.path
+    for case let item as URL in enumerator {
+        let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+        let rel = String(item.path.dropFirst(basePath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if values.isDirectory == true {
+            lines.append("d:\(rel)")
+        } else if values.isRegularFile == true {
+            lines.append("f:\(rel):\(try hashFile(item))")
+        }
+    }
+    return sha256Hex(lines.sorted().joined(separator: "\n"))
+}
+
+func exportFiles(_ urls: [URL], to dir: URL) throws -> Manifest {
+    let filesDir = dir.appendingPathComponent("files")
+    try fm.createDirectory(at: filesDir, withIntermediateDirectories: true)
+
+    var used = Set<String>()
+    var items: [Manifest.Item] = []
+    var hashLines: [String] = []
+    var total: UInt64 = 0
+
+    for source in urls {
+        guard source.isFileURL else { continue }
+        let dest = uniqueDestination(for: source, in: filesDir, used: &used)
+        try fm.copyItem(at: source, to: dest)
+
+        let values = try dest.resourceValues(forKeys: [.isDirectoryKey])
+        let isDirectory = values.isDirectory == true
+        let bytes = isDirectory ? directoryBytes(dest) : fileBytes(dest)
+        let itemHash = isDirectory ? try hashDirectory(dest) : try hashFile(dest)
+        let relPath = "files/\(dest.lastPathComponent)"
+
+        total += bytes
+        items.append(Manifest.Item(name: dest.lastPathComponent, path: relPath, isDirectory: isDirectory, bytes: bytes))
+        hashLines.append("\(isDirectory ? "d" : "f"):\(dest.lastPathComponent):\(itemHash)")
+    }
+
+    guard !items.isEmpty else {
+        throw ClipError.unsupported
+    }
+
+    let contentHash = sha256Hex(hashLines.sorted().joined(separator: "\n"))
+    return Manifest(version: 2, origin: "mac", kind: "files", id: "files:\(contentHash)", bytes: total, textFile: nil, imageFile: nil, files: items)
+}
+
+func exportImage(_ image: NSImage, to dir: URL) throws -> Manifest {
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:]) else {
+        throw ClipError.unsupported
+    }
+
+    let imageFile = "image.png"
+    try png.write(to: dir.appendingPathComponent(imageFile))
+    let hash = sha256Hex(png)
+    return Manifest(version: 2, origin: "mac", kind: "image", id: "image:\(hash)", bytes: UInt64(png.count), textFile: nil, imageFile: imageFile, files: nil)
+}
+
+func exportText(_ text: String, to dir: URL) throws -> Manifest {
+    guard !text.isEmpty else {
+        throw ClipError.unsupported
+    }
+    let textFile = "text.txt"
+    let data = Data(text.utf8)
+    try data.write(to: dir.appendingPathComponent(textFile))
+    let hash = sha256Hex(data)
+    return Manifest(version: 2, origin: "mac", kind: "text", id: "text:\(hash)", bytes: UInt64(data.count), textFile: textFile, imageFile: nil, files: nil)
+}
+
+func exportClipboard(to dir: URL) throws -> Manifest {
+    try ensureCleanDirectory(dir)
+    let pasteboard = NSPasteboard.general
+
+    var fileURLs: [URL] = []
+
+    if let fileObjects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+        fileURLs.append(contentsOf: fileObjects.compactMap { object -> URL? in
+            if let url = object as? URL, url.isFileURL {
+                return url
+            }
+            if let nsURL = object as? NSURL {
+                let url = nsURL as URL
+                return url.isFileURL ? url : nil
+            }
+            return nil
+        })
+    }
+
+    if let items = pasteboard.pasteboardItems {
+        fileURLs.append(contentsOf: items.compactMap { item -> URL? in
+            guard let value = item.string(forType: .fileURL),
+                  let url = URL(string: value),
+                  url.isFileURL else {
+                return nil
+            }
+            return url
+        })
+    }
+
+    if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
+        fileURLs.append(contentsOf: paths.map { URL(fileURLWithPath: $0) })
+    }
+
+    var seenPaths = Set<String>()
+    fileURLs = fileURLs.filter { url in
+        let path = url.standardizedFileURL.path
+        guard !seenPaths.contains(path) else {
+            return false
+        }
+        seenPaths.insert(path)
+        return true
+    }
+
+    if !fileURLs.isEmpty {
+        return try exportFiles(fileURLs, to: dir)
+    }
+
+    if let image = NSImage(pasteboard: pasteboard) {
+        return try exportImage(image, to: dir)
+    }
+
+    if let text = pasteboard.string(forType: .string), !text.isEmpty {
+        return try exportText(text, to: dir)
+    }
+
+    throw ClipError.unsupported
+}
+
+func importClipboard(from dir: URL) throws -> Manifest {
+    let manifest = try readManifest(from: dir)
+    let pasteboard = NSPasteboard.general
+
+    switch manifest.kind {
+    case "text":
+        guard let textFile = manifest.textFile else { throw ClipError.invalidManifest }
+        let text = try String(contentsOf: dir.appendingPathComponent(textFile), encoding: .utf8)
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    case "image":
+        guard let imageFile = manifest.imageFile,
+              let image = NSImage(contentsOf: dir.appendingPathComponent(imageFile)) else {
+            throw ClipError.invalidManifest
+        }
+        pasteboard.clearContents()
+        if !pasteboard.writeObjects([image]) {
+            throw ClipError.importFailed("image")
+        }
+    case "files":
+        guard let files = manifest.files else { throw ClipError.invalidManifest }
+        let urls = files.map { dir.appendingPathComponent($0.path).standardizedFileURL }
+        pasteboard.clearContents()
+        let items = urls.map { url -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            item.setString(url.absoluteString, forType: .fileURL)
+            return item
+        }
+        if !pasteboard.writeObjects(items) {
+            throw ClipError.importFailed("files")
+        }
+        pasteboard.setPropertyList(urls.map(\.path), forType: filenamesPasteboardType)
+    default:
+        throw ClipError.invalidManifest
+    }
+
+    return manifest
+}
+
+func printManifest(_ manifest: Manifest) {
+    print("id=\(manifest.id)")
+    print("kind=\(manifest.kind)")
+    print("bytes=\(manifest.bytes)")
+}
+
+do {
+    guard CommandLine.arguments.count == 3 else {
+        throw ClipError.usage
+    }
+
+    let command = CommandLine.arguments[1]
+    let dir = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+
+    switch command {
+    case "export":
+        let manifest = try exportClipboard(to: dir)
+        try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
+        printManifest(manifest)
+    case "import":
+        let manifest = try importClipboard(from: dir)
+        printManifest(manifest)
+    case "info":
+        let manifest = try readManifest(from: dir)
+        printManifest(manifest)
+    default:
+        throw ClipError.usage
+    }
+} catch let error as ClipError {
+    fputs("\(error.description)\n", stderr)
+    exit(error.description == ClipError.unsupported.description ? 2 : 1)
+} catch {
+    fputs("\(error.localizedDescription)\n", stderr)
+    exit(1)
+}

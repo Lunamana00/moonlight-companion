@@ -1,0 +1,18 @@
+# Moonlight Companion settings
+
+WINDOWS_SSH="moonlight-windows"
+MOONLIGHT_HOST="100.x.y.z"
+MOONLIGHT_APP="/Applications/Moonlight.app"
+MOONLIGHT_STREAM_APP="Desktop"
+
+MOONLIGHT_RESOLUTION="3456x2234"
+MOONLIGHT_FPS="60"
+MOONLIGHT_BITRATE="60000"
+MOONLIGHT_DISPLAY_MODE="windowed"
+MOONLIGHT_VIDEO_CODEC="HEVC"
+MOONLIGHT_CAPTURE_SYSTEM_KEYS="always"
+MOONLIGHT_ABSOLUTE_MOUSE="yes"
+MOONLIGHT_QUIT_EXISTING="yes"
+
+# Clipboard payload limit. Applies to text/image/file clipboard payloads.
+MOONLIGHT_CLIPBOARD_MAX_BYTES="52428800"

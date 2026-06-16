@@ -1,0 +1,6 @@
+dist/
+build/
+.DS_Store
+config/moonlight-companion.conf
+*.log
+*.tmp

@@ -1,0 +1,121 @@
+# Architecture
+
+Moonlight Companion does not modify Moonlight or Sunshine. It runs beside them.
+
+## Runtime Architecture
+
+```mermaid
+flowchart LR
+  subgraph Mac["Mac client"]
+    Wrapper["Moonlight Companion.app"]
+    Config["Config file"]
+    Moonlight["Moonlight.app"]
+    Launchd["macOS launchd sync agent"]
+    Helper["moonclipctl Swift helper"]
+    MacClipboard["macOS clipboard"]
+  end
+
+  subgraph Network["Tailscale private network"]
+    SSH["SSH/SCP"]
+    Stream["Moonlight video/input stream"]
+  end
+
+  subgraph Windows["Windows Sunshine host"]
+    Sunshine["Sunshine"]
+    PayloadDir["%USERPROFILE%/.moonlight-clipboard-sync"]
+    WinAgent["Windows GUI clipboard agent"]
+    WinClipboard["Windows clipboard"]
+    Startup["User Startup folder"]
+  end
+
+  Wrapper --> Config
+  Wrapper -->|"deploy agent files"| SSH
+  Wrapper -->|"start/restart"| Launchd
+  Wrapper -->|"launch stream"| Moonlight
+  Moonlight <-->|"stream"| Stream
+  Stream <-->|"Sunshine protocol"| Sunshine
+
+  Launchd <-->|"export/import"| Helper
+  Helper <-->|"read/write"| MacClipboard
+  Launchd <-->|"ZIP payloads"| SSH
+  SSH <-->|"copy payload archives"| PayloadDir
+
+  WinAgent <-->|"watch/import/export"| PayloadDir
+  WinAgent <-->|"read/write"| WinClipboard
+  Wrapper -->|"install Startup entry"| Startup
+  Startup -->|"starts in GUI session"| WinAgent
+```
+
+## Launch Sequence
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Wrapper as Moonlight Companion.app
+  participant SSH as SSH over Tailscale
+  participant WinHost as Windows host
+  participant Launchd as macOS launchd agent
+  participant Moonlight as Moonlight.app
+  participant Sunshine
+
+  User->>Wrapper: Open app
+  Wrapper->>SSH: Verify passwordless SSH
+  Wrapper->>WinHost: Deploy clipboard agent files
+  Wrapper->>WinHost: Install Startup entry for GUI session
+  Wrapper->>Launchd: Start clipboard sync agent
+  Wrapper->>Moonlight: Launch configured stream
+  Moonlight->>Sunshine: Connect over Tailscale
+  Wrapper-->>User: Close when ready
+```
+
+## Clipboard Sync Flow
+
+```mermaid
+sequenceDiagram
+  participant MacClip as macOS clipboard
+  participant Helper as moonclipctl
+  participant Sync as macOS sync loop
+  participant RemoteDir as Windows payload folder
+  participant Agent as Windows GUI agent
+  participant WinClip as Windows clipboard
+
+  MacClip->>Helper: Export current clipboard
+  Helper->>Sync: manifest.json plus payload files
+  Sync->>RemoteDir: Upload mac-to-windows.zip.tmp
+  Sync->>RemoteDir: Atomic rename to mac-to-windows.zip
+  Agent->>RemoteDir: Detect new archive
+  Agent->>WinClip: Import text, image, or files
+
+  WinClip->>Agent: Export changed clipboard
+  Agent->>RemoteDir: Write windows-to-mac.zip
+  Sync->>RemoteDir: Download archive
+  Sync->>Helper: Import payload
+  Helper->>MacClip: Write text, image, or files
+```
+
+## Clipboard Payloads
+
+Clipboard contents are exported into a payload directory:
+
+```text
+manifest.json
+text.txt
+image.png
+files/
+```
+
+Only one primary clipboard kind is synced at a time:
+
+- `files`
+- `image`
+- `text`
+
+That priority is deliberate. File clipboard entries often also expose text paths or thumbnails, and those should not override the actual file-drop intent.
+
+## Loop Prevention
+
+Each payload has a deterministic `id` based on kind and content hash. Agents remember the last imported ID so the same payload is not immediately mirrored back.
+
+## Windows Session Caveat
+
+Windows clipboard APIs are tied to the interactive GUI session. Reading or writing the clipboard from an SSH service session is not reliable for GUI clipboard data, so the Windows agent must run in the logged-in desktop session.

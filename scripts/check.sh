@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+
+mkdir -p "${repo_dir}/build"
+
+bash -n \
+  "${repo_dir}/scripts/build-mac-app.sh" \
+  "${repo_dir}/mac/moonlight-companion-launch.sh" \
+  "${repo_dir}/mac/start-moonlight-clipboard-sync.sh" \
+  "${repo_dir}/mac/status-moonlight-clipboard-sync.sh" \
+  "${repo_dir}/mac/stop-moonlight-clipboard-sync.sh" \
+  "${repo_dir}/mac/sync-moonlight-clipboard.sh"
+
+swiftc "${repo_dir}/mac/moonclipctl.swift" -o "${repo_dir}/build/moonclipctl-check"
+swiftc "${repo_dir}/mac/MoonlightCompanionApp.swift" -o "${repo_dir}/build/MoonlightCompanionApp-check" -framework AppKit
+
+echo "ok"
