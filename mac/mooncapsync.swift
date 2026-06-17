@@ -128,6 +128,15 @@ func requestInputPermissionsIfNeeded() {
     }
 }
 
+if CommandLine.arguments.contains("--request-permissions") {
+    requestInputPermissionsIfNeeded()
+    let deadline = Date().addingTimeInterval(60)
+    while Date() < deadline {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
+    }
+    exit(0)
+}
+
 requestInputPermissionsIfNeeded()
 
 guard let eventTap = CGEvent.tapCreate(

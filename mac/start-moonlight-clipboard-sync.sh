@@ -9,7 +9,8 @@ source_caps_helper="${script_dir}/mooncapsync.swift"
 runtime_dir="${HOME}/Library/Application Support/MoonlightClipboardSync"
 sync_script="${runtime_dir}/sync-moonlight-clipboard.sh"
 helper="${runtime_dir}/moonclipctl"
-caps_app="${runtime_dir}/Moonlight Caps Lock Hangul.app"
+caps_app="${HOME}/Applications/Moonlight Caps Lock Hangul.app"
+legacy_caps_app="${runtime_dir}/Moonlight Caps Lock Hangul.app"
 caps_app_contents="${caps_app}/Contents"
 caps_app_macos="${caps_app_contents}/MacOS"
 caps_helper="${caps_app_macos}/mooncapsync"
@@ -76,6 +77,10 @@ chmod 700 "$helper"
 
 capslock_hangul="$(normalize_yes_no "${MOONLIGHT_CAPSLOCK_HANGUL:-yes}")"
 if [[ "$capslock_hangul" == "yes" ]]; then
+  if [[ "$legacy_caps_app" != "$caps_app" && -d "$legacy_caps_app" ]]; then
+    rm -rf "$legacy_caps_app"
+  fi
+
   mkdir -p "$caps_app_macos"
   if [[ ! -x "$caps_helper" || "$source_caps_helper" -nt "$caps_helper" ]]; then
     if ! command -v swiftc >/dev/null 2>&1; then
