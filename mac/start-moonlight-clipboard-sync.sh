@@ -9,7 +9,10 @@ source_caps_helper="${script_dir}/mooncapsync.swift"
 runtime_dir="${HOME}/Library/Application Support/MoonlightClipboardSync"
 sync_script="${runtime_dir}/sync-moonlight-clipboard.sh"
 helper="${runtime_dir}/moonclipctl"
-caps_helper="${runtime_dir}/mooncapsync"
+caps_app="${runtime_dir}/Moonlight Caps Lock Hangul.app"
+caps_app_contents="${caps_app}/Contents"
+caps_app_macos="${caps_app_contents}/MacOS"
+caps_helper="${caps_app_macos}/mooncapsync"
 label="com.lunamana.moonlight-clipboard-sync"
 caps_label="com.lunamana.moonlight-capslock-hangul"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
@@ -73,6 +76,7 @@ chmod 700 "$helper"
 
 capslock_hangul="$(normalize_yes_no "${MOONLIGHT_CAPSLOCK_HANGUL:-yes}")"
 if [[ "$capslock_hangul" == "yes" ]]; then
+  mkdir -p "$caps_app_macos"
   if [[ ! -x "$caps_helper" || "$source_caps_helper" -nt "$caps_helper" ]]; then
     if ! command -v swiftc >/dev/null 2>&1; then
       echo "swiftc is required to build the macOS Caps Lock helper." >&2
@@ -81,6 +85,36 @@ if [[ "$capslock_hangul" == "yes" ]]; then
     swiftc "$source_caps_helper" -o "$caps_helper" -framework AppKit -framework ApplicationServices
   fi
   chmod 700 "$caps_helper"
+
+  cat > "${caps_app_contents}/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>mooncapsync</string>
+  <key>CFBundleIdentifier</key>
+  <string>${caps_label}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Moonlight Caps Lock Hangul</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+EOF
 fi
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$remote" "powershell.exe -NoProfile -Command \"Write-Output ok\"" >/dev/null 2>&1; then
