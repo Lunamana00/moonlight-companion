@@ -2,6 +2,20 @@
 
 All notable changes to Moonlight Companion are tracked here and mirrored to GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- Added Moonlight-focused Command-to-Control shortcut remapping for Mac-style shortcuts.
+- Added `MOONLIGHT_SHORTCUT_REMAP` to enable or disable local shortcut remapping.
+- Added a settings GUI for editing launch, keyboard, and clipboard options before starting Moonlight.
+
+### Changed
+
+- The macOS Caps Lock helper now also acts as the Moonlight keyboard helper.
+- Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
+- Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
+
 ## v0.2.0 - 2026-06-17
 
 ### Added

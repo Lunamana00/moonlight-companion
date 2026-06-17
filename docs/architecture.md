@@ -12,7 +12,7 @@ flowchart LR
     Moonlight["Moonlight.app"]
     Launchd["macOS launchd sync agent"]
     ClipTcp["macOS clipboard TCP receiver"]
-    CapsAgent["macOS Caps Lock agent"]
+    KeyboardAgent["macOS keyboard agent"]
     Helper["moonclipctl Swift helper"]
     MacClipboard["macOS clipboard"]
   end
@@ -46,7 +46,8 @@ flowchart LR
   ClipTunnel <-->|"loopback TCP"| WinAgent
   Launchd <-->|"fallback ZIP payloads"| SSH
   SSH <-->|"copy payload archives"| PayloadDir
-  CapsAgent -->|"Caps Lock toggle request"| CapsTunnel
+  KeyboardAgent -->|"Command shortcut remap"| Moonlight
+  KeyboardAgent -->|"Caps Lock toggle request"| CapsTunnel
   CapsTunnel -->|"loopback TCP"| WinAgent
 
   WinAgent <-->|"watch/import/export"| PayloadDir
@@ -72,7 +73,7 @@ sequenceDiagram
   Wrapper->>SSH: Verify passwordless SSH
   Wrapper->>WinHost: Deploy clipboard agent files
   Wrapper->>WinHost: Install Startup entry for GUI session
-  Wrapper->>Launchd: Start clipboard sync and Caps Lock agents
+  Wrapper->>Launchd: Start clipboard sync and keyboard agents
   Wrapper->>Moonlight: Launch configured stream
   Moonlight->>Sunshine: Connect over Tailscale
   Wrapper-->>User: Close when ready
@@ -126,6 +127,22 @@ sequenceDiagram
   Agent->>IME: Toggle active conversion mode
 ```
 
+## Shortcut Remap Flow
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Moonlight as Moonlight.app
+  participant Keyboard as macOS keyboard agent
+  participant Windows as Windows app
+
+  User->>Moonlight: Press Command+C/V/X/Z
+  Keyboard->>Keyboard: Detect Moonlight as frontmost app
+  Keyboard->>Moonlight: Suppress Command event
+  Keyboard->>Moonlight: Post Control+C/V/X/Z
+  Moonlight->>Windows: Forward Windows-style shortcut
+```
+
 ## Clipboard Payloads
 
 Clipboard contents are exported into a payload directory:
@@ -153,4 +170,4 @@ Each payload has a deterministic `id` based on kind and content hash. Agents rem
 
 Windows clipboard APIs are tied to the interactive GUI session. Reading or writing the clipboard from an SSH service session is not reliable for GUI clipboard data, so the Windows agent must run in the logged-in desktop session.
 
-macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility permission to the helper process and restart Moonlight Companion. Caps Lock and clipboard TCP commands use SSH tunnels to reach loopback-only listeners in the Windows GUI session; if a tunnel disconnects, launchd closes the forwarding process and restarts it.
+macOS keyboard detection uses a local event tap. If macOS blocks the event tap, grant Accessibility permission to the helper process and restart Moonlight Companion. Command shortcut remapping is handled locally on the Mac before Moonlight forwards the synthetic Control shortcut to Windows. Caps Lock and clipboard TCP commands use SSH tunnels to reach loopback-only listeners in the Windows GUI session; if a tunnel disconnects, launchd closes the forwarding process and restarts it.
