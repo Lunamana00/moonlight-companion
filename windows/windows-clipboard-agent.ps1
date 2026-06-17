@@ -17,6 +17,7 @@ $capsLockHangulRequest = Join-Path $dir "capslock-hangul-toggle.request"
 $maxBytes = 52428800
 $intervalMs = 700
 $MoonlightCapsLockHangul = "yes"
+$MoonlightCapsLockHangulTcpPort = "47321"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -52,11 +53,26 @@ function Test-SettingEnabled($value, $defaultValue) {
     }
 }
 
+function Get-IntSetting($value, $defaultValue) {
+    if ($null -eq $value) { return $defaultValue }
+    try {
+        $parsed = 0
+        if ([int]::TryParse($value.ToString().Trim(), [ref]$parsed)) {
+            return $parsed
+        }
+    } catch {}
+    return $defaultValue
+}
+
 function Install-CapsLockHangulHook {
     $source = @"
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -85,6 +101,13 @@ public static class MoonlightCapsLockHangulHook
     private static ApplicationContext context = null;
     private static ManualResetEventSlim ready = null;
     private static bool capsDown = false;
+    private static readonly object TcpSyncRoot = new object();
+    private static TcpListener tcpListener = null;
+    private static Thread tcpThread = null;
+    private static ManualResetEventSlim tcpReady = null;
+    private static volatile bool tcpRunning = false;
+    private static bool tcpStarted = false;
+    private static string tcpLogFile = null;
 
     public static bool Install()
     {
@@ -108,6 +131,8 @@ public static class MoonlightCapsLockHangulHook
 
     public static void Uninstall()
     {
+        StopTcpListener();
+
         ApplicationContext currentContext = context;
         if (currentContext != null)
         {
@@ -131,6 +156,188 @@ public static class MoonlightCapsLockHangulHook
 
         ToggleForegroundImeWindowConversion();
         return 3;
+    }
+
+    public static bool StartTcpListener(int port, string logFile)
+    {
+        if (port <= 0 || port > 65535)
+        {
+            return false;
+        }
+
+        lock (TcpSyncRoot)
+        {
+            if (tcpThread != null && tcpThread.IsAlive)
+            {
+                return true;
+            }
+
+            tcpLogFile = logFile;
+            tcpRunning = true;
+            tcpStarted = false;
+            tcpReady = new ManualResetEventSlim(false);
+            tcpThread = new Thread(() => TcpListenerThreadMain(port));
+            tcpThread.IsBackground = true;
+            tcpThread.Start();
+        }
+
+        tcpReady.Wait(3000);
+        return tcpStarted;
+    }
+
+    private static void StopTcpListener()
+    {
+        lock (TcpSyncRoot)
+        {
+            tcpRunning = false;
+            if (tcpListener != null)
+            {
+                try { tcpListener.Stop(); } catch {}
+            }
+        }
+    }
+
+    private static void TcpListenerThreadMain(int port)
+    {
+        TcpListener listener = null;
+
+        try
+        {
+            listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+
+            lock (TcpSyncRoot)
+            {
+                tcpListener = listener;
+                tcpStarted = true;
+            }
+
+            LogTcp("Caps Lock Hangul TCP listener started on 127.0.0.1:" + port);
+            tcpReady.Set();
+
+            while (tcpRunning)
+            {
+                try
+                {
+                    TcpClient client = listener.AcceptTcpClient();
+                    client.NoDelay = true;
+
+                    Thread clientThread = new Thread(() => HandleTcpClient(client));
+                    clientThread.IsBackground = true;
+                    clientThread.Start();
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (SocketException ex)
+                {
+                    if (tcpRunning)
+                    {
+                        LogTcp("Caps Lock Hangul TCP accept error: " + ex.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogTcp("Caps Lock Hangul TCP listener error: " + ex.Message);
+            lock (TcpSyncRoot)
+            {
+                tcpStarted = false;
+            }
+            tcpReady.Set();
+        }
+        finally
+        {
+            try { if (listener != null) { listener.Stop(); } } catch {}
+            lock (TcpSyncRoot)
+            {
+                if (tcpListener == listener)
+                {
+                    tcpListener = null;
+                }
+                tcpRunning = false;
+            }
+        }
+    }
+
+    private static void HandleTcpClient(TcpClient client)
+    {
+        try
+        {
+            using (client)
+            using (NetworkStream stream = client.GetStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                string line;
+                while (tcpRunning && (line = reader.ReadLine()) != null)
+                {
+                    string command = line.Trim();
+                    if (command.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(command, "toggle", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int result = Toggle();
+                        LogTcp("Caps Lock Hangul TCP " + ToggleResultMessage(result));
+                    }
+                    else
+                    {
+                        LogTcp("Caps Lock Hangul TCP ignored unknown command");
+                    }
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (tcpRunning)
+            {
+                LogTcp("Caps Lock Hangul TCP client error: " + ex.Message);
+            }
+        }
+    }
+
+    private static string ToggleResultMessage(int result)
+    {
+        if (result == 1)
+        {
+            return "toggle request virtual-key sent";
+        }
+
+        if (result == 2)
+        {
+            return "toggle request scan-code fallback sent";
+        }
+
+        return "toggle request IME fallback sent";
+    }
+
+    private static void LogTcp(string message)
+    {
+        if (string.IsNullOrEmpty(tcpLogFile))
+        {
+            return;
+        }
+
+        try
+        {
+            File.AppendAllText(
+                tcpLogFile,
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine,
+                Encoding.UTF8);
+        }
+        catch
+        {
+        }
     }
 
     private static void HookThreadMain()
@@ -678,6 +885,7 @@ $lastMacId = ""
 $lastWindowsId = ""
 $lastCapsLockHangulRequestId = ""
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
+$capsLockHangulTcpPort = Get-IntSetting $MoonlightCapsLockHangulTcpPort 47321
 $capsLockHangulHookInstalled = $false
 
 Write-AgentLog "started"
@@ -687,6 +895,11 @@ try {
         $capsLockHangulHookInstalled = Install-CapsLockHangulHook
         if ($capsLockHangulHookInstalled) {
             Write-AgentLog "Caps Lock Hangul toggle enabled"
+            if ([MoonlightCapsLockHangulHook]::StartTcpListener($capsLockHangulTcpPort, $logFile)) {
+                Write-AgentLog ("Caps Lock Hangul TCP listener enabled on 127.0.0.1:{0}" -f $capsLockHangulTcpPort)
+            } else {
+                Write-AgentLog ("Caps Lock Hangul TCP listener unavailable on 127.0.0.1:{0}" -f $capsLockHangulTcpPort)
+            }
         } else {
             Write-AgentLog "Caps Lock Hangul toggle unavailable"
         }

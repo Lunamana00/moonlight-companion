@@ -26,6 +26,8 @@ MOONLIGHT_CAPTURE_SYSTEM_KEYS="${MOONLIGHT_CAPTURE_SYSTEM_KEYS:-always}"
 MOONLIGHT_ABSOLUTE_MOUSE="${MOONLIGHT_ABSOLUTE_MOUSE:-yes}"
 MOONLIGHT_QUIT_EXISTING="${MOONLIGHT_QUIT_EXISTING:-yes}"
 MOONLIGHT_CAPSLOCK_HANGUL="${MOONLIGHT_CAPSLOCK_HANGUL:-yes}"
+MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
+MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT}"
 MOONLIGHT_CLIPBOARD_MAX_BYTES="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 
 log_dir="${HOME}/Library/Logs"
@@ -62,7 +64,10 @@ write_windows_agent_settings() {
   capslock_hangul="$(normalize_yes_no "$MOONLIGHT_CAPSLOCK_HANGUL")"
   settings_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-companion-windows-settings.XXXXXX")"
 
-  printf '$MoonlightCapsLockHangul = "%s"\n' "$capslock_hangul" > "$settings_tmp"
+  {
+    printf '$MoonlightCapsLockHangul = "%s"\n' "$capslock_hangul"
+    printf '$MoonlightCapsLockHangulTcpPort = "%s"\n' "$MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT"
+  } > "$settings_tmp"
   if ! scp "${scp_opts[@]}" "$settings_tmp" "${WINDOWS_SSH}:.moonlight-clipboard-sync/windows-agent-settings.ps1"; then
     rm -f "$settings_tmp"
     return 1
@@ -148,6 +153,8 @@ POWERSHELL
 start_mac_clipboard_sync() {
   log "starting Mac clipboard sync"
   MOONLIGHT_CLIPBOARD_MAX_BYTES="$MOONLIGHT_CLIPBOARD_MAX_BYTES" \
+    MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT="$MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT" \
+    MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT="$MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT" \
     WINDOWS_SSH="$WINDOWS_SSH" \
     "${script_dir}/start-moonlight-clipboard-sync.sh" >> "$log_path" 2>&1
 }

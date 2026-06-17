@@ -16,14 +16,19 @@ caps_app_macos="${caps_app_contents}/MacOS"
 caps_helper="${caps_app_macos}/mooncapsync"
 label="com.lunamana.moonlight-clipboard-sync"
 caps_label="com.lunamana.moonlight-capslock-hangul"
+caps_tunnel_label="com.lunamana.moonlight-capslock-tunnel"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
 caps_plist="${HOME}/Library/LaunchAgents/${caps_label}.plist"
+caps_tunnel_plist="${HOME}/Library/LaunchAgents/${caps_tunnel_label}.plist"
 log_dir="${HOME}/Library/Logs"
 config="${MOONLIGHT_COMPANION_CONFIG:-${repo_dir}/config/moonlight-companion.conf}"
 
 if [[ ! -f "$config" ]]; then
   config="${repo_dir}/config/moonlight-companion.conf.example"
 fi
+
+caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
+caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
 
 if [[ -f "$config" ]]; then
   # shellcheck source=/dev/null
@@ -186,6 +191,54 @@ launchctl enable "gui/$(id -u)/${label}"
 launchctl kickstart -k "gui/$(id -u)/${label}"
 
 if [[ "$capslock_hangul" == "yes" ]]; then
+  cat > "$caps_tunnel_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${caps_tunnel_label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-N</string>
+    <string>-T</string>
+    <string>-o</string>
+    <string>ExitOnForwardFailure=yes</string>
+    <string>-o</string>
+    <string>ServerAliveInterval=15</string>
+    <string>-o</string>
+    <string>ServerAliveCountMax=2</string>
+    <string>-o</string>
+    <string>BatchMode=yes</string>
+    <string>-o</string>
+    <string>ConnectTimeout=7</string>
+    <string>-o</string>
+    <string>LogLevel=ERROR</string>
+    <string>-o</string>
+    <string>StrictHostKeyChecking=accept-new</string>
+    <string>-L</string>
+    <string>127.0.0.1:${caps_tcp_local_port}:127.0.0.1:${caps_tcp_remote_port}</string>
+    <string>${remote}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${log_dir}/moonlight-capslock-tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${log_dir}/moonlight-capslock-tunnel.err.log</string>
+</dict>
+</plist>
+EOF
+
+  launchctl bootout "gui/$(id -u)" "$caps_tunnel_plist" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$(id -u)" "$caps_tunnel_plist"
+  launchctl enable "gui/$(id -u)/${caps_tunnel_label}"
+  launchctl kickstart -k "gui/$(id -u)/${caps_tunnel_label}"
+
   cat > "$caps_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -210,6 +263,10 @@ if [[ "$capslock_hangul" == "yes" ]]; then
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>WINDOWS_SSH</key>
     <string>${remote}</string>
+    <key>MOONLIGHT_CAPSLOCK_HANGUL_HOST</key>
+    <string>127.0.0.1</string>
+    <key>MOONLIGHT_CAPSLOCK_HANGUL_PORT</key>
+    <string>${caps_tcp_local_port}</string>
   </dict>
 </dict>
 </plist>
@@ -220,7 +277,9 @@ EOF
   launchctl enable "gui/$(id -u)/${caps_label}"
   launchctl kickstart -k "gui/$(id -u)/${caps_label}"
 else
+  launchctl bootout "gui/$(id -u)" "$caps_tunnel_plist" >/dev/null 2>&1 || true
   launchctl bootout "gui/$(id -u)" "$caps_plist" >/dev/null 2>&1 || true
+  rm -f "$caps_tunnel_plist"
   rm -f "$caps_plist"
 fi
 

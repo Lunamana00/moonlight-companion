@@ -104,14 +104,14 @@ sequenceDiagram
   participant User
   participant Moonlight as Moonlight.app
   participant Caps as macOS Caps Lock agent
-  participant RemoteDir as Windows payload folder
+  participant Tunnel as SSH local tunnel
   participant Agent as Windows GUI agent
   participant IME as Windows Korean IME
 
   User->>Moonlight: Press Caps Lock
   Caps->>Caps: Detect Moonlight as frontmost app
-  Caps->>RemoteDir: Write capslock-hangul-toggle.request over SSH
-  Agent->>RemoteDir: Detect new request id
+  Caps->>Tunnel: Send toggle command over local TCP
+  Tunnel->>Agent: Forward to loopback TCP listener
   Agent->>IME: Toggle active conversion mode
 ```
 
@@ -142,4 +142,4 @@ Each payload has a deterministic `id` based on kind and content hash. Agents rem
 
 Windows clipboard APIs are tied to the interactive GUI session. Reading or writing the clipboard from an SSH service session is not reliable for GUI clipboard data, so the Windows agent must run in the logged-in desktop session.
 
-macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility/Input Monitoring permission to the helper process and restart Moonlight Companion.
+macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility/Input Monitoring permission to the helper process and restart Moonlight Companion. Caps Lock commands use an SSH local tunnel to reach a loopback-only TCP listener in the Windows GUI session; if the tunnel disconnects, launchd closes the local forwarding process and restarts it.

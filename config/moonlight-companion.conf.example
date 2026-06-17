@@ -16,6 +16,8 @@ MOONLIGHT_QUIT_EXISTING="yes"
 
 # Map Caps Lock to the Windows Korean IME Han/Eng toggle inside Moonlight.
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
+MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT="47321"
+MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT="47321"
 
 # Clipboard payload limit. Applies to text/image/file clipboard payloads.
 MOONLIGHT_CLIPBOARD_MAX_BYTES="52428800"

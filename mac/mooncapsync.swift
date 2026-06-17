@@ -1,10 +1,12 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
 
 let capsLockKeyCode: Int64 = 57
 let moonlightBundleIdentifier = "com.moonlight-stream.Moonlight"
-let remote = ProcessInfo.processInfo.environment["WINDOWS_SSH"] ?? "moonlight-windows"
+let tcpHost = ProcessInfo.processInfo.environment["MOONLIGHT_CAPSLOCK_HANGUL_HOST"] ?? "127.0.0.1"
+let tcpPort = UInt16(ProcessInfo.processInfo.environment["MOONLIGHT_CAPSLOCK_HANGUL_PORT"] ?? "") ?? 47321
 let debounceSeconds = 0.25
 let senderQueue = DispatchQueue(label: "com.lunamana.moonlight-capslock-hangul.sender")
 
@@ -24,62 +26,115 @@ func isMoonlightFrontmost() -> Bool {
     return app.bundleIdentifier == moonlightBundleIdentifier || app.localizedName == "Moonlight"
 }
 
-func base64EncodedPowerShell(_ script: String) -> String {
-    var data = Data()
-    for unit in script.utf16 {
-        data.append(UInt8(unit & 0x00ff))
-        data.append(UInt8(unit >> 8))
+final class CapsLockTcpSender {
+    private let host: String
+    private let port: UInt16
+    private var socketFD: Int32 = -1
+
+    init(host: String, port: UInt16) {
+        self.host = host
+        self.port = port
     }
-    return data.base64EncodedString()
-}
 
-func quotedPowerShellString(_ value: String) -> String {
-    "'\(value.replacingOccurrences(of: "'", with: "''"))'"
-}
+    deinit {
+        closeSocket()
+    }
 
-func sendToggleRequest() {
-    let requestID = "\(Date().timeIntervalSince1970)-\(UUID().uuidString)"
-    let requestValue = quotedPowerShellString(requestID)
-    let script = """
-    $ErrorActionPreference = 'Stop'
-    $ProgressPreference = 'SilentlyContinue'
-    $dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $tmp = Join-Path $dir 'capslock-hangul-toggle.request.tmp'
-    $request = Join-Path $dir 'capslock-hangul-toggle.request'
-    Set-Content -LiteralPath $tmp -Value \(requestValue) -Encoding UTF8
-    Move-Item -LiteralPath $tmp -Destination $request -Force
-    """
-
-    let encoded = base64EncodedPowerShell(script)
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-    task.arguments = [
-        "-q",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=2",
-        "-o", "LogLevel=ERROR",
-        "-o", "StrictHostKeyChecking=accept-new",
-        remote,
-        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand \(encoded)"
-    ]
-
-    do {
-        try task.run()
-        task.waitUntilExit()
-        if task.terminationStatus == 0 {
-            log("sent Caps Lock Hangul toggle request")
-        } else {
-            log("Caps Lock Hangul toggle request failed with status \(task.terminationStatus)")
+    @discardableResult
+    func connectIfNeeded() -> Bool {
+        if socketFD >= 0 {
+            return true
         }
-    } catch {
-        log("Caps Lock Hangul toggle request failed: \(error.localizedDescription)")
+
+        guard host == "127.0.0.1" || host == "localhost" else {
+            log("Caps Lock Hangul TCP unsupported host: \(host)")
+            return false
+        }
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            log("Caps Lock Hangul TCP socket failed")
+            return false
+        }
+
+        var noDelay: Int32 = 1
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+
+        var noSigPipe: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr)
+
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.connect(fd, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+
+        if connected != 0 {
+            Darwin.close(fd)
+            log("Caps Lock Hangul TCP connect failed on 127.0.0.1:\(port)")
+            return false
+        }
+
+        socketFD = fd
+        log("Caps Lock Hangul TCP connected to 127.0.0.1:\(port)")
+        return true
+    }
+
+    @discardableResult
+    func sendToggle() -> Bool {
+        if sendToggleOnce() {
+            return true
+        }
+
+        closeSocket()
+        if connectIfNeeded(), sendToggleOnce() {
+            return true
+        }
+
+        log("Caps Lock Hangul TCP toggle request failed")
+        return false
+    }
+
+    private func sendToggleOnce() -> Bool {
+        guard connectIfNeeded() else {
+            return false
+        }
+
+        let bytes = Array("toggle\n".utf8)
+        let sent = bytes.withUnsafeBytes { rawBuffer -> Int in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return -1
+            }
+
+            return Darwin.send(socketFD, baseAddress, rawBuffer.count, 0)
+        }
+
+        if sent == bytes.count {
+            log("sent Caps Lock Hangul toggle request via TCP")
+            return true
+        }
+
+        return false
+    }
+
+    private func closeSocket() {
+        if socketFD >= 0 {
+            Darwin.close(socketFD)
+            socketFD = -1
+        }
     }
 }
+
+let toggleSender = CapsLockTcpSender(host: tcpHost, port: tcpPort)
 
 if CommandLine.arguments.contains("--send-once") {
-    sendToggleRequest()
-    exit(0)
+    exit(toggleSender.sendToggle() ? 0 : 1)
 }
 
 let callback: CGEventTapCallBack = { _, type, event, _ in
@@ -102,7 +157,7 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
     lastCapsLockEvent = now
 
     senderQueue.async {
-        sendToggleRequest()
+        toggleSender.sendToggle()
     }
 
     return nil
@@ -157,4 +212,7 @@ CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
 
 log("Caps Lock Hangul sync started")
+senderQueue.async {
+    toggleSender.connectIfNeeded()
+}
 CFRunLoopRun()

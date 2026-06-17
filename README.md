@@ -65,7 +65,7 @@ Inside the Moonlight session, use Windows shortcuts:
 - Paste back on Mac: `Cmd+V`
 - Toggle Korean/English input in Windows: `Caps Lock`
 
-When Moonlight is focused, the macOS Caps Lock helper intercepts Caps Lock and sends a small SSH request to the Windows GUI agent. The Windows agent then toggles the active Korean IME conversion mode in the logged-in desktop session.
+When Moonlight is focused, the macOS Caps Lock helper intercepts Caps Lock and sends a tiny command over a persistent local TCP connection. That local connection is forwarded over SSH to a loopback-only listener in the Windows GUI agent, which toggles the active Korean IME conversion mode in the logged-in desktop session.
 
 ## Zero-Base Setup
 
