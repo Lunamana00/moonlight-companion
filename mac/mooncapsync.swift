@@ -42,6 +42,7 @@ func sendToggleRequest() {
     let requestValue = quotedPowerShellString(requestID)
     let script = """
     $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
     $dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $tmp = Join-Path $dir 'capslock-hangul-toggle.request.tmp'
@@ -108,6 +109,11 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
 }
 
 func requestInputPermissionsIfNeeded() {
+    let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+    let accessibilityTrusted = AXIsProcessTrusted()
+    let inputMonitoringTrusted = CGPreflightListenEventAccess()
+    log("permission state: bundle=\(bundleID) accessibility=\(accessibilityTrusted) inputMonitoring=\(inputMonitoringTrusted)")
+
     let accessibilityOptions = [
         kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true
     ] as CFDictionary
@@ -116,7 +122,7 @@ func requestInputPermissionsIfNeeded() {
         log("Accessibility permission is required for Caps Lock Hangul sync.")
     }
 
-    if !CGPreflightListenEventAccess() {
+    if !inputMonitoringTrusted {
         log("Input Monitoring permission is required for Caps Lock Hangul sync.")
         _ = CGRequestListenEventAccess()
     }

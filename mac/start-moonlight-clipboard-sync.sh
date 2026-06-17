@@ -112,9 +112,17 @@ if [[ "$capslock_hangul" == "yes" ]]; then
   <string>13.0</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>Detect Caps Lock while Moonlight is focused so it can toggle the Windows Korean IME.</string>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>Detect Caps Lock while Moonlight is focused so it can toggle the Windows Korean IME.</string>
 </dict>
 </plist>
 EOF
+
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --deep --sign - --identifier "$caps_label" "$caps_app" >/dev/null 2>&1 || true
+  fi
 fi
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$remote" "powershell.exe -NoProfile -Command \"Write-Output ok\"" >/dev/null 2>&1; then

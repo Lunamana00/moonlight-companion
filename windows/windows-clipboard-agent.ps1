@@ -118,7 +118,8 @@ public static class MoonlightCapsLockHangulHook
     public static int Toggle()
     {
         EnsureCapsLockOff();
-        if (ToggleForegroundImeWindowConversion())
+
+        if (SendKey(VK_HANGUL))
         {
             return 1;
         }
@@ -128,7 +129,7 @@ public static class MoonlightCapsLockHangulHook
             return 2;
         }
 
-        SendKey(VK_HANGUL);
+        ToggleForegroundImeWindowConversion();
         return 3;
     }
 
@@ -260,7 +261,7 @@ public static class MoonlightCapsLockHangulHook
         }
     }
 
-    private static void SendKey(short virtualKey)
+    private static bool SendKey(short virtualKey)
     {
         INPUT[] inputs = new INPUT[2];
         inputs[0].type = INPUT_KEYBOARD;
@@ -268,7 +269,7 @@ public static class MoonlightCapsLockHangulHook
         inputs[1].type = INPUT_KEYBOARD;
         inputs[1].u.ki.wVk = virtualKey;
         inputs[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))) == inputs.Length;
     }
 
     private static bool SendScanCode(short scanCode)
@@ -296,7 +297,22 @@ public static class MoonlightCapsLockHangulHook
     private struct InputUnion
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+        [FieldOffset(0)]
+        public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public int mouseData;
+        public int dwFlags;
+        public int time;
+        public IntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -307,6 +323,14 @@ public static class MoonlightCapsLockHangulHook
         public int dwFlags;
         public int time;
         public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public int uMsg;
+        public short wParamL;
+        public short wParamH;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -638,11 +662,11 @@ function Invoke-CapsLockHangulRequest($requestId) {
     try {
         $toggleResult = [MoonlightCapsLockHangulHook]::Toggle()
         if ($toggleResult -eq 1) {
-            Write-AgentLog "Caps Lock Hangul toggle request applied"
+            Write-AgentLog "Caps Lock Hangul toggle request virtual-key sent"
         } elseif ($toggleResult -eq 2) {
             Write-AgentLog "Caps Lock Hangul toggle request scan-code fallback sent"
         } else {
-            Write-AgentLog "Caps Lock Hangul toggle request virtual-key fallback sent"
+            Write-AgentLog "Caps Lock Hangul toggle request IME fallback sent"
         }
     } catch {
         Write-AgentLog ("Caps Lock Hangul toggle request error: {0}" -f $_.Exception.Message)
