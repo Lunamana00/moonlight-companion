@@ -6,7 +6,7 @@ The bridge is designed for remote GUI work where Moonlight provides excellent vi
 
 ## Version
 
-Current MVP version: `v0.1.0`
+Current version: `v0.2.0`
 
 ## Features
 
@@ -195,15 +195,66 @@ scripts/package-release.sh
 This writes:
 
 ```text
-dist/release/Moonlight-Companion-v0.1.0.zip
-dist/release/Moonlight-Companion-v0.1.0.zip.sha256
+dist/release/Moonlight-Companion-v0.2.0.zip
+dist/release/Moonlight-Companion-v0.2.0.zip.sha256
 ```
 
 Release packages intentionally include only `config/moonlight-companion.conf.example`. The ignored local config file is skipped so private hostnames, Tailscale IPs, usernames, and stream settings stay out of public artifacts.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for runtime and clipboard sync diagrams.
+```mermaid
+flowchart LR
+  subgraph Mac["Mac client"]
+    App["Moonlight Companion.app"]
+    Moonlight["Moonlight.app"]
+    Sync["launchd clipboard sync"]
+    Receiver["clipboard TCP receiver"]
+    Caps["Caps Lock helper"]
+    MacClip["macOS clipboard"]
+  end
+
+  subgraph Network["Tailscale + SSH"]
+    Stream["Moonlight stream"]
+    ClipTunnel["clipboard TCP tunnel"]
+    CapsTunnel["Caps Lock TCP tunnel"]
+    Fallback["SCP fallback"]
+  end
+
+  subgraph Windows["Windows Sunshine host"]
+    Sunshine["Sunshine"]
+    Agent["Windows GUI agent"]
+    Payloads["fallback ZIP payloads"]
+    WinClip["Windows clipboard"]
+    IME["Korean IME"]
+  end
+
+  App -->|"deploy/restart"| Agent
+  App -->|"start services"| Sync
+  App -->|"launch"| Moonlight
+  Moonlight <-->|"video/input"| Stream
+  Stream <-->|"Sunshine protocol"| Sunshine
+
+  Sync <-->|"read/write"| MacClip
+  Agent <-->|"read/write"| WinClip
+  Sync -->|"Mac -> Windows ZIP frame"| ClipTunnel
+  ClipTunnel -->|"loopback TCP 47331"| Agent
+  Agent -->|"Windows -> Mac ZIP frame"| ClipTunnel
+  ClipTunnel -->|"loopback TCP 47332"| Receiver
+  Receiver -->|"import"| MacClip
+  Sync <-->|"fallback ZIP polling"| Fallback
+  Fallback <-->|"archives"| Payloads
+  Agent <-->|"fallback import/export"| Payloads
+  Caps -->|"toggle"| CapsTunnel
+  CapsTunnel -->|"loopback TCP 47321"| Agent
+  Agent -->|"toggle mode"| IME
+```
+
+See [docs/architecture.md](docs/architecture.md) for the full runtime and clipboard sync diagrams.
+
+## Release History
+
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md) and mirrored to [GitHub Releases](https://github.com/Lunamana00/moonlight-companion/releases).
 
 ## Notes
 
