@@ -2,16 +2,24 @@
 set -euo pipefail
 
 label="com.lunamana.moonlight-clipboard-sync"
+clip_tcp_label="com.lunamana.moonlight-clipboard-tcp-receiver"
+clip_tunnel_label="com.lunamana.moonlight-clipboard-tunnel"
 caps_label="com.lunamana.moonlight-capslock-hangul"
 caps_tunnel_label="com.lunamana.moonlight-capslock-tunnel"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
+clip_tcp_plist="${HOME}/Library/LaunchAgents/${clip_tcp_label}.plist"
+clip_tunnel_plist="${HOME}/Library/LaunchAgents/${clip_tunnel_label}.plist"
 caps_plist="${HOME}/Library/LaunchAgents/${caps_label}.plist"
 caps_tunnel_plist="${HOME}/Library/LaunchAgents/${caps_tunnel_label}.plist"
 
 launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+launchctl bootout "gui/$(id -u)" "$clip_tcp_plist" >/dev/null 2>&1 || true
+launchctl bootout "gui/$(id -u)" "$clip_tunnel_plist" >/dev/null 2>&1 || true
 launchctl bootout "gui/$(id -u)" "$caps_plist" >/dev/null 2>&1 || true
 launchctl bootout "gui/$(id -u)" "$caps_tunnel_plist" >/dev/null 2>&1 || true
 rm -f "$plist"
+rm -f "$clip_tcp_plist"
+rm -f "$clip_tunnel_plist"
 rm -f "$caps_plist"
 rm -f "$caps_tunnel_plist"
 

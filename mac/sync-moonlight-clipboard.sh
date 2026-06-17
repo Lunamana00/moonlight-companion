@@ -28,6 +28,11 @@ interval="${MOONLIGHT_CLIPBOARD_INTERVAL:-0.8}"
 windows_interval="${MOONLIGHT_CLIPBOARD_WINDOWS_INTERVAL:-2.0}"
 max_bytes="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 log_path="${MOONLIGHT_CLIPBOARD_LOG:-${HOME}/Library/Logs/moonlight-clipboard-sync.log}"
+tcp_enabled="${MOONLIGHT_CLIPBOARD_TCP_ENABLED:-${MOONLIGHT_CLIPBOARD_TCP:-yes}}"
+tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
+tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
+tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
+tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 
 remote_dir=".moonlight-clipboard-sync"
 remote_mac_zip="${remote_dir}/mac-to-windows.zip"
@@ -54,6 +59,17 @@ log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_path"
 }
 
+normalize_yes_no() {
+  case "${1:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      printf 'yes\n'
+      ;;
+    *)
+      printf 'no\n'
+      ;;
+  esac
+}
+
 payload_id() {
   awk -F= '/^id=/{print $2; exit}' "$1"
 }
@@ -68,6 +84,12 @@ payload_bytes() {
 
 file_hash() {
   shasum -a 256 "$1" | awk '{print $1}'
+}
+
+state_value() {
+  local key="$1"
+  local path="$2"
+  awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
 }
 
 dir_size_bytes() {
@@ -94,6 +116,15 @@ unzip_payload() {
 
 upload_to_windows() {
   local zip_path="$1"
+  upload_transport="ssh"
+  if [[ "$tcp_enabled" == "yes" && -x "$tcp_helper" ]]; then
+    if "$tcp_helper" send "$tcp_send_host" "$tcp_send_port" "$zip_path" >/dev/null 2>&1; then
+      upload_transport="tcp"
+      return 0
+    fi
+    log "Mac -> Windows TCP unavailable; falling back to SSH payload"
+  fi
+
   scp "${scp_opts[@]}" "$zip_path" "${remote}:${remote_mac_tmp}" >/dev/null
   ssh "${ssh_opts[@]}" "$remote" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"
 }
@@ -115,6 +146,34 @@ require_ready() {
   fi
 }
 
+read_tcp_state() {
+  [[ "$tcp_enabled" == "yes" ]] || return 0
+  [[ -f "$tcp_state" ]] || return 0
+
+  local state_hash archive_hash win_id normalized_id
+  state_hash="$(file_hash "$tcp_state" 2>/dev/null || true)"
+  [[ -n "$state_hash" && "$state_hash" != "$last_tcp_state_hash" ]] || return 0
+
+  win_id="$(state_value "windows_id" "$tcp_state")"
+  [[ -n "$win_id" ]] || return 0
+
+  archive_hash="$(state_value "archive_hash" "$tcp_state")"
+  normalized_id="$(state_value "normalized_id" "$tcp_state")"
+  last_tcp_state_hash="$state_hash"
+  if [[ -n "$archive_hash" ]]; then
+    last_windows_archive_hash="$archive_hash"
+  fi
+  last_windows_id="$win_id"
+  if [[ -n "$normalized_id" ]]; then
+    last_mac_id="$normalized_id"
+  else
+    last_mac_id="$win_id"
+  fi
+  return 0
+}
+
+tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -130,11 +189,15 @@ last_mac_id=""
 last_windows_id=""
 last_windows_archive_hash=""
 last_windows_poll="0"
+last_tcp_state_hash=""
+upload_transport="ssh"
 
-log "starting payload sync with ${remote}; local interval=${interval}s, windows interval=${windows_interval}s, max=${max_bytes}B"
+log "starting payload sync with ${remote}; local interval=${interval}s, windows interval=${windows_interval}s, max=${max_bytes}B, tcp=${tcp_enabled}"
 require_ready
 
 while true; do
+  read_tcp_state
+
   if "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
     mac_id="$(payload_id "$mac_meta")"
     mac_kind="$(payload_kind "$mac_meta")"
@@ -150,7 +213,7 @@ while true; do
         zip_payload "$mac_payload" "$mac_zip"
         if upload_to_windows "$mac_zip"; then
           last_mac_id="$mac_id"
-          log "Mac -> Windows ${mac_kind} (${mac_bytes}B)"
+          log "Mac -> Windows ${mac_kind} (${mac_bytes}B) via ${upload_transport}"
         else
           log "Mac -> Windows failed"
         fi

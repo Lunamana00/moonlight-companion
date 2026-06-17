@@ -2,9 +2,13 @@
 set -euo pipefail
 
 label="com.lunamana.moonlight-clipboard-sync"
+clip_tcp_label="com.lunamana.moonlight-clipboard-tcp-receiver"
+clip_tunnel_label="com.lunamana.moonlight-clipboard-tunnel"
 caps_label="com.lunamana.moonlight-capslock-hangul"
 caps_tunnel_label="com.lunamana.moonlight-capslock-tunnel"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
+clip_tcp_plist="${HOME}/Library/LaunchAgents/${clip_tcp_label}.plist"
+clip_tunnel_plist="${HOME}/Library/LaunchAgents/${clip_tunnel_label}.plist"
 caps_plist="${HOME}/Library/LaunchAgents/${caps_label}.plist"
 caps_tunnel_plist="${HOME}/Library/LaunchAgents/${caps_tunnel_label}.plist"
 log_path="${HOME}/Library/Logs/moonlight-clipboard-sync.log"
@@ -28,11 +32,19 @@ print_service_status() {
 }
 
 print_service_status "clipboard sync" "$label"
+print_service_status "clipboard TCP receiver" "$clip_tcp_label"
+print_service_status "clipboard TCP tunnel" "$clip_tunnel_label"
 print_service_status "Caps Lock tunnel" "$caps_tunnel_label"
 print_service_status "Caps Lock Hangul sync" "$caps_label"
 
 if [[ -f "$plist" ]]; then
   echo "plist: $plist"
+fi
+if [[ -f "$clip_tcp_plist" ]]; then
+  echo "clipboard TCP plist: $clip_tcp_plist"
+fi
+if [[ -f "$clip_tunnel_plist" ]]; then
+  echo "clipboard tunnel plist: $clip_tunnel_plist"
 fi
 if [[ -f "$caps_plist" ]]; then
   echo "caps plist: $caps_plist"

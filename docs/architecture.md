@@ -11,6 +11,7 @@ flowchart LR
     Config["Config file"]
     Moonlight["Moonlight.app"]
     Launchd["macOS launchd sync agent"]
+    ClipTcp["macOS clipboard TCP receiver"]
     CapsAgent["macOS Caps Lock agent"]
     Helper["moonclipctl Swift helper"]
     MacClipboard["macOS clipboard"]
@@ -18,6 +19,8 @@ flowchart LR
 
   subgraph Network["Tailscale private network"]
     SSH["SSH/SCP"]
+    ClipTunnel["SSH clipboard TCP tunnel"]
+    CapsTunnel["SSH Caps Lock TCP tunnel"]
     Stream["Moonlight video/input stream"]
   end
 
@@ -38,10 +41,13 @@ flowchart LR
 
   Launchd <-->|"export/import"| Helper
   Helper <-->|"read/write"| MacClipboard
-  Launchd <-->|"ZIP payloads"| SSH
+  Launchd -->|"Mac -> Windows ZIP frame"| ClipTunnel
+  ClipTcp -->|"import Windows -> Mac ZIP frame"| Helper
+  ClipTunnel <-->|"loopback TCP"| WinAgent
+  Launchd <-->|"fallback ZIP payloads"| SSH
   SSH <-->|"copy payload archives"| PayloadDir
-  CapsAgent -->|"Caps Lock toggle request"| SSH
-  SSH -->|"request file"| PayloadDir
+  CapsAgent -->|"Caps Lock toggle request"| CapsTunnel
+  CapsTunnel -->|"loopback TCP"| WinAgent
 
   WinAgent <-->|"watch/import/export"| PayloadDir
   WinAgent -->|"toggle Korean IME mode"| WinAgent
@@ -79,22 +85,27 @@ sequenceDiagram
   participant MacClip as macOS clipboard
   participant Helper as moonclipctl
   participant Sync as macOS sync loop
+  participant Tunnel as SSH clipboard TCP tunnel
   participant RemoteDir as Windows payload folder
   participant Agent as Windows GUI agent
+  participant Receiver as macOS TCP receiver
   participant WinClip as Windows clipboard
 
   MacClip->>Helper: Export current clipboard
   Helper->>Sync: manifest.json plus payload files
-  Sync->>RemoteDir: Upload mac-to-windows.zip.tmp
-  Sync->>RemoteDir: Atomic rename to mac-to-windows.zip
-  Agent->>RemoteDir: Detect new archive
+  Sync->>Tunnel: Send ZIP frame
+  Tunnel->>Agent: Forward to loopback TCP listener
   Agent->>WinClip: Import text, image, or files
 
   WinClip->>Agent: Export changed clipboard
-  Agent->>RemoteDir: Write windows-to-mac.zip
-  Sync->>RemoteDir: Download archive
-  Sync->>Helper: Import payload
+  Agent->>Tunnel: Send ZIP frame
+  Tunnel->>Receiver: Forward to macOS loopback listener
+  Receiver->>Helper: Import payload
   Helper->>MacClip: Write text, image, or files
+
+  Sync-->>RemoteDir: Fallback upload if TCP send fails
+  Agent-->>RemoteDir: Fallback write if TCP send fails
+  Sync-->>RemoteDir: Poll fallback archive
 ```
 
 ## Caps Lock Han/Eng Flow
@@ -142,4 +153,4 @@ Each payload has a deterministic `id` based on kind and content hash. Agents rem
 
 Windows clipboard APIs are tied to the interactive GUI session. Reading or writing the clipboard from an SSH service session is not reliable for GUI clipboard data, so the Windows agent must run in the logged-in desktop session.
 
-macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility permission to the helper process and restart Moonlight Companion. Caps Lock commands use an SSH local tunnel to reach a loopback-only TCP listener in the Windows GUI session; if the tunnel disconnects, launchd closes the local forwarding process and restarts it.
+macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility permission to the helper process and restart Moonlight Companion. Caps Lock and clipboard TCP commands use SSH tunnels to reach loopback-only listeners in the Windows GUI session; if a tunnel disconnects, launchd closes the forwarding process and restarts it.

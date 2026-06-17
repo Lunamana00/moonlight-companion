@@ -14,7 +14,7 @@ Current MVP version: `v0.1.0`
 - Builds a native macOS wrapper app bundle.
 - Starts a macOS `launchd` clipboard sync agent.
 - Deploys a Windows clipboard agent over SSH.
-- Syncs clipboard payloads as shared ZIP payloads.
+- Syncs clipboard payloads over persistent loopback TCP channels forwarded by SSH, with ZIP file polling as fallback.
 - Supports text, images, and file/folder clipboard payloads.
 - Maps Caps Lock to the Windows Korean IME Han/Eng toggle while the Windows agent is running.
 - Uses SSH over Tailscale; no public port forwarding is required.
@@ -66,6 +66,8 @@ Inside the Moonlight session, use Windows shortcuts:
 - Toggle Korean/English input in Windows: `Caps Lock`
 
 When Moonlight is focused, the macOS Caps Lock helper intercepts Caps Lock and sends a tiny command over a persistent local TCP connection. That local connection is forwarded over SSH to a loopback-only listener in the Windows GUI agent, which toggles the active Korean IME conversion mode in the logged-in desktop session.
+
+Clipboard sync uses the same shape of transport: Moonlight Companion keeps separate TCP channels open for Mac-to-Windows and Windows-to-Mac clipboard payloads. Payloads are still encoded as ZIP archives for text, images, and file drops, and the older shared ZIP polling path remains available as a fallback.
 
 ## Zero-Base Setup
 
@@ -165,6 +167,7 @@ MOONLIGHT_BITRATE="60000"
 MOONLIGHT_DISPLAY_MODE="windowed"
 MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
+MOONLIGHT_CLIPBOARD_TCP="yes"
 ```
 
 Build the wrapper app:

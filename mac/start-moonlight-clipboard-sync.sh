@@ -5,19 +5,25 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
 source_helper="${script_dir}/moonclipctl.swift"
+source_clip_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_caps_helper="${script_dir}/mooncapsync.swift"
 runtime_dir="${HOME}/Library/Application Support/MoonlightClipboardSync"
 sync_script="${runtime_dir}/sync-moonlight-clipboard.sh"
 helper="${runtime_dir}/moonclipctl"
+clip_tcp_helper="${runtime_dir}/mooncliptcp"
 caps_app="${HOME}/Applications/Moonlight Caps Lock Hangul.app"
 legacy_caps_app="${runtime_dir}/Moonlight Caps Lock Hangul.app"
 caps_app_contents="${caps_app}/Contents"
 caps_app_macos="${caps_app_contents}/MacOS"
 caps_helper="${caps_app_macos}/mooncapsync"
 label="com.lunamana.moonlight-clipboard-sync"
+clip_tcp_label="com.lunamana.moonlight-clipboard-tcp-receiver"
+clip_tunnel_label="com.lunamana.moonlight-clipboard-tunnel"
 caps_label="com.lunamana.moonlight-capslock-hangul"
 caps_tunnel_label="com.lunamana.moonlight-capslock-tunnel"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
+clip_tcp_plist="${HOME}/Library/LaunchAgents/${clip_tcp_label}.plist"
+clip_tunnel_plist="${HOME}/Library/LaunchAgents/${clip_tunnel_label}.plist"
 caps_plist="${HOME}/Library/LaunchAgents/${caps_label}.plist"
 caps_tunnel_plist="${HOME}/Library/LaunchAgents/${caps_tunnel_label}.plist"
 log_dir="${HOME}/Library/Logs"
@@ -26,9 +32,6 @@ config="${MOONLIGHT_COMPANION_CONFIG:-${repo_dir}/config/moonlight-companion.con
 if [[ ! -f "$config" ]]; then
   config="${repo_dir}/config/moonlight-companion.conf.example"
 fi
-
-caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
-caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
 
 if [[ -f "$config" ]]; then
   # shellcheck source=/dev/null
@@ -71,6 +74,14 @@ normalize_yes_no() {
   esac
 }
 
+clip_tcp_enabled="$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_TCP:-yes}")"
+clip_m2w_remote_port="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT:-47331}"
+clip_m2w_local_port="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT:-$clip_m2w_remote_port}"
+clip_w2m_remote_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT:-47332}"
+clip_w2m_local_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT:-$clip_w2m_remote_port}"
+caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
+caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
+
 if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   if ! command -v swiftc >/dev/null 2>&1; then
     echo "swiftc is required to build the macOS clipboard helper." >&2
@@ -79,6 +90,17 @@ if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   swiftc "$source_helper" -o "$helper"
 fi
 chmod 700 "$helper"
+
+if [[ "$clip_tcp_enabled" == "yes" ]]; then
+  if [[ ! -x "$clip_tcp_helper" || "$source_clip_tcp_helper" -nt "$clip_tcp_helper" ]]; then
+    if ! command -v swiftc >/dev/null 2>&1; then
+      echo "swiftc is required to build the macOS clipboard TCP helper." >&2
+      exit 1
+    fi
+    swiftc "$source_clip_tcp_helper" -o "$clip_tcp_helper"
+  fi
+  chmod 700 "$clip_tcp_helper"
+fi
 
 capslock_hangul="$(normalize_yes_no "${MOONLIGHT_CAPSLOCK_HANGUL:-yes}")"
 if [[ "$capslock_hangul" == "yes" ]]; then
@@ -145,6 +167,99 @@ EOF
   exit 1
 fi
 
+if [[ "$clip_tcp_enabled" == "yes" ]]; then
+  cat > "$clip_tcp_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${clip_tcp_label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${clip_tcp_helper}</string>
+    <string>listen</string>
+    <string>127.0.0.1</string>
+    <string>${clip_w2m_local_port}</string>
+    <string>${runtime_dir}</string>
+    <string>${helper}</string>
+    <string>${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}</string>
+    <string>${log_dir}/moonlight-clipboard-sync.log</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${log_dir}/moonlight-clipboard-tcp.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${log_dir}/moonlight-clipboard-tcp.err.log</string>
+</dict>
+</plist>
+EOF
+
+  launchctl bootout "gui/$(id -u)" "$clip_tcp_plist" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$(id -u)" "$clip_tcp_plist"
+  launchctl enable "gui/$(id -u)/${clip_tcp_label}"
+  launchctl kickstart -k "gui/$(id -u)/${clip_tcp_label}"
+
+  cat > "$clip_tunnel_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${clip_tunnel_label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-N</string>
+    <string>-T</string>
+    <string>-o</string>
+    <string>ExitOnForwardFailure=yes</string>
+    <string>-o</string>
+    <string>ServerAliveInterval=15</string>
+    <string>-o</string>
+    <string>ServerAliveCountMax=2</string>
+    <string>-o</string>
+    <string>BatchMode=yes</string>
+    <string>-o</string>
+    <string>ConnectTimeout=7</string>
+    <string>-o</string>
+    <string>LogLevel=ERROR</string>
+    <string>-o</string>
+    <string>StrictHostKeyChecking=accept-new</string>
+    <string>-L</string>
+    <string>127.0.0.1:${clip_m2w_local_port}:127.0.0.1:${clip_m2w_remote_port}</string>
+    <string>-R</string>
+    <string>127.0.0.1:${clip_w2m_remote_port}:127.0.0.1:${clip_w2m_local_port}</string>
+    <string>${remote}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${log_dir}/moonlight-clipboard-tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${log_dir}/moonlight-clipboard-tunnel.err.log</string>
+</dict>
+</plist>
+EOF
+
+  launchctl bootout "gui/$(id -u)" "$clip_tunnel_plist" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$(id -u)" "$clip_tunnel_plist"
+  launchctl enable "gui/$(id -u)/${clip_tunnel_label}"
+  launchctl kickstart -k "gui/$(id -u)/${clip_tunnel_label}"
+else
+  launchctl bootout "gui/$(id -u)" "$clip_tunnel_plist" >/dev/null 2>&1 || true
+  launchctl bootout "gui/$(id -u)" "$clip_tcp_plist" >/dev/null 2>&1 || true
+  rm -f "$clip_tunnel_plist"
+  rm -f "$clip_tcp_plist"
+fi
+
 cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -178,6 +293,16 @@ cat > "$plist" <<EOF
     <string>${remote}</string>
     <key>MOONLIGHT_CLIPBOARD_MAX_BYTES</key>
     <string>${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}</string>
+    <key>MOONLIGHT_CLIPBOARD_TCP_ENABLED</key>
+    <string>${clip_tcp_enabled}</string>
+    <key>MOONLIGHT_CLIPBOARD_TCP_HELPER</key>
+    <string>${clip_tcp_helper}</string>
+    <key>MOONLIGHT_CLIPBOARD_TCP_SEND_HOST</key>
+    <string>127.0.0.1</string>
+    <key>MOONLIGHT_CLIPBOARD_TCP_SEND_PORT</key>
+    <string>${clip_m2w_local_port}</string>
+    <key>MOONLIGHT_CLIPBOARD_TCP_STATE</key>
+    <string>${runtime_dir}/clipboard-tcp-windows-state.txt</string>
   </dict>
 </dict>
 </plist>
@@ -283,6 +408,9 @@ fi
 
 echo "Moonlight clipboard sync started."
 echo "Log: ${log_dir}/moonlight-clipboard-sync.log"
+if [[ "$clip_tcp_enabled" == "yes" ]]; then
+  echo "Clipboard TCP channels started."
+fi
 if [[ "$capslock_hangul" == "yes" ]]; then
   echo "Caps Lock Hangul sync started."
   echo "Caps Lock log: ${log_dir}/moonlight-capslock-hangul.log"

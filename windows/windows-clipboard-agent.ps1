@@ -18,6 +18,9 @@ $maxBytes = 52428800
 $intervalMs = 700
 $MoonlightCapsLockHangul = "yes"
 $MoonlightCapsLockHangulTcpPort = "47321"
+$MoonlightClipboardTcp = "yes"
+$MoonlightClipboardMacToWindowsTcpPort = "47331"
+$MoonlightClipboardWindowsToMacTcpPort = "47332"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -853,6 +856,169 @@ function Expand-Payload($zipPath, $payloadDir) {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $payloadDir)
 }
 
+function Start-ClipboardTcpListener($port) {
+    if ($port -le 0 -or $port -gt 65535) { return $null }
+
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+        $listener.Server.SetSocketOption(
+            [System.Net.Sockets.SocketOptionLevel]::Socket,
+            [System.Net.Sockets.SocketOptionName]::ReuseAddress,
+            $true
+        )
+        $listener.Start(16)
+        Write-AgentLog ("Clipboard TCP listener enabled on 127.0.0.1:{0}" -f $port)
+        return $listener
+    } catch {
+        Write-AgentLog ("Clipboard TCP listener unavailable on 127.0.0.1:{0}: {1}" -f $port, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Read-TcpLine($stream) {
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    $buffer = New-Object byte[] 1
+
+    while ($bytes.Count -lt 256) {
+        $read = $stream.Read($buffer, 0, 1)
+        if ($read -le 0) {
+            throw "unexpected eof while reading TCP header"
+        }
+
+        if ($buffer[0] -eq 10) {
+            return ([System.Text.Encoding]::UTF8.GetString($bytes.ToArray())).TrimEnd("`r")
+        }
+
+        $bytes.Add($buffer[0])
+    }
+
+    throw "TCP header too long"
+}
+
+function Receive-TcpPayloadToFile($stream, $path, [long]$byteCount) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    $fileStream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $buffer = New-Object byte[] 65536
+        $remaining = $byteCount
+
+        while ($remaining -gt 0) {
+            $wanted = [Math]::Min($buffer.Length, $remaining)
+            $read = $stream.Read($buffer, 0, [int]$wanted)
+            if ($read -le 0) {
+                throw "payload ended early"
+            }
+            $fileStream.Write($buffer, 0, $read)
+            $remaining -= $read
+        }
+    } finally {
+        $fileStream.Dispose()
+    }
+}
+
+function Receive-ClipboardTcpPayload($client) {
+    $client.NoDelay = $true
+    $stream = $client.GetStream()
+    $tmpZip = "$macZip.tcp.tmp"
+
+    try {
+        $header = Read-TcpLine $stream
+        if ($header -notmatch '^MOONCLIP 1 ([0-9]+)$') {
+            throw "invalid TCP clipboard header"
+        }
+
+        $byteCount = [long]$Matches[1]
+        if ($byteCount -gt $maxBytes) {
+            throw ("payload too large: {0} > {1}" -f $byteCount, $maxBytes)
+        }
+
+        Receive-TcpPayloadToFile $stream $tmpZip $byteCount
+        Move-Item -LiteralPath $tmpZip -Destination $macZip -Force
+
+        $macArchiveHash = Get-FileHashString $macZip
+        Expand-Payload $macZip $importDir
+        $imported = Import-ClipboardPayload $importDir
+        if ($null -ne $imported) {
+            $normalized = Export-ClipboardPayload $normalizedDir
+            $script:lastMacArchiveHash = $macArchiveHash
+            $script:lastMacId = $imported.id
+            $script:lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+            Write-AgentLog ("Mac -> Windows TCP {0} ({1}B)" -f $imported.kind, $imported.bytes)
+        }
+    } finally {
+        Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
+        try { $stream.Dispose() } catch {}
+    }
+}
+
+function Receive-ClipboardTcpClients($listener) {
+    if ($null -eq $listener) { return }
+
+    $handled = 0
+    while ($listener.Pending()) {
+        $client = $null
+        try {
+            $client = $listener.AcceptTcpClient()
+            Receive-ClipboardTcpPayload $client
+        } catch {
+            if ($_.Exception.Message -notlike "*unexpected eof while reading TCP header*") {
+                Write-AgentLog ("Clipboard TCP receive error: {0}" -f $_.Exception.Message)
+            }
+        } finally {
+            if ($null -ne $client) {
+                try { $client.Dispose() } catch {}
+            }
+        }
+
+        $handled++
+        if ($handled -ge 8) {
+            break
+        }
+    }
+}
+
+function Send-ClipboardTcpPayload($zipPath, $port) {
+    if ($port -le 0 -or $port -gt 65535) { return $false }
+    if (-not (Test-Path -LiteralPath $zipPath)) { return $false }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $connectHandle = $null
+    try {
+        $client.NoDelay = $true
+        $connectHandle = $client.BeginConnect([System.Net.IPAddress]::Loopback, $port, $null, $null)
+        if (-not $connectHandle.AsyncWaitHandle.WaitOne(500)) {
+            return $false
+        }
+        $client.EndConnect($connectHandle)
+
+        $stream = $client.GetStream()
+        $fileInfo = Get-Item -LiteralPath $zipPath
+        $header = [System.Text.Encoding]::UTF8.GetBytes(("MOONCLIP 1 {0}`n" -f $fileInfo.Length))
+        $stream.Write($header, 0, $header.Length)
+
+        $fileStream = [System.IO.File]::OpenRead($zipPath)
+        try {
+            $buffer = New-Object byte[] 65536
+            while (($read = $fileStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $stream.Write($buffer, 0, $read)
+            }
+        } finally {
+            $fileStream.Dispose()
+        }
+
+        $stream.Flush()
+        return $true
+    } catch {
+        Write-AgentLog ("Windows -> Mac TCP send error: {0}" -f $_.Exception.Message)
+        return $false
+    } finally {
+        if ($null -ne $connectHandle) {
+            try { $connectHandle.AsyncWaitHandle.Close() } catch {}
+        }
+        try { $client.Dispose() } catch {}
+    }
+}
+
 function Get-CapsLockHangulRequestId {
     if (-not (Test-Path -LiteralPath $capsLockHangulRequest)) { return "" }
     try {
@@ -884,13 +1050,25 @@ $lastMacArchiveHash = ""
 $lastMacId = ""
 $lastWindowsId = ""
 $lastCapsLockHangulRequestId = ""
+$lastWindowsExportAt = [DateTime]::MinValue
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
 $capsLockHangulTcpPort = Get-IntSetting $MoonlightCapsLockHangulTcpPort 47321
 $capsLockHangulHookInstalled = $false
+$enableClipboardTcp = Test-SettingEnabled $MoonlightClipboardTcp $true
+$clipboardMacToWindowsTcpPort = Get-IntSetting $MoonlightClipboardMacToWindowsTcpPort 47331
+$clipboardWindowsToMacTcpPort = Get-IntSetting $MoonlightClipboardWindowsToMacTcpPort 47332
+$clipboardTcpListener = $null
+$loopSleepMs = if ($enableClipboardTcp) { 50 } else { $intervalMs }
 
 Write-AgentLog "started"
 
 try {
+    if ($enableClipboardTcp) {
+        $clipboardTcpListener = Start-ClipboardTcpListener $clipboardMacToWindowsTcpPort
+    } else {
+        Write-AgentLog "Clipboard TCP disabled"
+    }
+
     if ($enableCapsLockHangul) {
         $capsLockHangulHookInstalled = Install-CapsLockHangulHook
         if ($capsLockHangulHookInstalled) {
@@ -911,6 +1089,10 @@ try {
 
     while ($true) {
         try {
+            if ($enableClipboardTcp -and $null -ne $clipboardTcpListener) {
+                Receive-ClipboardTcpClients $clipboardTcpListener
+            }
+
             if ($enableCapsLockHangul -and $capsLockHangulHookInstalled) {
                 $capsLockHangulRequestId = Get-CapsLockHangulRequestId
                 if (-not [string]::IsNullOrWhiteSpace($capsLockHangulRequestId) -and
@@ -920,6 +1102,7 @@ try {
                 }
             }
 
+            $now = Get-Date
             if (Test-Path -LiteralPath $macZip) {
                 $macArchiveHash = Get-FileHashString $macZip
                 if ($macArchiveHash -ne $lastMacArchiveHash) {
@@ -935,33 +1118,47 @@ try {
                 }
             }
 
-            $exportDir = New-TemporaryPayloadDirectory $exportRoot
-            try {
-                $exported = Export-ClipboardPayload $exportDir
-                if ($null -ne $exported -and $exported.id -ne $lastWindowsId) {
-                    if ($exported.id -eq $lastMacId) {
-                        $lastWindowsId = $exported.id
-                    } elseif ($exported.bytes -gt $maxBytes) {
-                        $lastWindowsId = $exported.id
-                        Write-AgentLog ("skip Windows -> Mac {0} ({1}B); limit is {2}B" -f $exported.kind, $exported.bytes, $maxBytes)
-                    } else {
-                        Compress-Payload $exportDir $windowsZip $windowsTmpZip
-                        $lastWindowsId = $exported.id
-                        Write-AgentLog ("Windows -> Mac {0} ({1}B)" -f $exported.kind, $exported.bytes)
+            if (($now - $lastWindowsExportAt).TotalMilliseconds -ge $intervalMs) {
+                $lastWindowsExportAt = $now
+                $exportDir = New-TemporaryPayloadDirectory $exportRoot
+                try {
+                    $exported = Export-ClipboardPayload $exportDir
+                    if ($null -ne $exported -and $exported.id -ne $lastWindowsId) {
+                        if ($exported.id -eq $lastMacId) {
+                            $lastWindowsId = $exported.id
+                        } elseif ($exported.bytes -gt $maxBytes) {
+                            $lastWindowsId = $exported.id
+                            Write-AgentLog ("skip Windows -> Mac {0} ({1}B); limit is {2}B" -f $exported.kind, $exported.bytes, $maxBytes)
+                        } else {
+                            Compress-Payload $exportDir $windowsZip $windowsTmpZip
+                            $lastWindowsId = $exported.id
+                            if ($enableClipboardTcp -and (Send-ClipboardTcpPayload $windowsZip $clipboardWindowsToMacTcpPort)) {
+                                Write-AgentLog ("Windows -> Mac TCP {0} ({1}B)" -f $exported.kind, $exported.bytes)
+                            } else {
+                                if ($enableClipboardTcp) {
+                                    Write-AgentLog ("Windows -> Mac {0} ({1}B); TCP fallback ZIP ready" -f $exported.kind, $exported.bytes)
+                                } else {
+                                    Write-AgentLog ("Windows -> Mac {0} ({1}B)" -f $exported.kind, $exported.bytes)
+                                }
+                            }
+                        }
                     }
+                } finally {
+                    Remove-Item -LiteralPath $exportDir -Recurse -Force
                 }
-            } finally {
-                Remove-Item -LiteralPath $exportDir -Recurse -Force
+                Remove-OldPayloadDirectories $exportRoot
             }
-            Remove-OldPayloadDirectories $exportRoot
         } catch {
             Write-AgentLog ("error: {0}" -f $_.Exception.Message)
         }
 
-        Start-Sleep -Milliseconds $intervalMs
+        Start-Sleep -Milliseconds $loopSleepMs
     }
 }
 finally {
+    if ($null -ne $clipboardTcpListener) {
+        try { $clipboardTcpListener.Stop() } catch {}
+    }
     if ($capsLockHangulHookInstalled) {
         try { [MoonlightCapsLockHangulHook]::Uninstall() } catch {}
     }
