@@ -166,8 +166,7 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
 func requestInputPermissionsIfNeeded() {
     let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
     let accessibilityTrusted = AXIsProcessTrusted()
-    let inputMonitoringTrusted = CGPreflightListenEventAccess()
-    log("permission state: bundle=\(bundleID) accessibility=\(accessibilityTrusted) inputMonitoring=\(inputMonitoringTrusted)")
+    log("permission state: bundle=\(bundleID) accessibility=\(accessibilityTrusted)")
 
     let accessibilityOptions = [
         kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true
@@ -177,10 +176,6 @@ func requestInputPermissionsIfNeeded() {
         log("Accessibility permission is required for Caps Lock Hangul sync.")
     }
 
-    if !inputMonitoringTrusted {
-        log("Input Monitoring permission is required for Caps Lock Hangul sync.")
-        _ = CGRequestListenEventAccess()
-    }
 }
 
 if CommandLine.arguments.contains("--request-permissions") {
@@ -203,7 +198,7 @@ guard let eventTap = CGEvent.tapCreate(
     userInfo: nil
 ) else {
     log("failed to create Caps Lock event tap")
-    log("grant Accessibility/Input Monitoring permission, then restart Moonlight Companion")
+    log("grant Accessibility permission, then restart Moonlight Companion")
     exit(1)
 }
 

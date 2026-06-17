@@ -124,8 +124,6 @@ if [[ "$capslock_hangul" == "yes" ]]; then
   <true/>
   <key>NSAccessibilityUsageDescription</key>
   <string>Detect Caps Lock while Moonlight is focused so it can toggle the Windows Korean IME.</string>
-  <key>NSInputMonitoringUsageDescription</key>
-  <string>Detect Caps Lock while Moonlight is focused so it can toggle the Windows Korean IME.</string>
 </dict>
 </plist>
 EOF

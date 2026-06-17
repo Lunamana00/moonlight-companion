@@ -26,7 +26,7 @@ Current MVP version: `v0.1.0`
 - Moonlight is installed at `/Applications/Moonlight.app`.
 - The Windows agent runs inside the logged-in Windows GUI session. It is installed into the user's Startup folder.
 - Caps Lock Han/Eng switching requires the Windows Korean IME to be installed and active.
-- Caps Lock Han/Eng switching uses a macOS event monitor while Moonlight is focused. macOS may require Accessibility/Input Monitoring permission for the helper.
+- Caps Lock Han/Eng switching uses a macOS event monitor while Moonlight is focused. macOS may require Accessibility permission for the helper.
 
 ## Daily Use
 
@@ -217,4 +217,4 @@ If Caps Lock Han/Eng switching does not respond, check:
 mac/status-moonlight-clipboard-sync.sh
 ```
 
-Then grant Accessibility/Input Monitoring permission to the Caps Lock helper if macOS reports that the event tap cannot be created.
+Then grant Accessibility permission to the Caps Lock helper if macOS reports that the event tap cannot be created.
