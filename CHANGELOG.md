@@ -17,7 +17,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The macOS Caps Lock helper now also acts as the Moonlight keyboard helper.
 - Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
 - Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
-- Moonlight launch now attempts to place the window on the selected Mac display after startup.
+- Moonlight launch now waits longer for the stream window, logs display placement diagnostics, and attempts to place the window on the selected Mac display after startup.
 
 ## v0.2.0 - 2026-06-17
 

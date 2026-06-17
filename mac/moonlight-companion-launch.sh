@@ -22,6 +22,7 @@ MOONLIGHT_FPS="${MOONLIGHT_FPS:-60}"
 MOONLIGHT_BITRATE="${MOONLIGHT_BITRATE:-60000}"
 MOONLIGHT_DISPLAY_MODE="${MOONLIGHT_DISPLAY_MODE:-windowed}"
 MOONLIGHT_DISPLAY_INDEX="${MOONLIGHT_DISPLAY_INDEX:-default}"
+MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="${MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS:-180}"
 MOONLIGHT_VIDEO_CODEC="${MOONLIGHT_VIDEO_CODEC:-HEVC}"
 MOONLIGHT_CAPTURE_SYSTEM_KEYS="${MOONLIGHT_CAPTURE_SYSTEM_KEYS:-always}"
 MOONLIGHT_ABSOLUTE_MOUSE="${MOONLIGHT_ABSOLUTE_MOUSE:-yes}"
@@ -184,18 +185,59 @@ stop_moonlight() {
 }
 
 position_moonlight_window() {
-  [[ "$MOONLIGHT_DISPLAY_INDEX" != "default" ]] || return 0
+  if [[ "$MOONLIGHT_DISPLAY_INDEX" == "default" ]]; then
+    log "display placement skipped: default display"
+    return 0
+  fi
 
-  MOONLIGHT_DISPLAY_INDEX="$MOONLIGHT_DISPLAY_INDEX" osascript -l JavaScript <<'JXA' >/dev/null 2>&1 || true
+  local timeout placement_status
+  timeout="$MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS"
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || (( timeout < 1 )); then
+    timeout="180"
+  fi
+
+  log "display placement requested: index=${MOONLIGHT_DISPLAY_INDEX}, mode=${MOONLIGHT_DISPLAY_MODE}, timeout=${timeout}s"
+  set +e
+  MOONLIGHT_DISPLAY_INDEX="$MOONLIGHT_DISPLAY_INDEX" \
+    MOONLIGHT_DISPLAY_MODE="$MOONLIGHT_DISPLAY_MODE" \
+    MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="$timeout" \
+    osascript -l JavaScript <<'JXA' 2>&1 | while IFS= read -r line; do
 ObjC.import('AppKit')
 
-const selected = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('MOONLIGHT_DISPLAY_INDEX')) || 'default'
+const environment = $.NSProcessInfo.processInfo.environment
+
+function envString(name, fallback) {
+  const value = environment.objectForKey(name)
+  return value ? ObjC.unwrap(value) : fallback
+}
+
+function output(message) {
+  console.log(message)
+}
+
+function integer(value, fallback) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function arrayString(value) {
+  try {
+    return value().join(',')
+  } catch (error) {
+    return `unavailable:${error.message}`
+  }
+}
+
+const selected = envString('MOONLIGHT_DISPLAY_INDEX', 'default')
+const mode = envString('MOONLIGHT_DISPLAY_MODE', 'unknown')
+const timeoutSeconds = Math.max(1, integer(envString('MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS', '180'), 180))
 const screenIndex = Number.parseInt(selected, 10)
 if (!Number.isFinite(screenIndex) || screenIndex < 0) {
   throw new Error('invalid display index')
 }
 
 const screens = $.NSScreen.screens
+output(`screen-count=${screens.count}`)
 if (screenIndex >= screens.count) {
   throw new Error('display index not available')
 }
@@ -204,31 +246,116 @@ const screen = screens.objectAtIndex(screenIndex)
 const frame = screen.frame
 const visible = screen.visibleFrame
 const mainHeight = $.NSScreen.screens.objectAtIndex(0).frame.size.height
-const x = Math.round(visible.origin.x + 24)
-const y = Math.round(mainHeight - visible.origin.y - visible.size.height + 24)
-const width = Math.max(960, Math.round(visible.size.width - 48))
-const height = Math.max(540, Math.round(visible.size.height - 48))
+const useWholeScreen = mode === 'borderless' || mode === 'fullscreen'
+const bounds = useWholeScreen ? frame : visible
+const inset = useWholeScreen ? 0 : 24
+const x = Math.round(bounds.origin.x + inset)
+const y = Math.round(mainHeight - bounds.origin.y - bounds.size.height + inset)
+const width = Math.max(960, Math.round(bounds.size.width - (inset * 2)))
+const height = Math.max(540, Math.round(bounds.size.height - (inset * 2)))
+const frameTarget = {
+  x: Math.round(frame.origin.x),
+  y: Math.round(mainHeight - frame.origin.y - frame.size.height),
+  width: Math.round(frame.size.width),
+  height: Math.round(frame.size.height)
+}
+const visibleTarget = {
+  x: Math.round(visible.origin.x),
+  y: Math.round(mainHeight - visible.origin.y - visible.size.height),
+  width: Math.round(visible.size.width),
+  height: Math.round(visible.size.height)
+}
 const systemEvents = Application('System Events')
+const deadline = Date.now() + (timeoutSeconds * 1000)
+let lastState = 'not-started'
+let attempts = 0
+let placed = false
 
-for (let attempt = 0; attempt < 80; attempt++) {
-  delay(0.25)
+output(`target index=${screenIndex} mode=${mode} position=${x},${y} size=${width},${height}`)
+
+function closeTo(position, targetX, targetY) {
+  return Math.abs(position[0] - targetX) <= 12 && Math.abs(position[1] - targetY) <= 12
+}
+
+function onTargetScreen(position) {
+  return position[0] >= frameTarget.x - 12 &&
+    position[0] <= frameTarget.x + frameTarget.width + 12 &&
+    position[1] >= frameTarget.y - 12 &&
+    position[1] <= frameTarget.y + frameTarget.height + 12
+}
+
+while (Date.now() < deadline) {
+  attempts += 1
   const matches = systemEvents.processes.whose({ name: 'Moonlight' })()
   if (matches.length === 0) {
+    if (lastState !== 'waiting-for-process') {
+      output('waiting-for-process')
+      lastState = 'waiting-for-process'
+    }
+    delay(0.5)
     continue
   }
 
   const process = matches[0]
   const windows = process.windows()
   if (windows.length === 0) {
+    if (lastState !== 'waiting-for-window') {
+      output(`process-found attempt=${attempts}`)
+      output('waiting-for-window')
+      lastState = 'waiting-for-window'
+    }
+    delay(0.5)
     continue
   }
 
   const window = windows[0]
+  output(`window-found attempt=${attempts} count=${windows.length}`)
+  output(`before position=${arrayString(() => window.position())} size=${arrayString(() => window.size())}`)
+  try {
+    Application('Moonlight').activate()
+  } catch (error) {
+    output(`activate-skipped=${error.message}`)
+  }
   window.position = [x, y]
+  delay(0.2)
   window.size = [width, height]
-  break
+  delay(0.2)
+  const afterPosition = window.position()
+  const afterSize = window.size()
+  output(`after position=${afterPosition.join(',')} size=${afterSize.join(',')}`)
+
+  const positionMatched = closeTo(afterPosition, x, y) ||
+    (useWholeScreen && closeTo(afterPosition, visibleTarget.x, visibleTarget.y)) ||
+    (useWholeScreen && onTargetScreen(afterPosition))
+  if (positionMatched) {
+    placed = true
+    output('success')
+    if (useWholeScreen && !closeTo(afterPosition, x, y)) {
+      output('position-note=window-was-placed-on-target-display-after-macos-adjustment')
+    }
+    if (mode === 'borderless' && (Math.abs(afterSize[0] - width) > 12 || Math.abs(afterSize[1] - height) > 12)) {
+      output('size-note=borderless-window-size-was-controlled-by-moonlight')
+    }
+    break
+  }
+
+  output('retrying-after-position-mismatch')
+  lastState = 'position-mismatch'
+  delay(0.5)
+}
+
+if (!placed) {
+  throw new Error(`window placement timed out after ${timeoutSeconds}s (${lastState})`)
 }
 JXA
+    [[ -n "$line" ]] && log "display placement: $line"
+  done
+  placement_status="${PIPESTATUS[0]}"
+  set -e
+
+  if [[ $placement_status -ne 0 ]]; then
+    log "display placement failed: status=${placement_status}"
+  fi
 }
 
 launch_moonlight() {

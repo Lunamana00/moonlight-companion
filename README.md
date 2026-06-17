@@ -172,6 +172,7 @@ MOONLIGHT_FPS="60"
 MOONLIGHT_BITRATE="60000"
 MOONLIGHT_DISPLAY_MODE="windowed"
 MOONLIGHT_DISPLAY_INDEX="default"
+MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="180"
 MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
 MOONLIGHT_SHORTCUT_REMAP="yes"
@@ -280,4 +281,4 @@ If Caps Lock Han/Eng switching does not respond, check:
 mac/status-moonlight-clipboard-sync.sh
 ```
 
-Then grant Accessibility permission to the keyboard helper if macOS reports that the event tap cannot be created. Launch display placement is best-effort because Moonlight does not expose a native monitor-selection CLI flag; macOS may require window-control permission for Moonlight Companion/System Events before it can move the Moonlight window.
+Then grant Accessibility permission to the keyboard helper if macOS reports that the event tap cannot be created. Launch display placement is best-effort because Moonlight does not expose a native monitor-selection CLI flag; macOS may require window-control permission for Moonlight Companion/System Events before it can move the Moonlight window. If Moonlight takes a long time to create its stream window, increase `MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS`.
