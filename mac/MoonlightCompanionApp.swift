@@ -563,8 +563,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
+        requestKeyboardHelperPermissions()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func requestKeyboardHelperPermissions() {
+        let helperURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications/Moonlight Caps Lock Hangul.app")
+        guard FileManager.default.fileExists(atPath: helperURL.path) else {
+            return
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.arguments = ["--request-permissions"]
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: helperURL, configuration: configuration) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.detailLabel.stringValue = "Could not request keyboard helper permission: \(error.localizedDescription)"
+            }
         }
     }
 

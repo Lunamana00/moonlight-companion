@@ -157,7 +157,15 @@ if [[ "$keyboard_helper_enabled" == "yes" ]]; then
 EOF
 
   if command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign - --identifier "$caps_label" "$caps_app" >/dev/null 2>&1 || true
+    # Keep the ad-hoc designated requirement stable across helper rebuilds so TCC
+    # does not bind Accessibility permission to a stale cdhash after updates.
+    codesign \
+      --force \
+      --deep \
+      --sign - \
+      --identifier "$caps_label" \
+      --requirements "=designated => identifier \"${caps_label}\"" \
+      "$caps_app" >/dev/null 2>&1 || true
   fi
 fi
 

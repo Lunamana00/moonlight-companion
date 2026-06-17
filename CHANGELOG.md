@@ -14,6 +14,8 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 
 ### Changed
 
+- The Caps Lock keyboard helper is now signed with a stable ad-hoc requirement so macOS Accessibility permission survives helper rebuilds more reliably.
+- The GUI `Permissions` button now starts the keyboard helper permission request before opening macOS Accessibility settings.
 - The macOS Caps Lock helper now also acts as the Moonlight keyboard helper.
 - Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
 - Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
