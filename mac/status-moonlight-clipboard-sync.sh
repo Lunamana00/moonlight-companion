@@ -35,7 +35,7 @@ print_service_status "clipboard sync" "$label"
 print_service_status "clipboard TCP receiver" "$clip_tcp_label"
 print_service_status "clipboard TCP tunnel" "$clip_tunnel_label"
 print_service_status "Caps Lock tunnel" "$caps_tunnel_label"
-print_service_status "Caps Lock Hangul sync" "$caps_label"
+print_service_status "Moonlight keyboard helper" "$caps_label"
 
 if [[ -f "$plist" ]]; then
   echo "plist: $plist"
@@ -47,7 +47,7 @@ if [[ -f "$clip_tunnel_plist" ]]; then
   echo "clipboard tunnel plist: $clip_tunnel_plist"
 fi
 if [[ -f "$caps_plist" ]]; then
-  echo "caps plist: $caps_plist"
+  echo "keyboard helper plist: $caps_plist"
 fi
 if [[ -f "$caps_tunnel_plist" ]]; then
   echo "caps tunnel plist: $caps_tunnel_plist"
@@ -61,6 +61,6 @@ fi
 
 if [[ -f "$caps_log_path" ]]; then
   echo
-  echo "recent Caps Lock log:"
+  echo "recent keyboard log:"
   tail -20 "$caps_log_path"
 fi

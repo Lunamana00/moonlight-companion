@@ -11,12 +11,14 @@ Current version: `v0.2.0`
 ## Features
 
 - Launches Moonlight with a configurable profile.
+- Provides a GUI for editing launch settings, starting/stopping Moonlight, and selecting the launch display.
 - Builds a native macOS wrapper app bundle.
 - Starts a macOS `launchd` clipboard sync agent.
 - Deploys a Windows clipboard agent over SSH.
 - Syncs clipboard payloads over persistent loopback TCP channels forwarded by SSH, with ZIP file polling as fallback.
 - Supports text, images, and file/folder clipboard payloads.
 - Maps Caps Lock to the Windows Korean IME Han/Eng toggle while the Windows agent is running.
+- Maps Mac-style Command shortcuts to Windows-style Control shortcuts while Moonlight is focused.
 - Uses SSH over Tailscale; no public port forwarding is required.
 
 ## Current Assumptions
@@ -50,22 +52,26 @@ ditto "dist/Moonlight Companion.app" "/Applications/Moonlight Companion.app"
 open "/Applications/Moonlight Companion.app"
 ```
 
-When the app opens, it:
+When the app opens, adjust the settings and click `Start Moonlight`. The app then:
 
 1. Verifies SSH access to the Windows host.
 2. Deploys or updates the Windows clipboard agent.
-3. Starts the macOS clipboard sync and Caps Lock Han/Eng agents.
+3. Starts the macOS clipboard sync and Moonlight keyboard agents.
 4. Launches Moonlight with the configured stream settings.
+
+The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch.
 
 Inside the Moonlight session, use Windows shortcuts:
 
-- Mac side copy: `Cmd+C`
-- Paste into Windows/Moonlight: `Ctrl+V`
-- Copy inside Windows/Moonlight: `Ctrl+C`
-- Paste back on Mac: `Cmd+V`
+- Copy inside Windows/Moonlight: `Cmd+C`
+- Paste inside Windows/Moonlight: `Cmd+V`
+- Cut inside Windows/Moonlight: `Cmd+X`
+- Undo inside Windows/Moonlight: `Cmd+Z`
 - Toggle Korean/English input in Windows: `Caps Lock`
 
-When Moonlight is focused, the macOS Caps Lock helper intercepts Caps Lock and sends a tiny command over a persistent local TCP connection. That local connection is forwarded over SSH to a loopback-only listener in the Windows GUI agent, which toggles the active Korean IME conversion mode in the logged-in desktop session.
+When Moonlight is focused, the macOS keyboard helper intercepts Caps Lock and sends a tiny command over a persistent local TCP connection. That local connection is forwarded over SSH to a loopback-only listener in the Windows GUI agent, which toggles the active Korean IME conversion mode in the logged-in desktop session.
+
+The same helper remaps Mac-style Command shortcuts to Windows-style Control shortcuts while Moonlight is focused. That means common shortcuts such as `Cmd+C`, `Cmd+V`, `Cmd+X`, `Cmd+Z`, `Cmd+A`, `Cmd+S`, `Cmd+F`, and `Cmd+W` are delivered to Windows as their `Ctrl` equivalents.
 
 Clipboard sync uses the same shape of transport: Moonlight Companion keeps separate TCP channels open for Mac-to-Windows and Windows-to-Mac clipboard payloads. Payloads are still encoded as ZIP archives for text, images, and file drops, and the older shared ZIP polling path remains available as a fallback.
 
@@ -165,8 +171,11 @@ MOONLIGHT_RESOLUTION="3456x2234"
 MOONLIGHT_FPS="60"
 MOONLIGHT_BITRATE="60000"
 MOONLIGHT_DISPLAY_MODE="windowed"
+MOONLIGHT_DISPLAY_INDEX="default"
+MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="180"
 MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
+MOONLIGHT_SHORTCUT_REMAP="yes"
 MOONLIGHT_CLIPBOARD_TCP="yes"
 ```
 
@@ -210,7 +219,7 @@ flowchart LR
     Moonlight["Moonlight.app"]
     Sync["launchd clipboard sync"]
     Receiver["clipboard TCP receiver"]
-    Caps["Caps Lock helper"]
+    Keyboard["keyboard helper"]
     MacClip["macOS clipboard"]
   end
 
@@ -245,7 +254,8 @@ flowchart LR
   Sync <-->|"fallback ZIP polling"| Fallback
   Fallback <-->|"archives"| Payloads
   Agent <-->|"fallback import/export"| Payloads
-  Caps -->|"toggle"| CapsTunnel
+  Keyboard -->|"Command shortcuts -> Control"| Moonlight
+  Keyboard -->|"Caps Lock toggle"| CapsTunnel
   CapsTunnel -->|"loopback TCP 47321"| Agent
   Agent -->|"toggle mode"| IME
 ```
@@ -271,4 +281,4 @@ If Caps Lock Han/Eng switching does not respond, check:
 mac/status-moonlight-clipboard-sync.sh
 ```
 
-Then grant Accessibility permission to the Caps Lock helper if macOS reports that the event tap cannot be created.
+Then grant Accessibility permission to the keyboard helper if macOS reports that the event tap cannot be created. Launch display placement is best-effort because Moonlight does not expose a native monitor-selection CLI flag; macOS may require window-control permission for Moonlight Companion/System Events before it can move the Moonlight window. If Moonlight takes a long time to create its stream window, increase `MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS`.

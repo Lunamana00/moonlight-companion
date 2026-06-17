@@ -103,7 +103,13 @@ if [[ "$clip_tcp_enabled" == "yes" ]]; then
 fi
 
 capslock_hangul="$(normalize_yes_no "${MOONLIGHT_CAPSLOCK_HANGUL:-yes}")"
-if [[ "$capslock_hangul" == "yes" ]]; then
+shortcut_remap="$(normalize_yes_no "${MOONLIGHT_SHORTCUT_REMAP:-yes}")"
+keyboard_helper_enabled="no"
+if [[ "$capslock_hangul" == "yes" || "$shortcut_remap" == "yes" ]]; then
+  keyboard_helper_enabled="yes"
+fi
+
+if [[ "$keyboard_helper_enabled" == "yes" ]]; then
   if [[ "$legacy_caps_app" != "$caps_app" && -d "$legacy_caps_app" ]]; then
     rm -rf "$legacy_caps_app"
   fi
@@ -145,7 +151,7 @@ if [[ "$capslock_hangul" == "yes" ]]; then
   <key>LSUIElement</key>
   <true/>
   <key>NSAccessibilityUsageDescription</key>
-  <string>Detect Caps Lock while Moonlight is focused so it can toggle the Windows Korean IME.</string>
+  <string>Detect Moonlight keyboard shortcuts so Caps Lock and Command shortcuts can be translated for Windows.</string>
 </dict>
 </plist>
 EOF
@@ -361,7 +367,12 @@ EOF
   launchctl bootstrap "gui/$(id -u)" "$caps_tunnel_plist"
   launchctl enable "gui/$(id -u)/${caps_tunnel_label}"
   launchctl kickstart -k "gui/$(id -u)/${caps_tunnel_label}"
+else
+  launchctl bootout "gui/$(id -u)" "$caps_tunnel_plist" >/dev/null 2>&1 || true
+  rm -f "$caps_tunnel_plist"
+fi
 
+if [[ "$keyboard_helper_enabled" == "yes" ]]; then
   cat > "$caps_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -390,6 +401,10 @@ EOF
     <string>127.0.0.1</string>
     <key>MOONLIGHT_CAPSLOCK_HANGUL_PORT</key>
     <string>${caps_tcp_local_port}</string>
+    <key>MOONLIGHT_CAPSLOCK_HANGUL</key>
+    <string>${capslock_hangul}</string>
+    <key>MOONLIGHT_SHORTCUT_REMAP</key>
+    <string>${shortcut_remap}</string>
   </dict>
 </dict>
 </plist>
@@ -400,9 +415,7 @@ EOF
   launchctl enable "gui/$(id -u)/${caps_label}"
   launchctl kickstart -k "gui/$(id -u)/${caps_label}"
 else
-  launchctl bootout "gui/$(id -u)" "$caps_tunnel_plist" >/dev/null 2>&1 || true
   launchctl bootout "gui/$(id -u)" "$caps_plist" >/dev/null 2>&1 || true
-  rm -f "$caps_tunnel_plist"
   rm -f "$caps_plist"
 fi
 
@@ -414,4 +427,8 @@ fi
 if [[ "$capslock_hangul" == "yes" ]]; then
   echo "Caps Lock Hangul sync started."
   echo "Caps Lock log: ${log_dir}/moonlight-capslock-hangul.log"
+fi
+if [[ "$shortcut_remap" == "yes" ]]; then
+  echo "Moonlight Command-to-Control shortcut remap started."
+  echo "Shortcut remap log: ${log_dir}/moonlight-capslock-hangul.log"
 fi

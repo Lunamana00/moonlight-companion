@@ -7,15 +7,28 @@ let capsLockKeyCode: Int64 = 57
 let moonlightBundleIdentifier = "com.moonlight-stream.Moonlight"
 let tcpHost = ProcessInfo.processInfo.environment["MOONLIGHT_CAPSLOCK_HANGUL_HOST"] ?? "127.0.0.1"
 let tcpPort = UInt16(ProcessInfo.processInfo.environment["MOONLIGHT_CAPSLOCK_HANGUL_PORT"] ?? "") ?? 47321
+let capsLockHangulEnabled = normalizeYesNo(ProcessInfo.processInfo.environment["MOONLIGHT_CAPSLOCK_HANGUL"] ?? "yes")
+let shortcutRemapEnabled = normalizeYesNo(ProcessInfo.processInfo.environment["MOONLIGHT_SHORTCUT_REMAP"] ?? "yes")
 let debounceSeconds = 0.25
 let senderQueue = DispatchQueue(label: "com.lunamana.moonlight-capslock-hangul.sender")
+let syntheticSource = CGEventSource(stateID: .hidSystemState)
 
 var lastCapsLockEvent = Date.distantPast
+var suppressedShortcutKeyUps = Set<Int64>()
 
 func log(_ message: String) {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
     FileHandle.standardError.write(Data("\(formatter.string(from: Date())) \(message)\n".utf8))
+}
+
+func normalizeYesNo(_ value: String) -> Bool {
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "y", "yes", "true", "on":
+        return true
+    default:
+        return false
+    }
 }
 
 func isMoonlightFrontmost() -> Bool {
@@ -24,6 +37,44 @@ func isMoonlightFrontmost() -> Bool {
     }
 
     return app.bundleIdentifier == moonlightBundleIdentifier || app.localizedName == "Moonlight"
+}
+
+let commandToControlKeyNames: [Int64: String] = [
+    0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V",
+    11: "B", 12: "Q", 13: "W", 14: "E", 15: "R", 16: "Y", 17: "T", 18: "1", 19: "2",
+    20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9", 26: "7", 27: "-", 28: "8",
+    29: "0", 30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P", 37: "L", 38: "J",
+    39: "'", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M", 47: ".",
+    48: "Tab", 50: "`", 51: "Delete"
+]
+
+func commandToControlKeyName(_ keyCode: Int64) -> String? {
+    commandToControlKeyNames[keyCode]
+}
+
+func remappedShortcutFlags(from flags: CGEventFlags) -> CGEventFlags {
+    var nextFlags = flags
+    nextFlags.remove(.maskCommand)
+    nextFlags.insert(.maskControl)
+    return nextFlags
+}
+
+func sendControlShortcut(keyCode: Int64, flags: CGEventFlags) {
+    let nextFlags = remappedShortcutFlags(from: flags)
+    guard let down = CGEvent(keyboardEventSource: syntheticSource, virtualKey: CGKeyCode(keyCode), keyDown: true),
+          let up = CGEvent(keyboardEventSource: syntheticSource, virtualKey: CGKeyCode(keyCode), keyDown: false) else {
+        log("failed to synthesize shortcut for keyCode=\(keyCode)")
+        return
+    }
+
+    down.flags = nextFlags
+    up.flags = nextFlags
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+
+    if let name = commandToControlKeyName(keyCode) {
+        log("remapped Command+\(name) to Control+\(name)")
+    }
 }
 
 final class CapsLockTcpSender {
@@ -138,29 +189,40 @@ if CommandLine.arguments.contains("--send-once") {
 }
 
 let callback: CGEventTapCallBack = { _, type, event, _ in
-    guard type == .flagsChanged else {
-        return Unmanaged.passUnretained(event)
-    }
+    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-    guard event.getIntegerValueField(.keyboardEventKeycode) == capsLockKeyCode else {
-        return Unmanaged.passUnretained(event)
+    if type == .keyUp, suppressedShortcutKeyUps.remove(keyCode) != nil {
+        return nil
     }
 
     guard isMoonlightFrontmost() else {
         return Unmanaged.passUnretained(event)
     }
 
-    let now = Date()
-    if now.timeIntervalSince(lastCapsLockEvent) < debounceSeconds {
+    if type == .flagsChanged, capsLockHangulEnabled, keyCode == capsLockKeyCode {
+        let now = Date()
+        if now.timeIntervalSince(lastCapsLockEvent) < debounceSeconds {
+            return nil
+        }
+        lastCapsLockEvent = now
+
+        senderQueue.async {
+            toggleSender.sendToggle()
+        }
+
         return nil
     }
-    lastCapsLockEvent = now
 
-    senderQueue.async {
-        toggleSender.sendToggle()
+    if type == .keyDown, shortcutRemapEnabled, commandToControlKeyName(keyCode) != nil {
+        let flags = event.flags
+        if flags.contains(.maskCommand), !flags.contains(.maskControl) {
+            suppressedShortcutKeyUps.insert(keyCode)
+            sendControlShortcut(keyCode: keyCode, flags: flags)
+            return nil
+        }
     }
 
-    return nil
+    return Unmanaged.passUnretained(event)
 }
 
 func requestInputPermissionsIfNeeded() {
@@ -193,7 +255,9 @@ guard let eventTap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
     place: .headInsertEventTap,
     options: .defaultTap,
-    eventsOfInterest: CGEventMask(1 << CGEventType.flagsChanged.rawValue),
+    eventsOfInterest: CGEventMask(1 << CGEventType.flagsChanged.rawValue) |
+        CGEventMask(1 << CGEventType.keyDown.rawValue) |
+        CGEventMask(1 << CGEventType.keyUp.rawValue),
     callback: callback,
     userInfo: nil
 ) else {
@@ -206,8 +270,10 @@ let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap,
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
 
-log("Caps Lock Hangul sync started")
-senderQueue.async {
-    toggleSender.connectIfNeeded()
+log("Moonlight keyboard sync started; capsLockHangul=\(capsLockHangulEnabled), shortcutRemap=\(shortcutRemapEnabled)")
+if capsLockHangulEnabled {
+    senderQueue.async {
+        toggleSender.connectIfNeeded()
+    }
 }
 CFRunLoopRun()
