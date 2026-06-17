@@ -11,6 +11,7 @@ Current version: `v0.2.0`
 ## Features
 
 - Launches Moonlight with a configurable profile.
+- Provides a GUI for editing launch settings, starting/stopping Moonlight, and selecting the launch display.
 - Builds a native macOS wrapper app bundle.
 - Starts a macOS `launchd` clipboard sync agent.
 - Deploys a Windows clipboard agent over SSH.
@@ -58,7 +59,7 @@ When the app opens, adjust the settings and click `Start Moonlight`. The app the
 3. Starts the macOS clipboard sync and Moonlight keyboard agents.
 4. Launches Moonlight with the configured stream settings.
 
-The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`.
+The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch.
 
 Inside the Moonlight session, use Windows shortcuts:
 
@@ -170,6 +171,7 @@ MOONLIGHT_RESOLUTION="3456x2234"
 MOONLIGHT_FPS="60"
 MOONLIGHT_BITRATE="60000"
 MOONLIGHT_DISPLAY_MODE="windowed"
+MOONLIGHT_DISPLAY_INDEX="default"
 MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
 MOONLIGHT_SHORTCUT_REMAP="yes"
@@ -278,4 +280,4 @@ If Caps Lock Han/Eng switching does not respond, check:
 mac/status-moonlight-clipboard-sync.sh
 ```
 
-Then grant Accessibility permission to the keyboard helper if macOS reports that the event tap cannot be created.
+Then grant Accessibility permission to the keyboard helper if macOS reports that the event tap cannot be created. Launch display placement is best-effort because Moonlight does not expose a native monitor-selection CLI flag; macOS may require window-control permission for Moonlight Companion/System Events before it can move the Moonlight window.

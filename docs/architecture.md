@@ -35,7 +35,7 @@ flowchart LR
   Wrapper --> Config
   Wrapper -->|"deploy agent files"| SSH
   Wrapper -->|"start/restart"| Launchd
-  Wrapper -->|"launch stream"| Moonlight
+  Wrapper -->|"launch/stop/place window"| Moonlight
   Moonlight <-->|"stream"| Stream
   Stream <-->|"Sunshine protocol"| Sunshine
 
@@ -74,7 +74,7 @@ sequenceDiagram
   Wrapper->>WinHost: Deploy clipboard agent files
   Wrapper->>WinHost: Install Startup entry for GUI session
   Wrapper->>Launchd: Start clipboard sync and keyboard agents
-  Wrapper->>Moonlight: Launch configured stream
+  Wrapper->>Moonlight: Launch configured stream on selected display
   Moonlight->>Sunshine: Connect over Tailscale
   Wrapper-->>User: Close when ready
 ```

@@ -21,6 +21,7 @@ MOONLIGHT_RESOLUTION="${MOONLIGHT_RESOLUTION:-3456x2234}"
 MOONLIGHT_FPS="${MOONLIGHT_FPS:-60}"
 MOONLIGHT_BITRATE="${MOONLIGHT_BITRATE:-60000}"
 MOONLIGHT_DISPLAY_MODE="${MOONLIGHT_DISPLAY_MODE:-windowed}"
+MOONLIGHT_DISPLAY_INDEX="${MOONLIGHT_DISPLAY_INDEX:-default}"
 MOONLIGHT_VIDEO_CODEC="${MOONLIGHT_VIDEO_CODEC:-HEVC}"
 MOONLIGHT_CAPTURE_SYSTEM_KEYS="${MOONLIGHT_CAPTURE_SYSTEM_KEYS:-always}"
 MOONLIGHT_ABSOLUTE_MOUSE="${MOONLIGHT_ABSOLUTE_MOUSE:-yes}"
@@ -175,6 +176,61 @@ start_mac_clipboard_sync() {
     "${script_dir}/start-moonlight-clipboard-sync.sh" >> "$log_path" 2>&1
 }
 
+stop_moonlight() {
+  log "stopping Moonlight"
+  osascript -e 'tell application "Moonlight" to quit' >/dev/null 2>&1 || true
+  sleep 0.8
+  pkill -f "/Moonlight.app/Contents/MacOS/Moonlight .* stream " >/dev/null 2>&1 || true
+}
+
+position_moonlight_window() {
+  [[ "$MOONLIGHT_DISPLAY_INDEX" != "default" ]] || return 0
+
+  MOONLIGHT_DISPLAY_INDEX="$MOONLIGHT_DISPLAY_INDEX" osascript -l JavaScript <<'JXA' >/dev/null 2>&1 || true
+ObjC.import('AppKit')
+
+const selected = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('MOONLIGHT_DISPLAY_INDEX')) || 'default'
+const screenIndex = Number.parseInt(selected, 10)
+if (!Number.isFinite(screenIndex) || screenIndex < 0) {
+  throw new Error('invalid display index')
+}
+
+const screens = $.NSScreen.screens
+if (screenIndex >= screens.count) {
+  throw new Error('display index not available')
+}
+
+const screen = screens.objectAtIndex(screenIndex)
+const frame = screen.frame
+const visible = screen.visibleFrame
+const mainHeight = $.NSScreen.screens.objectAtIndex(0).frame.size.height
+const x = Math.round(visible.origin.x + 24)
+const y = Math.round(mainHeight - visible.origin.y - visible.size.height + 24)
+const width = Math.max(960, Math.round(visible.size.width - 48))
+const height = Math.max(540, Math.round(visible.size.height - 48))
+const systemEvents = Application('System Events')
+
+for (let attempt = 0; attempt < 80; attempt++) {
+  delay(0.25)
+  const matches = systemEvents.processes.whose({ name: 'Moonlight' })()
+  if (matches.length === 0) {
+    continue
+  }
+
+  const process = matches[0]
+  const windows = process.windows()
+  if (windows.length === 0) {
+    continue
+  }
+
+  const window = windows[0]
+  window.position = [x, y]
+  window.size = [width, height]
+  break
+}
+JXA
+}
+
 launch_moonlight() {
   if [[ ! -d "$MOONLIGHT_APP" ]]; then
     echo "Moonlight.app not found at: $MOONLIGHT_APP" >&2
@@ -182,9 +238,7 @@ launch_moonlight() {
   fi
 
   if [[ "$MOONLIGHT_QUIT_EXISTING" == "yes" ]]; then
-    osascript -e 'tell application "Moonlight" to quit' >/dev/null 2>&1 || true
-    sleep 0.8
-    pkill -f "/Applications/Moonlight.app/Contents/MacOS/Moonlight .* stream " >/dev/null 2>&1 || true
+    stop_moonlight
   fi
 
   args=(
@@ -204,10 +258,24 @@ launch_moonlight() {
 
   log "launching Moonlight: ${args[*]}"
   open -na "$MOONLIGHT_APP" --args "${args[@]}"
+  position_moonlight_window &
 }
 
 main() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+  case "${1:-start}" in
+    start)
+      ;;
+    stop-moonlight)
+      stop_moonlight
+      exit 0
+      ;;
+    *)
+      echo "usage: $0 [start|stop-moonlight]" >&2
+      exit 2
+      ;;
+  esac
 
   if ! ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c echo ssh-ok" >/dev/null; then
     echo "Passwordless SSH to ${WINDOWS_SSH} failed. Run Setup Moonlight Clipboard SSH first." >&2

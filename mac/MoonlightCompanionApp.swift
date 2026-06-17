@@ -11,6 +11,7 @@ struct CompanionSettings {
         "MOONLIGHT_FPS",
         "MOONLIGHT_BITRATE",
         "MOONLIGHT_DISPLAY_MODE",
+        "MOONLIGHT_DISPLAY_INDEX",
         "MOONLIGHT_VIDEO_CODEC",
         "MOONLIGHT_CAPTURE_SYSTEM_KEYS",
         "MOONLIGHT_ABSOLUTE_MOUSE",
@@ -127,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var detailLabel: NSTextField!
     private var progressIndicator: NSProgressIndicator!
     private var startButton: NSButton!
+    private var stopMoonlightButton: NSButton!
     private var saveButton: NSButton!
     private var stopButton: NSButton!
     private var output = Data()
@@ -136,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var textFields: [String: NSTextField] = [:]
     private var popups: [String: NSPopUpButton] = [:]
+    private var popupValues: [String: [String]] = [:]
     private var checks: [String: NSButton] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -156,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 880, height: 640),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -206,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         form.addArrangedSubview(row("FPS", text("MOONLIGHT_FPS", width: 96)))
         form.addArrangedSubview(row("Bitrate", text("MOONLIGHT_BITRATE", width: 120)))
         form.addArrangedSubview(row("Display Mode", popup("MOONLIGHT_DISPLAY_MODE", items: ["windowed", "fullscreen", "borderless"])))
+        form.addArrangedSubview(row("Launch Display", popup("MOONLIGHT_DISPLAY_INDEX", options: displayOptions())))
         form.addArrangedSubview(row("Video Codec", popup("MOONLIGHT_VIDEO_CODEC", items: ["HEVC", "H264", "AV1"])))
         form.addArrangedSubview(row("System Keys", popup("MOONLIGHT_CAPTURE_SYSTEM_KEYS", items: ["always", "fullscreen", "never"])))
 
@@ -226,16 +230,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startButton.keyEquivalent = "\r"
         startButton.translatesAutoresizingMaskIntoConstraints = false
 
+        stopMoonlightButton = NSButton(title: "Stop Moonlight", target: self, action: #selector(stopMoonlight))
+        stopMoonlightButton.translatesAutoresizingMaskIntoConstraints = false
+
         saveButton = NSButton(title: "Save", target: self, action: #selector(saveOnly))
         saveButton.translatesAutoresizingMaskIntoConstraints = false
 
         stopButton = NSButton(title: "Stop Services", target: self, action: #selector(stopServices))
         stopButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let logsButton = NSButton(title: "Open Logs", target: self, action: #selector(openLogs))
+        let logsButton = NSButton(title: "Logs", target: self, action: #selector(openLogs))
         logsButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let permissionsButton = NSButton(title: "Keyboard Permissions", target: self, action: #selector(openAccessibilitySettings))
+        let permissionsButton = NSButton(title: "Permissions", target: self, action: #selector(openAccessibilitySettings))
         permissionsButton.translatesAutoresizingMaskIntoConstraints = false
 
         let quitButton = NSButton(title: "Quit", target: self, action: #selector(quit))
@@ -247,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         content.addSubview(progressIndicator)
         content.addSubview(scrollView)
         content.addSubview(startButton)
+        content.addSubview(stopMoonlightButton)
         content.addSubview(saveButton)
         content.addSubview(stopButton)
         content.addSubview(permissionsButton)
@@ -277,11 +285,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
             startButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -22),
 
-            saveButton.leadingAnchor.constraint(equalTo: startButton.trailingAnchor, constant: 10),
+            stopMoonlightButton.leadingAnchor.constraint(equalTo: startButton.trailingAnchor, constant: 10),
+            stopMoonlightButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
+
+            saveButton.leadingAnchor.constraint(equalTo: stopMoonlightButton.trailingAnchor, constant: 10),
             saveButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
 
             stopButton.leadingAnchor.constraint(equalTo: saveButton.trailingAnchor, constant: 10),
             stopButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
+            stopButton.trailingAnchor.constraint(lessThanOrEqualTo: permissionsButton.leadingAnchor, constant: -16),
 
             quitButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
             quitButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
@@ -329,13 +341,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func popup(_ key: String, items: [String]) -> NSPopUpButton {
+        popup(key, options: items.map { ($0, $0) })
+    }
+
+    private func popup(_ key: String, options: [(String, String)]) -> NSPopUpButton {
         let popup = NSPopUpButton()
-        popup.addItems(withTitles: items)
-        popup.selectItem(withTitle: settings[key])
+        let titles = options.map { $0.1 }
+        let values = options.map { $0.0 }
+        popup.addItems(withTitles: titles)
+        popupValues[key] = values
+        if let index = values.firstIndex(of: settings[key]) {
+            popup.selectItem(at: index)
+        } else {
+            popup.selectItem(at: 0)
+        }
         popup.translatesAutoresizingMaskIntoConstraints = false
-        popup.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        popup.widthAnchor.constraint(equalToConstant: 220).isActive = true
         popups[key] = popup
         return popup
+    }
+
+    private func displayOptions() -> [(String, String)] {
+        var result: [(String, String)] = [("default", "Default Display")]
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let frame = screen.frame
+            let name = screen.localizedName
+            result.append(("\(index)", "\(index + 1). \(name) (\(Int(frame.width))x\(Int(frame.height)))"))
+        }
+        return result
     }
 
     private func check(_ key: String, title: String) -> NSButton {
@@ -352,7 +385,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             next[key] = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         for (key, popup) in popups {
-            next[key] = popup.titleOfSelectedItem ?? next[key]
+            let index = popup.indexOfSelectedItem
+            if let values = popupValues[key], index >= 0, index < values.count {
+                next[key] = values[index]
+            } else {
+                next[key] = popup.titleOfSelectedItem ?? next[key]
+            }
         }
         for (key, button) in checks {
             next.setBool(key, button.state == .on)
@@ -442,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             progressIndicator.stopAnimation(nil)
         }
         startButton.isEnabled = !busy
+        stopMoonlightButton.isEnabled = !busy
         saveButton.isEnabled = !busy
         stopButton.isEnabled = !busy
         statusLabel.stringValue = status
@@ -488,6 +527,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             task.waitUntilExit()
             statusLabel.stringValue = task.terminationStatus == 0 ? "Stopped" : "Stop Failed"
             detailLabel.stringValue = task.terminationStatus == 0 ? "Moonlight Companion services stopped." : "Stop script exited with status \(task.terminationStatus)."
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+
+    @objc private func stopMoonlight() {
+        let launcherURL = resourceURL.appendingPathComponent("mac/moonlight-companion-launch.sh")
+        guard FileManager.default.isExecutableFile(atPath: launcherURL.path) else {
+            fail("Launcher is missing or not executable: \(launcherURL.path)")
+            return
+        }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [launcherURL.path, "stop-moonlight"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        task.environment = environment
+        do {
+            try task.run()
+            task.waitUntilExit()
+            statusLabel.stringValue = task.terminationStatus == 0 ? "Moonlight Stopped" : "Stop Failed"
+            detailLabel.stringValue = task.terminationStatus == 0 ? "Moonlight was asked to quit." : "Moonlight stop exited with status \(task.terminationStatus)."
         } catch {
             fail(error.localizedDescription)
         }
