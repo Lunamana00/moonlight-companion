@@ -12,8 +12,10 @@ $exportRoot = Join-Path $dir "windows-payloads"
 $importDir = Join-Path $dir "imported-mac-payload"
 $normalizedDir = Join-Path $dir "windows-normalized-payload"
 $logFile = Join-Path $dir "windows-agent.log"
+$settingsPath = Join-Path $dir "windows-agent-settings.ps1"
 $maxBytes = 52428800
 $intervalMs = 700
+$MoonlightCapsLockHangul = "yes"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -26,6 +28,215 @@ function Write-AgentLog($message) {
     try {
         Add-Content -Path $logFile -Value ("{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $message) -Encoding UTF8
     } catch {}
+}
+
+if (Test-Path -LiteralPath $settingsPath) {
+    try {
+        . $settingsPath
+    } catch {}
+}
+
+function Test-SettingEnabled($value, $defaultValue) {
+    if ($null -eq $value) { return $defaultValue }
+    switch ($value.ToString().Trim().ToLowerInvariant()) {
+        "1" { return $true }
+        "true" { return $true }
+        "yes" { return $true }
+        "on" { return $true }
+        "0" { return $false }
+        "false" { return $false }
+        "no" { return $false }
+        "off" { return $false }
+        default { return $defaultValue }
+    }
+}
+
+function Install-CapsLockHangulHook {
+    $source = @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+
+public static class MoonlightCapsLockHangulHook
+{
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_SYSKEYUP = 0x0105;
+    private const short VK_CAPITAL = 0x14;
+    private const short VK_HANGUL = 0x15;
+    private const int INPUT_KEYBOARD = 1;
+    private const int KEYEVENTF_KEYUP = 0x0002;
+
+    private static readonly object SyncRoot = new object();
+    private static readonly LowLevelKeyboardProc Proc = HookCallback;
+    private static IntPtr hookId = IntPtr.Zero;
+    private static Thread hookThread = null;
+    private static ApplicationContext context = null;
+    private static ManualResetEventSlim ready = null;
+    private static bool capsDown = false;
+
+    public static bool Install()
+    {
+        lock (SyncRoot)
+        {
+            if (hookThread != null && hookThread.IsAlive)
+            {
+                return hookId != IntPtr.Zero;
+            }
+
+            ready = new ManualResetEventSlim(false);
+            hookThread = new Thread(HookThreadMain);
+            hookThread.IsBackground = true;
+            hookThread.SetApartmentState(ApartmentState.STA);
+            hookThread.Start();
+        }
+
+        ready.Wait(3000);
+        return hookId != IntPtr.Zero;
+    }
+
+    public static void Uninstall()
+    {
+        ApplicationContext currentContext = context;
+        if (currentContext != null)
+        {
+            currentContext.ExitThread();
+        }
+    }
+
+    private static void HookThreadMain()
+    {
+        EnsureCapsLockOff();
+        hookId = SetHook(Proc);
+        context = new ApplicationContext();
+        ready.Set();
+
+        if (hookId != IntPtr.Zero)
+        {
+            Application.Run(context);
+            UnhookWindowsHookEx(hookId);
+            hookId = IntPtr.Zero;
+        }
+    }
+
+    private static IntPtr SetHook(LowLevelKeyboardProc proc)
+    {
+        using (Process currentProcess = Process.GetCurrentProcess())
+        using (ProcessModule currentModule = currentProcess.MainModule)
+        {
+            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(currentModule.ModuleName), 0);
+        }
+    }
+
+    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            int vkCode = Marshal.ReadInt32(lParam);
+            if (vkCode == VK_CAPITAL)
+            {
+                int message = wParam.ToInt32();
+                bool isDown = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+                bool isUp = message == WM_KEYUP || message == WM_SYSKEYUP;
+
+                if (isDown)
+                {
+                    if (!capsDown)
+                    {
+                        capsDown = true;
+                        SendKey(VK_HANGUL);
+                    }
+                    return new IntPtr(1);
+                }
+
+                if (isUp)
+                {
+                    capsDown = false;
+                    return new IntPtr(1);
+                }
+            }
+        }
+
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+
+    private static void EnsureCapsLockOff()
+    {
+        if ((GetKeyState(VK_CAPITAL) & 1) != 0)
+        {
+            SendKey(VK_CAPITAL);
+        }
+    }
+
+    private static void SendKey(short virtualKey)
+    {
+        INPUT[] inputs = new INPUT[2];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].u.ki.wVk = virtualKey;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].u.ki.wVk = virtualKey;
+        inputs[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public int type;
+        public InputUnion u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)]
+        public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public short wVk;
+        public short wScan;
+        public int dwFlags;
+        public int time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(short nVirtKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+}
+"@
+
+    try {
+        Add-Type -TypeDefinition $source -ReferencedAssemblies "System.Windows.Forms.dll" -ErrorAction Stop
+        return [MoonlightCapsLockHangulHook]::Install()
+    } catch {
+        Write-AgentLog ("Caps Lock Hangul hook error: {0}" -f $_.Exception.Message)
+        return $false
+    }
 }
 
 function Get-TextBytes($text) {
@@ -275,10 +486,23 @@ function Expand-Payload($zipPath, $payloadDir) {
 $lastMacArchiveHash = ""
 $lastMacId = ""
 $lastWindowsId = ""
+$enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
+$capsLockHangulHookInstalled = $false
 
 Write-AgentLog "started"
 
 try {
+    if ($enableCapsLockHangul) {
+        $capsLockHangulHookInstalled = Install-CapsLockHangulHook
+        if ($capsLockHangulHookInstalled) {
+            Write-AgentLog "Caps Lock Hangul toggle enabled"
+        } else {
+            Write-AgentLog "Caps Lock Hangul toggle unavailable"
+        }
+    } else {
+        Write-AgentLog "Caps Lock Hangul toggle disabled"
+    }
+
     while ($true) {
         try {
             if (Test-Path -LiteralPath $macZip) {
@@ -323,6 +547,9 @@ try {
     }
 }
 finally {
+    if ($capsLockHangulHookInstalled) {
+        try { [MoonlightCapsLockHangulHook]::Uninstall() } catch {}
+    }
     try { $mutex.ReleaseMutex() | Out-Null } catch {}
     $mutex.Dispose()
 }

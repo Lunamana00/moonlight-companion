@@ -25,6 +25,7 @@ MOONLIGHT_VIDEO_CODEC="${MOONLIGHT_VIDEO_CODEC:-HEVC}"
 MOONLIGHT_CAPTURE_SYSTEM_KEYS="${MOONLIGHT_CAPTURE_SYSTEM_KEYS:-always}"
 MOONLIGHT_ABSOLUTE_MOUSE="${MOONLIGHT_ABSOLUTE_MOUSE:-yes}"
 MOONLIGHT_QUIT_EXISTING="${MOONLIGHT_QUIT_EXISTING:-yes}"
+MOONLIGHT_CAPSLOCK_HANGUL="${MOONLIGHT_CAPSLOCK_HANGUL:-yes}"
 MOONLIGHT_CLIPBOARD_MAX_BYTES="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 MOONLIGHT_TEMP_MAIN_DISPLAY="${MOONLIGHT_TEMP_MAIN_DISPLAY:-no}"
 MOONLIGHT_DISPLAYPLACER_BIN="${MOONLIGHT_DISPLAYPLACER_BIN:-displayplacer}"
@@ -52,10 +53,36 @@ ssh_opts=(
 scp_opts=("${ssh_opts[@]}")
 display_restore_command=""
 
+normalize_yes_no() {
+  case "${1:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      printf 'yes\n'
+      ;;
+    *)
+      printf 'no\n'
+      ;;
+  esac
+}
+
+write_windows_agent_settings() {
+  local capslock_hangul settings_tmp
+  capslock_hangul="$(normalize_yes_no "$MOONLIGHT_CAPSLOCK_HANGUL")"
+  settings_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-companion-windows-settings.XXXXXX")"
+
+  printf '$MoonlightCapsLockHangul = "%s"\n' "$capslock_hangul" > "$settings_tmp"
+  if ! scp "${scp_opts[@]}" "$settings_tmp" "${WINDOWS_SSH}:.moonlight-clipboard-sync/windows-agent-settings.ps1"; then
+    rm -f "$settings_tmp"
+    return 1
+  fi
+
+  rm -f "$settings_tmp"
+}
+
 deploy_windows_agent() {
   log "deploying Windows clipboard agent to ${WINDOWS_SSH}"
 
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist .moonlight-clipboard-sync mkdir .moonlight-clipboard-sync"
+  write_windows_agent_settings
   scp "${scp_opts[@]}" "${repo_dir}/windows/windows-clipboard-agent.ps1" "${WINDOWS_SSH}:.moonlight-clipboard-sync/windows-clipboard-agent.ps1"
   scp "${scp_opts[@]}" "${repo_dir}/windows/start-windows-clipboard-agent.cmd" "${WINDOWS_SSH}:.moonlight-clipboard-sync/start-windows-clipboard-agent.cmd"
   scp "${scp_opts[@]}" "${repo_dir}/windows/start-windows-clipboard-agent.vbs" "${WINDOWS_SSH}:.moonlight-clipboard-sync/start-windows-clipboard-agent.vbs"

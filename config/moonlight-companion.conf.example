@@ -14,6 +14,9 @@ MOONLIGHT_CAPTURE_SYSTEM_KEYS="always"
 MOONLIGHT_ABSOLUTE_MOUSE="yes"
 MOONLIGHT_QUIT_EXISTING="yes"
 
+# Map Caps Lock to the Windows Korean IME Han/Eng toggle inside Moonlight.
+MOONLIGHT_CAPSLOCK_HANGUL="yes"
+
 # Clipboard payload limit. Applies to text/image/file clipboard payloads.
 MOONLIGHT_CLIPBOARD_MAX_BYTES="52428800"
 

@@ -16,6 +16,7 @@ Current MVP version: `v0.1.0`
 - Deploys a Windows clipboard agent over SSH.
 - Syncs clipboard payloads as shared ZIP payloads.
 - Supports text, images, and file/folder clipboard payloads.
+- Maps Caps Lock to the Windows Korean IME Han/Eng toggle while the Windows agent is running.
 - Uses SSH over Tailscale; no public port forwarding is required.
 
 ## Current Assumptions
@@ -24,6 +25,7 @@ Current MVP version: `v0.1.0`
 - Passwordless SSH from Mac to Windows is already configured.
 - Moonlight is installed at `/Applications/Moonlight.app`.
 - The Windows agent runs inside the logged-in Windows GUI session. It is installed into the user's Startup folder.
+- Caps Lock Han/Eng switching requires the Windows Korean IME to be installed and active.
 
 ## Daily Use
 
@@ -60,6 +62,7 @@ Inside the Moonlight session, use Windows shortcuts:
 - Paste into Windows/Moonlight: `Ctrl+V`
 - Copy inside Windows/Moonlight: `Ctrl+C`
 - Paste back on Mac: `Cmd+V`
+- Toggle Korean/English input in Windows: `Caps Lock`
 
 ## Zero-Base Setup
 
@@ -158,6 +161,7 @@ MOONLIGHT_FPS="60"
 MOONLIGHT_BITRATE="60000"
 MOONLIGHT_DISPLAY_MODE="windowed"
 MOONLIGHT_VIDEO_CODEC="HEVC"
+MOONLIGHT_CAPSLOCK_HANGUL="yes"
 ```
 
 Build the wrapper app:
