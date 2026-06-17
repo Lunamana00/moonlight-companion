@@ -19,23 +19,3 @@ MOONLIGHT_CAPSLOCK_HANGUL="yes"
 
 # Clipboard payload limit. Applies to text/image/file clipboard payloads.
 MOONLIGHT_CLIPBOARD_MAX_BYTES="52428800"
-
-# Optional: temporarily make a target display the macOS main display before
-# launching Moonlight, then restore the original arrangement after launch.
-# This is useful when Moonlight keeps opening fullscreen on the wrong monitor.
-#
-# Install displayplacer first:
-#   brew install displayplacer
-#
-# Capture the current restore command:
-#   displayplacer list
-#
-# Then create a local launch command that moves the target display to
-# origin:(0,0) and shifts the other displays around it. Keep this disabled in
-# shared configs because display IDs are machine-specific.
-MOONLIGHT_TEMP_MAIN_DISPLAY="no"
-MOONLIGHT_DISPLAYPLACER_BIN="displayplacer"
-MOONLIGHT_DISPLAYPLACER_LAUNCH_COMMAND=""
-MOONLIGHT_DISPLAY_RESTORE_AFTER_LAUNCH="yes"
-MOONLIGHT_DISPLAY_RESTORE_DELAY_SECONDS="7"
-MOONLIGHT_DISPLAY_SWITCH_SETTLE_SECONDS="1.5"
