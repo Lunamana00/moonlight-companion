@@ -66,10 +66,16 @@ public static class MoonlightCapsLockHangulHook
     private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
+    private const int WM_IME_CONTROL = 0x0283;
     private const short VK_CAPITAL = 0x14;
     private const short VK_HANGUL = 0x15;
+    private const short HANGUL_SCAN_CODE = 0x72;
+    private const int IMC_GETCONVERSIONMODE = 0x0001;
+    private const int IMC_SETCONVERSIONMODE = 0x0002;
+    private const int IME_CMODE_NATIVE = 0x0001;
     private const int INPUT_KEYBOARD = 1;
     private const int KEYEVENTF_KEYUP = 0x0002;
+    private const int KEYEVENTF_SCANCODE = 0x0008;
 
     private static readonly object SyncRoot = new object();
     private static readonly LowLevelKeyboardProc Proc = HookCallback;
@@ -148,7 +154,10 @@ public static class MoonlightCapsLockHangulHook
                     if (!capsDown)
                     {
                         capsDown = true;
-                        SendKey(VK_HANGUL);
+                        if (!ToggleForegroundImeWindowConversion() && !SendScanCode(HANGUL_SCAN_CODE))
+                        {
+                            SendKey(VK_HANGUL);
+                        }
                     }
                     return new IntPtr(1);
                 }
@@ -162,6 +171,70 @@ public static class MoonlightCapsLockHangulHook
         }
 
         return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+
+    private static bool ToggleForegroundImeWindowConversion()
+    {
+        IntPtr foregroundWindow = GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr focusedWindow = GetFocusedWindow(foregroundWindow);
+        if (ToggleImeWindowConversion(focusedWindow))
+        {
+            return true;
+        }
+
+        return focusedWindow != foregroundWindow && ToggleImeWindowConversion(foregroundWindow);
+    }
+
+    private static bool ToggleImeWindowConversion(IntPtr window)
+    {
+        if (window == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr imeWindow = ImmGetDefaultIMEWnd(window);
+        if (imeWindow == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        int conversion = SendMessage(imeWindow, WM_IME_CONTROL, new IntPtr(IMC_GETCONVERSIONMODE), IntPtr.Zero).ToInt32();
+        int nextConversion = conversion ^ IME_CMODE_NATIVE;
+        SendMessage(imeWindow, WM_IME_CONTROL, new IntPtr(IMC_SETCONVERSIONMODE), new IntPtr(nextConversion));
+
+        int verifiedConversion = SendMessage(imeWindow, WM_IME_CONTROL, new IntPtr(IMC_GETCONVERSIONMODE), IntPtr.Zero).ToInt32();
+        return (verifiedConversion & IME_CMODE_NATIVE) != (conversion & IME_CMODE_NATIVE);
+    }
+
+    private static IntPtr GetFocusedWindow(IntPtr foregroundWindow)
+    {
+        uint threadId = GetWindowThreadProcessId(foregroundWindow, IntPtr.Zero);
+        if (threadId == 0)
+        {
+            return foregroundWindow;
+        }
+
+        GUITHREADINFO threadInfo = new GUITHREADINFO();
+        threadInfo.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+        if (GetGUIThreadInfo(threadId, ref threadInfo))
+        {
+            if (threadInfo.hwndFocus != IntPtr.Zero)
+            {
+                return threadInfo.hwndFocus;
+            }
+
+            if (threadInfo.hwndActive != IntPtr.Zero)
+            {
+                return threadInfo.hwndActive;
+            }
+        }
+
+        return foregroundWindow;
     }
 
     private static void EnsureCapsLockOff()
@@ -181,6 +254,18 @@ public static class MoonlightCapsLockHangulHook
         inputs[1].u.ki.wVk = virtualKey;
         inputs[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    private static bool SendScanCode(short scanCode)
+    {
+        INPUT[] inputs = new INPUT[2];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].u.ki.wScan = scanCode;
+        inputs[0].u.ki.dwFlags = KEYEVENTF_SCANCODE;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].u.ki.wScan = scanCode;
+        inputs[1].u.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))) == inputs.Length;
     }
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -209,6 +294,29 @@ public static class MoonlightCapsLockHangulHook
         public IntPtr dwExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int left;
+        public int top;
+        public int right;
+        public int bottom;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
@@ -225,8 +333,24 @@ public static class MoonlightCapsLockHangulHook
     [DllImport("user32.dll")]
     private static extern short GetKeyState(short nVirtKey);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("imm32.dll")]
+    private static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hWnd);
 }
 "@
 
