@@ -11,6 +11,7 @@ flowchart LR
     Config["Config file"]
     Moonlight["Moonlight.app"]
     Launchd["macOS launchd sync agent"]
+    CapsAgent["macOS Caps Lock agent"]
     Helper["moonclipctl Swift helper"]
     MacClipboard["macOS clipboard"]
   end
@@ -39,8 +40,11 @@ flowchart LR
   Helper <-->|"read/write"| MacClipboard
   Launchd <-->|"ZIP payloads"| SSH
   SSH <-->|"copy payload archives"| PayloadDir
+  CapsAgent -->|"Caps Lock toggle request"| SSH
+  SSH -->|"request file"| PayloadDir
 
   WinAgent <-->|"watch/import/export"| PayloadDir
+  WinAgent -->|"toggle Korean IME mode"| WinAgent
   WinAgent <-->|"read/write"| WinClipboard
   Wrapper -->|"install Startup entry"| Startup
   Startup -->|"starts in GUI session"| WinAgent
@@ -62,7 +66,7 @@ sequenceDiagram
   Wrapper->>SSH: Verify passwordless SSH
   Wrapper->>WinHost: Deploy clipboard agent files
   Wrapper->>WinHost: Install Startup entry for GUI session
-  Wrapper->>Launchd: Start clipboard sync agent
+  Wrapper->>Launchd: Start clipboard sync and Caps Lock agents
   Wrapper->>Moonlight: Launch configured stream
   Moonlight->>Sunshine: Connect over Tailscale
   Wrapper-->>User: Close when ready
@@ -93,6 +97,24 @@ sequenceDiagram
   Helper->>MacClip: Write text, image, or files
 ```
 
+## Caps Lock Han/Eng Flow
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Moonlight as Moonlight.app
+  participant Caps as macOS Caps Lock agent
+  participant RemoteDir as Windows payload folder
+  participant Agent as Windows GUI agent
+  participant IME as Windows Korean IME
+
+  User->>Moonlight: Press Caps Lock
+  Caps->>Caps: Detect Moonlight as frontmost app
+  Caps->>RemoteDir: Write capslock-hangul-toggle.request over SSH
+  Agent->>RemoteDir: Detect new request id
+  Agent->>IME: Toggle active conversion mode
+```
+
 ## Clipboard Payloads
 
 Clipboard contents are exported into a payload directory:
@@ -119,3 +141,5 @@ Each payload has a deterministic `id` based on kind and content hash. Agents rem
 ## Windows Session Caveat
 
 Windows clipboard APIs are tied to the interactive GUI session. Reading or writing the clipboard from an SSH service session is not reliable for GUI clipboard data, so the Windows agent must run in the logged-in desktop session.
+
+macOS Caps Lock detection uses a local event tap. If macOS blocks the event tap, grant Accessibility/Input Monitoring permission to the helper process and restart Moonlight Companion.

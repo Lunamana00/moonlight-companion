@@ -13,6 +13,7 @@ $importDir = Join-Path $dir "imported-mac-payload"
 $normalizedDir = Join-Path $dir "windows-normalized-payload"
 $logFile = Join-Path $dir "windows-agent.log"
 $settingsPath = Join-Path $dir "windows-agent-settings.ps1"
+$capsLockHangulRequest = Join-Path $dir "capslock-hangul-toggle.request"
 $maxBytes = 52428800
 $intervalMs = 700
 $MoonlightCapsLockHangul = "yes"
@@ -114,6 +115,23 @@ public static class MoonlightCapsLockHangulHook
         }
     }
 
+    public static int Toggle()
+    {
+        EnsureCapsLockOff();
+        if (ToggleForegroundImeWindowConversion())
+        {
+            return 1;
+        }
+
+        if (SendScanCode(HANGUL_SCAN_CODE))
+        {
+            return 2;
+        }
+
+        SendKey(VK_HANGUL);
+        return 3;
+    }
+
     private static void HookThreadMain()
     {
         EnsureCapsLockOff();
@@ -154,10 +172,7 @@ public static class MoonlightCapsLockHangulHook
                     if (!capsDown)
                     {
                         capsDown = true;
-                        if (!ToggleForegroundImeWindowConversion() && !SendScanCode(HANGUL_SCAN_CODE))
-                        {
-                            SendKey(VK_HANGUL);
-                        }
+                        Toggle();
                     }
                     return new IntPtr(1);
                 }
@@ -607,9 +622,37 @@ function Expand-Payload($zipPath, $payloadDir) {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $payloadDir)
 }
 
+function Get-CapsLockHangulRequestId {
+    if (-not (Test-Path -LiteralPath $capsLockHangulRequest)) { return "" }
+    try {
+        return (Get-Content -LiteralPath $capsLockHangulRequest -Raw -Encoding UTF8).Trim()
+    } catch {
+        return ""
+    }
+}
+
+function Invoke-CapsLockHangulRequest($requestId) {
+    if ([string]::IsNullOrWhiteSpace($requestId)) { return }
+    if (-not $enableCapsLockHangul -or -not $capsLockHangulHookInstalled) { return }
+
+    try {
+        $toggleResult = [MoonlightCapsLockHangulHook]::Toggle()
+        if ($toggleResult -eq 1) {
+            Write-AgentLog "Caps Lock Hangul toggle request applied"
+        } elseif ($toggleResult -eq 2) {
+            Write-AgentLog "Caps Lock Hangul toggle request scan-code fallback sent"
+        } else {
+            Write-AgentLog "Caps Lock Hangul toggle request virtual-key fallback sent"
+        }
+    } catch {
+        Write-AgentLog ("Caps Lock Hangul toggle request error: {0}" -f $_.Exception.Message)
+    }
+}
+
 $lastMacArchiveHash = ""
 $lastMacId = ""
 $lastWindowsId = ""
+$lastCapsLockHangulRequestId = ""
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
 $capsLockHangulHookInstalled = $false
 
@@ -627,8 +670,19 @@ try {
         Write-AgentLog "Caps Lock Hangul toggle disabled"
     }
 
+    $lastCapsLockHangulRequestId = Get-CapsLockHangulRequestId
+
     while ($true) {
         try {
+            if ($enableCapsLockHangul -and $capsLockHangulHookInstalled) {
+                $capsLockHangulRequestId = Get-CapsLockHangulRequestId
+                if (-not [string]::IsNullOrWhiteSpace($capsLockHangulRequestId) -and
+                    $capsLockHangulRequestId -ne $lastCapsLockHangulRequestId) {
+                    $lastCapsLockHangulRequestId = $capsLockHangulRequestId
+                    Invoke-CapsLockHangulRequest $capsLockHangulRequestId
+                }
+            }
+
             if (Test-Path -LiteralPath $macZip) {
                 $macArchiveHash = Get-FileHashString $macZip
                 if ($macArchiveHash -ne $lastMacArchiveHash) {

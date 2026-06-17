@@ -26,6 +26,7 @@ cp \
   "${repo_dir}/mac/stop-moonlight-clipboard-sync.sh" \
   "${repo_dir}/mac/sync-moonlight-clipboard.sh" \
   "${repo_dir}/mac/moonclipctl.swift" \
+  "${repo_dir}/mac/mooncapsync.swift" \
   "${resources_dir}/mac/"
 chmod 755 "${resources_dir}/mac/"*.sh
 

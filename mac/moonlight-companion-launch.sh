@@ -81,7 +81,7 @@ deploy_windows_agent() {
   scp "${scp_opts[@]}" "${repo_dir}/windows/start-windows-clipboard-agent.vbs" "${WINDOWS_SSH}:.moonlight-clipboard-sync/start-windows-clipboard-agent.vbs"
 
   local ps_script encoded
-  ps_script='
+  read -r -d '' ps_script <<'POWERSHELL' || true
 $ErrorActionPreference = "Stop"
 $dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"
 $vbs = Join-Path $dir "start-windows-clipboard-agent.vbs"
@@ -90,10 +90,57 @@ if ($startup) {
   Remove-Item -Force -ErrorAction SilentlyContinue -Path (Join-Path $startup "Moonlight Clipboard Sync.vbs")
   Copy-Item -Force -Path $vbs -Destination (Join-Path $startup "Moonlight Clipboard Companion.vbs")
 }
+
+$taskName = "MoonlightCompanionRestartAgent"
+$restartScript = Join-Path $dir "_restart-windows-agent.ps1"
+$outPath = Join-Path $dir "_restart-windows-agent.out"
+$restartBody = @'
+$ErrorActionPreference = "SilentlyContinue"
+$ProgressPreference = "SilentlyContinue"
+$dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"
+$outPath = Join-Path $dir "_restart-windows-agent.out"
+Set-Content -LiteralPath $outPath -Value "restart_started" -Encoding UTF8
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like "*windows-clipboard-agent.ps1*" -and $_.CommandLine -notlike "*_restart-windows-agent.ps1*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Start-Sleep -Milliseconds 800
+$vbs = Join-Path $dir "start-windows-clipboard-agent.vbs"
+Start-Process -FilePath "wscript.exe" -ArgumentList ('"{0}"' -f $vbs) -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$agents = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*windows-clipboard-agent.ps1*" })
+Add-Content -LiteralPath $outPath -Value ("agent_count={0}" -f $agents.Count) -Encoding UTF8
+'@
+Set-Content -LiteralPath $restartScript -Value $restartBody -Encoding UTF8
+Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $restartScript)
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+Start-ScheduledTask -TaskName $taskName
+for ($i = 0; $i -lt 30; $i++) {
+  if (Test-Path -LiteralPath $outPath) {
+    $restartOutput = Get-Content -LiteralPath $outPath -Raw
+    if ($restartOutput -match "agent_count=") {
+      break
+    }
+  }
+  Start-Sleep -Milliseconds 500
+}
+if (Test-Path -LiteralPath $outPath) {
+  $restartOutput = Get-Content -LiteralPath $outPath -Raw
+  if ($restartOutput -notmatch "agent_count=1") {
+    throw "Windows agent restart failed: $restartOutput"
+  }
+} else {
+  throw "Windows agent restart did not produce output"
+}
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+Remove-Item -LiteralPath $restartScript, $outPath -Force -ErrorAction SilentlyContinue
+
 Write-Output "windows-agent-ready"
 $global:LASTEXITCODE = 0
 exit 0
-'
+POWERSHELL
   encoded="$(printf '%s' "$ps_script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded" >/dev/null 2>&1
 }

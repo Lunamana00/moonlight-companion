@@ -26,6 +26,7 @@ Current MVP version: `v0.1.0`
 - Moonlight is installed at `/Applications/Moonlight.app`.
 - The Windows agent runs inside the logged-in Windows GUI session. It is installed into the user's Startup folder.
 - Caps Lock Han/Eng switching requires the Windows Korean IME to be installed and active.
+- Caps Lock Han/Eng switching uses a macOS event monitor while Moonlight is focused. macOS may require Accessibility/Input Monitoring permission for the helper.
 
 ## Daily Use
 
@@ -53,7 +54,7 @@ When the app opens, it:
 
 1. Verifies SSH access to the Windows host.
 2. Deploys or updates the Windows clipboard agent.
-3. Starts the macOS clipboard sync agent.
+3. Starts the macOS clipboard sync and Caps Lock Han/Eng agents.
 4. Launches Moonlight with the configured stream settings.
 
 Inside the Moonlight session, use Windows shortcuts:
@@ -63,6 +64,8 @@ Inside the Moonlight session, use Windows shortcuts:
 - Copy inside Windows/Moonlight: `Ctrl+C`
 - Paste back on Mac: `Cmd+V`
 - Toggle Korean/English input in Windows: `Caps Lock`
+
+When Moonlight is focused, the macOS Caps Lock helper intercepts Caps Lock and sends a small SSH request to the Windows GUI agent. The Windows agent then toggles the active Korean IME conversion mode in the logged-in desktop session.
 
 ## Zero-Base Setup
 
@@ -207,3 +210,11 @@ The clipboard bridge stores transient payloads under:
 - Windows: `%USERPROFILE%\.moonlight-clipboard-sync`
 
 The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
+
+If Caps Lock Han/Eng switching does not respond, check:
+
+```bash
+mac/status-moonlight-clipboard-sync.sh
+```
+
+Then grant Accessibility/Input Monitoring permission to the Caps Lock helper if macOS reports that the event tap cannot be created.

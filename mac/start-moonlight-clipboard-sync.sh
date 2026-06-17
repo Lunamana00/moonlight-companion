@@ -5,11 +5,15 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
 source_helper="${script_dir}/moonclipctl.swift"
+source_caps_helper="${script_dir}/mooncapsync.swift"
 runtime_dir="${HOME}/Library/Application Support/MoonlightClipboardSync"
 sync_script="${runtime_dir}/sync-moonlight-clipboard.sh"
 helper="${runtime_dir}/moonclipctl"
+caps_helper="${runtime_dir}/mooncapsync"
 label="com.lunamana.moonlight-clipboard-sync"
+caps_label="com.lunamana.moonlight-capslock-hangul"
 plist="${HOME}/Library/LaunchAgents/${label}.plist"
+caps_plist="${HOME}/Library/LaunchAgents/${caps_label}.plist"
 log_dir="${HOME}/Library/Logs"
 config="${MOONLIGHT_COMPANION_CONFIG:-${repo_dir}/config/moonlight-companion.conf}"
 
@@ -47,6 +51,17 @@ mkdir -p "${HOME}/Library/LaunchAgents" "$log_dir" "$runtime_dir"
 cp "$source_sync_script" "$sync_script"
 chmod 700 "$sync_script"
 
+normalize_yes_no() {
+  case "${1:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      printf 'yes\n'
+      ;;
+    *)
+      printf 'no\n'
+      ;;
+  esac
+}
+
 if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   if ! command -v swiftc >/dev/null 2>&1; then
     echo "swiftc is required to build the macOS clipboard helper." >&2
@@ -55,6 +70,18 @@ if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   swiftc "$source_helper" -o "$helper"
 fi
 chmod 700 "$helper"
+
+capslock_hangul="$(normalize_yes_no "${MOONLIGHT_CAPSLOCK_HANGUL:-yes}")"
+if [[ "$capslock_hangul" == "yes" ]]; then
+  if [[ ! -x "$caps_helper" || "$source_caps_helper" -nt "$caps_helper" ]]; then
+    if ! command -v swiftc >/dev/null 2>&1; then
+      echo "swiftc is required to build the macOS Caps Lock helper." >&2
+      exit 1
+    fi
+    swiftc "$source_caps_helper" -o "$caps_helper" -framework AppKit -framework ApplicationServices
+  fi
+  chmod 700 "$caps_helper"
+fi
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$remote" "powershell.exe -NoProfile -Command \"Write-Output ok\"" >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -111,5 +138,48 @@ launchctl bootstrap "gui/$(id -u)" "$plist"
 launchctl enable "gui/$(id -u)/${label}"
 launchctl kickstart -k "gui/$(id -u)/${label}"
 
+if [[ "$capslock_hangul" == "yes" ]]; then
+  cat > "$caps_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${caps_label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${caps_helper}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${log_dir}/moonlight-capslock-hangul.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${log_dir}/moonlight-capslock-hangul.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>WINDOWS_SSH</key>
+    <string>${remote}</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
+  launchctl bootout "gui/$(id -u)" "$caps_plist" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$(id -u)" "$caps_plist"
+  launchctl enable "gui/$(id -u)/${caps_label}"
+  launchctl kickstart -k "gui/$(id -u)/${caps_label}"
+else
+  launchctl bootout "gui/$(id -u)" "$caps_plist" >/dev/null 2>&1 || true
+  rm -f "$caps_plist"
+fi
+
 echo "Moonlight clipboard sync started."
 echo "Log: ${log_dir}/moonlight-clipboard-sync.log"
+if [[ "$capslock_hangul" == "yes" ]]; then
+  echo "Caps Lock Hangul sync started."
+  echo "Caps Lock log: ${log_dir}/moonlight-capslock-hangul.log"
+fi
