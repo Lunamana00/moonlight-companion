@@ -468,6 +468,30 @@ fi
 remove_windows_file "$m2w_korean_name"
 echo "Mac -> Windows Korean filename ok."
 
+echo "Testing Mac -> Windows Windows-safe filename transfer..."
+m2w_windows_safe_source_name="moonlight-companion-transfer-test-windows-safe ? star * colon: pipe| (${stamp}).txt"
+m2w_windows_safe_expected_name="moonlight-companion-transfer-test-windows-safe _ star _ colon_ pipe_ (${stamp}).txt"
+m2w_windows_safe_file="${tmp_dir}/${m2w_windows_safe_source_name}"
+m2w_windows_safe_out="${tmp_dir}/mac-to-windows-safe-name-send.txt"
+printf 'Moonlight Companion Mac -> Windows safe filename test %s\n' "$stamp" > "$m2w_windows_safe_file"
+m2w_windows_safe_hash="$(mac_file_sha256 "$m2w_windows_safe_file")"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_windows_safe_file" > "$m2w_windows_safe_out"
+if ! grep -q "Windows confirmed" "$m2w_windows_safe_out"; then
+  echo "Mac -> Windows Windows-safe filename transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_windows_safe_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_windows_safe_expected_name"; then
+  echo "Mac -> Windows Windows-safe filename transfer did not create the sanitized file name." >&2
+  exit 1
+fi
+if [[ "$(windows_file_sha256 "$m2w_windows_safe_expected_name")" != "$m2w_windows_safe_hash" ]]; then
+  echo "Mac -> Windows Windows-safe filename transfer changed the file bytes." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_windows_safe_expected_name"
+echo "Mac -> Windows Windows-safe filename ok."
+
 echo "Testing Mac -> Windows image file transfer..."
 m2w_image_name="moonlight-companion-transfer-test-image-mac-${stamp}.png"
 m2w_image_file="${tmp_dir}/${m2w_image_name}"

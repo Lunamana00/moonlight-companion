@@ -103,8 +103,37 @@ func directoryBytes(_ url: URL) -> UInt64 {
     return total
 }
 
+func windowsSafeFileName(_ name: String) -> String {
+    let originalName = name.isEmpty ? "file" : name
+    let normalizedName = originalName.precomposedStringWithCanonicalMapping
+    let invalidScalars = CharacterSet(charactersIn: #"<>:"/\|?*"#).union(.controlCharacters)
+    var safeName = normalizedName.unicodeScalars.map { scalar in
+        invalidScalars.contains(scalar) ? "_" : String(scalar)
+    }.joined()
+
+    while safeName.last == " " || safeName.last == "." {
+        safeName.removeLast()
+    }
+
+    if safeName.isEmpty || safeName == "." || safeName == ".." {
+        safeName = "file"
+    }
+
+    let stem = (safeName as NSString).deletingPathExtension
+    let reservedNames: Set<String> = [
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    ]
+    if reservedNames.contains(stem.uppercased()) {
+        safeName = "_\(safeName)"
+    }
+
+    return safeName
+}
+
 func uniqueDestination(for source: URL, in directory: URL, used: inout Set<String>) -> URL {
-    let baseName = source.lastPathComponent.isEmpty ? "file" : source.lastPathComponent
+    let baseName = windowsSafeFileName(source.lastPathComponent)
     let ext = (baseName as NSString).pathExtension
     let stem = (baseName as NSString).deletingPathExtension
     var candidate = baseName
@@ -119,6 +148,48 @@ func uniqueDestination(for source: URL, in directory: URL, used: inout Set<Strin
     }
     used.insert(candidate.lowercased())
     return directory.appendingPathComponent(candidate)
+}
+
+func uniqueSibling(named name: String, in directory: URL) -> URL {
+    let safeName = windowsSafeFileName(name)
+    let ext = (safeName as NSString).pathExtension
+    let stem = (safeName as NSString).deletingPathExtension
+    var candidate = safeName
+    var index = 2
+    while fm.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+        if ext.isEmpty {
+            candidate = "\(stem)-\(index)"
+        } else {
+            candidate = "\(stem)-\(index).\(ext)"
+        }
+        index += 1
+    }
+    return directory.appendingPathComponent(candidate)
+}
+
+@discardableResult
+func sanitizePathTreeNames(_ url: URL) throws -> URL {
+    var isDirectory: ObjCBool = false
+    guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+        return url
+    }
+
+    if isDirectory.boolValue {
+        let children = try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [])
+        for child in children {
+            try sanitizePathTreeNames(child)
+        }
+    }
+
+    let safeName = windowsSafeFileName(url.lastPathComponent)
+    guard safeName != url.lastPathComponent.precomposedStringWithCanonicalMapping else {
+        return url
+    }
+
+    let parent = url.deletingLastPathComponent()
+    let dest = uniqueSibling(named: safeName, in: parent)
+    try fm.moveItem(at: url, to: dest)
+    return dest
 }
 
 func hashFile(_ url: URL) throws -> String {
@@ -156,8 +227,9 @@ func exportFiles(_ urls: [URL], to dir: URL) throws -> Manifest {
 
     for source in urls {
         guard source.isFileURL else { continue }
-        let dest = uniqueDestination(for: source, in: filesDir, used: &used)
+        var dest = uniqueDestination(for: source, in: filesDir, used: &used)
         try fm.copyItem(at: source, to: dest)
+        dest = try sanitizePathTreeNames(dest)
 
         let values = try dest.resourceValues(forKeys: [.isDirectoryKey])
         let isDirectory = values.isDirectory == true

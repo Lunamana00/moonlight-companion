@@ -772,7 +772,26 @@ function Read-JsonManifest($payloadDir) {
 
 function Get-NormalizedFileName($name) {
     if ([string]::IsNullOrWhiteSpace($name)) { return "file" }
-    return $name.Normalize([System.Text.NormalizationForm]::FormC)
+    $safeName = $name.Normalize([System.Text.NormalizationForm]::FormC)
+    foreach ($invalidChar in [System.IO.Path]::GetInvalidFileNameChars()) {
+        $safeName = $safeName.Replace([string]$invalidChar, "_")
+    }
+    $safeName = $safeName.TrimEnd([char[]]@(" ", "."))
+    if ([string]::IsNullOrWhiteSpace($safeName) -or $safeName -eq "." -or $safeName -eq "..") {
+        $safeName = "file"
+    }
+
+    $reservedNames = @(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    )
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($safeName)
+    if ($reservedNames -contains $stem.ToUpperInvariant()) {
+        $safeName = "_$safeName"
+    }
+
+    return $safeName
 }
 
 function Normalize-PathTreeNames($path) {
