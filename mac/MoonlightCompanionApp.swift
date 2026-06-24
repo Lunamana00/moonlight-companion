@@ -133,6 +133,27 @@ enum SettingsFile {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private static let cancellableShellWrapper = #"""
+set -m
+child_pid=
+terminate_child() {
+  status="${1:-143}"
+  if [ -n "${child_pid}" ]; then
+    kill -TERM -"${child_pid}" 2>/dev/null || kill -TERM "${child_pid}" 2>/dev/null || true
+    wait "${child_pid}" 2>/dev/null || true
+  fi
+  exit "${status}"
+}
+trap 'terminate_child 143' TERM
+trap 'terminate_child 130' INT
+"$@" &
+child_pid=$!
+wait "${child_pid}"
+status=$?
+child_pid=
+exit "${status}"
+"""#
+
     private var window: NSWindow!
     private var dropStripWindow: NSPanel?
     private var dropOverlayWindow: NSPanel?
@@ -573,6 +594,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    private func configureCancellableTransferTask(_ task: Process, scriptURL: URL, arguments: [String] = []) {
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = ["-c", Self.cancellableShellWrapper, "moonlight-companion-transfer", scriptURL.path] + arguments
+    }
+
     private func fail(_ message: String) {
         setBusy(false, status: "Failed", detail: message)
         showFailure(message)
@@ -701,7 +727,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let task = Process()
         let pipe = Pipe()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
         var arguments = [openerURL.path]
         if selectLatestImport {
             arguments.append("--latest-import")
@@ -710,7 +735,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            !expectedImportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             arguments.append(contentsOf: ["--expected-id", expectedImportID])
         }
-        task.arguments = arguments
+        configureCancellableTransferTask(task, scriptURL: openerURL, arguments: Array(arguments.dropFirst()))
         task.currentDirectoryURL = resourceURL
         task.standardOutput = pipe
         task.standardError = pipe
@@ -758,8 +783,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let task = Process()
         let pipe = Pipe()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [testURL.path]
+        configureCancellableTransferTask(task, scriptURL: testURL)
         task.currentDirectoryURL = resourceURL
         task.standardOutput = pipe
         task.standardError = pipe
@@ -1270,8 +1294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let task = Process()
         let pipe = Pipe()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [senderURL.path] + urls.map(\.path)
+        configureCancellableTransferTask(task, scriptURL: senderURL, arguments: urls.map(\.path))
         task.currentDirectoryURL = resourceURL
         task.standardOutput = pipe
         task.standardError = pipe
