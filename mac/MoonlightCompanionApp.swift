@@ -144,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var stopButton: NSButton!
     private var dropStripButton: NSButton!
     private var dropOverlayButton: NSButton!
+    private var testTransferButton: NSButton!
     private var output = Data()
     private var process: Process?
     private var transferProcess: Process?
@@ -255,9 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dropOverlayButton.translatesAutoresizingMaskIntoConstraints = false
         dropStripButton = NSButton(title: "Show Moonlight Drop Strip", target: self, action: #selector(toggleMoonlightDropStrip))
         dropStripButton.translatesAutoresizingMaskIntoConstraints = false
+        testTransferButton = NSButton(title: "Test File Transfer", target: self, action: #selector(testFileTransfer))
+        testTransferButton.translatesAutoresizingMaskIntoConstraints = false
         let openReceiveButton = NSButton(title: "Open Mac Receive Folder", target: self, action: #selector(openMacReceiveFolder))
         openReceiveButton.translatesAutoresizingMaskIntoConstraints = false
-        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, openReceiveButton])
+        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openReceiveButton])
         transferButtons.orientation = .horizontal
         transferButtons.alignment = .centerY
         transferButtons.spacing = 10
@@ -530,6 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stopButton.isEnabled = !busy
         dropStripButton?.isEnabled = !busy
         dropOverlayButton?.isEnabled = !busy
+        testTransferButton?.isEnabled = !busy
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
     }
@@ -619,6 +623,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSWorkspace.shared.open(url)
         } catch {
             fail("Could not open receive folder: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func testFileTransfer() {
+        guard saveSettings() else { return }
+
+        let testURL = resourceURL.appendingPathComponent("mac/test-file-transfer.sh")
+        guard FileManager.default.isExecutableFile(atPath: testURL.path) else {
+            fail("File transfer test is missing or not executable: \(testURL.path)")
+            return
+        }
+
+        output = Data()
+        setBusy(true, status: "Testing Transfer", detail: "Checking Mac -> Windows and Windows -> Mac file transfer.")
+
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [testURL.path]
+        task.currentDirectoryURL = resourceURL
+        task.standardOutput = pipe
+        task.standardError = pipe
+        var environment = ProcessInfo.processInfo.environment
+        environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        task.environment = environment
+
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async {
+                self?.output.append(data)
+            }
+        }
+
+        task.terminationHandler = { [weak self] task in
+            DispatchQueue.main.async {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                self?.transferProcess = nil
+                let text = String(data: self?.output ?? Data(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let detail = text?.isEmpty == false ? text! : "File transfer test exited with status \(task.terminationStatus)."
+                if task.terminationStatus == 0 {
+                    self?.setBusy(false, status: "Transfer OK", detail: detail)
+                } else {
+                    self?.setBusy(false, status: "Transfer Failed", detail: detail)
+                    self?.showFailure("File transfer test failed.")
+                }
+            }
+        }
+
+        do {
+            try task.run()
+            transferProcess = task
+        } catch {
+            setBusy(false, status: "Transfer Failed", detail: error.localizedDescription)
+            fail(error.localizedDescription)
         }
     }
 

@@ -9,6 +9,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Added a GUI file drop target for sending Mac files and folders to Windows over the existing clipboard TCP channel.
 - Added a temporary full-window Moonlight drop overlay that appears during Finder file drags near Moonlight.
 - Added a floating Moonlight drop strip for Mac-to-Windows file drops without aiming at the main Companion window.
+- Added a GUI file transfer test for validating Mac-to-Windows and Windows-to-Mac paths.
 - Added separate post-drop `Ctrl+V` controls so Moonlight window/strip drops can paste by default while the Companion fallback drop target stays opt-in.
 - Added Mac notifications for Moonlight screen-drop send results and Windows-to-Mac file arrivals, plus an optional receive-folder reveal action.
 - Added durable Mac and Windows receive folders for imported file payloads.
