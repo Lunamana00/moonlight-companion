@@ -151,8 +151,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dropOverlayTimer: Timer?
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
+    private var dropOverlayLastDragLocation: NSPoint?
     private var dropOverlayMouseDownFrontmostName = ""
     private var dropOverlayMouseDownAt = Date.distantPast
+    private let dropOverlayActivationMargin: CGFloat = 96
+    private let dropOverlayRefreshInterval: TimeInterval = 0.06
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
 
@@ -720,7 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: dropOverlayRefreshInterval, repeats: true) { [weak self] _ in
             self?.refreshDropOverlayForFileDrag()
         }
         dropOverlayTimer = timer
@@ -759,10 +762,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         if dropOverlayMouseDownLocation == nil {
             dropOverlayMouseDownLocation = mouseLocation
+            dropOverlayLastDragLocation = mouseLocation
             dropOverlayMouseDownFrontmostName = frontmostName
             dropOverlayMouseDownAt = Date()
             return false
         }
+
+        let previousMouseLocation = dropOverlayLastDragLocation ?? dropOverlayMouseDownLocation ?? mouseLocation
+        dropOverlayLastDragLocation = mouseLocation
 
         if dropOverlayMouseDownFrontmostName == "Moonlight" || dropOverlayMouseDownFrontmostName == "Moonlight Companion" {
             return false
@@ -774,7 +781,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
-        guard moonlightFrame.insetBy(dx: -96, dy: -96).contains(mouseLocation) else {
+        let activationFrame = moonlightFrame.insetBy(
+            dx: -dropOverlayActivationMargin,
+            dy: -dropOverlayActivationMargin
+        )
+        guard dragPathHitsDropActivationFrame(
+            from: previousMouseLocation,
+            to: mouseLocation,
+            activationFrame: activationFrame
+        ) else {
             return false
         }
 
@@ -783,8 +798,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func resetDropOverlayDragTracking() {
         dropOverlayMouseDownLocation = nil
+        dropOverlayLastDragLocation = nil
         dropOverlayMouseDownFrontmostName = ""
         dropOverlayMouseDownAt = .distantPast
+    }
+
+    private func dragPathHitsDropActivationFrame(
+        from start: NSPoint,
+        to end: NSPoint,
+        activationFrame: NSRect
+    ) -> Bool {
+        if activationFrame.contains(start) || activationFrame.contains(end) {
+            return true
+        }
+        return lineSegment(from: start, to: end, intersects: activationFrame)
+    }
+
+    private func lineSegment(from start: NSPoint, to end: NSPoint, intersects rect: NSRect) -> Bool {
+        let bottomLeft = NSPoint(x: rect.minX, y: rect.minY)
+        let bottomRight = NSPoint(x: rect.maxX, y: rect.minY)
+        let topRight = NSPoint(x: rect.maxX, y: rect.maxY)
+        let topLeft = NSPoint(x: rect.minX, y: rect.maxY)
+        let edges = [
+            (bottomLeft, bottomRight),
+            (bottomRight, topRight),
+            (topRight, topLeft),
+            (topLeft, bottomLeft)
+        ]
+        return edges.contains { edge in
+            lineSegmentsIntersect(start, end, edge.0, edge.1)
+        }
+    }
+
+    private func lineSegmentsIntersect(_ a: NSPoint, _ b: NSPoint, _ c: NSPoint, _ d: NSPoint) -> Bool {
+        let r = NSPoint(x: b.x - a.x, y: b.y - a.y)
+        let s = NSPoint(x: d.x - c.x, y: d.y - c.y)
+        let cMinusA = NSPoint(x: c.x - a.x, y: c.y - a.y)
+        let denominator = cross(r, s)
+        let epsilon: CGFloat = 0.0001
+
+        if abs(denominator) < epsilon {
+            return point(a, isOnSegmentFrom: c, to: d)
+                || point(b, isOnSegmentFrom: c, to: d)
+                || point(c, isOnSegmentFrom: a, to: b)
+                || point(d, isOnSegmentFrom: a, to: b)
+        }
+
+        let t = cross(cMinusA, s) / denominator
+        let u = cross(cMinusA, r) / denominator
+        return t >= -epsilon && t <= 1 + epsilon && u >= -epsilon && u <= 1 + epsilon
+    }
+
+    private func point(_ point: NSPoint, isOnSegmentFrom start: NSPoint, to end: NSPoint) -> Bool {
+        let epsilon: CGFloat = 0.0001
+        let pointVector = NSPoint(x: point.x - start.x, y: point.y - start.y)
+        let segmentVector = NSPoint(x: end.x - start.x, y: end.y - start.y)
+        let segmentCross = cross(pointVector, segmentVector)
+        guard abs(segmentCross) < epsilon else {
+            return false
+        }
+        return point.x >= min(start.x, end.x) - epsilon
+            && point.x <= max(start.x, end.x) + epsilon
+            && point.y >= min(start.y, end.y) - epsilon
+            && point.y <= max(start.y, end.y) + epsilon
+    }
+
+    private func cross(_ first: NSPoint, _ second: NSPoint) -> CGFloat {
+        first.x * second.y - first.y * second.x
     }
 
     private func distance(from start: NSPoint, to end: NSPoint) -> CGFloat {

@@ -29,6 +29,7 @@ No changes yet.
 - The Caps Lock keyboard helper is now signed with a stable ad-hoc requirement so macOS Accessibility permission survives helper rebuilds more reliably.
 - The GUI `Permissions` button now starts the keyboard helper permission request before opening macOS Accessibility settings.
 - The macOS Caps Lock helper now also acts as the Moonlight keyboard helper.
+- The Moonlight file drop overlay now samples drag movement faster and uses pointer-path hit testing so fast drags across the stream window are caught more reliably.
 - Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
 - Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
 - Moonlight launch now waits longer for the stream window, logs display placement diagnostics, and attempts to place the window on the selected Mac display after startup.
