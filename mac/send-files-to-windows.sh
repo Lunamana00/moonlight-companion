@@ -50,6 +50,11 @@ log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_path"
 }
 
+progress() {
+  [[ "$(normalize_yes_no "${MOONLIGHT_TRANSFER_PROGRESS_EVENTS:-no}")" == "yes" ]] || return 0
+  printf '__MOONLIGHT_COMPANION_PROGRESS__ %s\n' "$*" >&2
+}
+
 normalize_yes_no() {
   case "${1:-}" in
     1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
@@ -209,6 +214,7 @@ zip_payload() {
 }
 
 ensure_helpers() {
+  progress "Preparing transfer helpers."
   if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
     if ! command -v swiftc >/dev/null 2>&1; then
       echo "swiftc is required to build the macOS clipboard helper." >&2
@@ -234,14 +240,17 @@ send_zip() {
   local zip_path="$1"
   if [[ "$(normalize_yes_no "$MOONLIGHT_CLIPBOARD_TCP")" == "yes" && -x "$tcp_helper" ]]; then
     local output
+    progress "Sending payload over the live TCP clipboard channel."
     if output="$("$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT" "$zip_path" 2>/dev/null)"; then
       tcp_ack_state="$output"
       transport="tcp"
       return 0
     fi
+    progress "TCP send was unavailable; falling back to SSH upload."
     log "File drop Mac -> Windows TCP unavailable; falling back to SSH payload"
   fi
 
+  progress "Uploading payload over SSH fallback."
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
   scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_mac_tmp}" >/dev/null
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"
@@ -269,6 +278,7 @@ payload_dir="${tmp_dir}/payload"
 meta_path="${tmp_dir}/meta.txt"
 zip_path="${tmp_dir}/mac-to-windows.zip"
 
+progress "Collecting file metadata."
 "$helper" export-paths "$payload_dir" "$@" > "$meta_path"
 kind="$(payload_value kind "$meta_path")"
 bytes="$(payload_value bytes "$meta_path")"
@@ -285,6 +295,7 @@ if (( bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
   exit 1
 fi
 
+progress "Packaging ${kind:-files} payload (${bytes}B)."
 zip_payload "$payload_dir" "$zip_path"
 tcp_ack_state=""
 transport=""
@@ -293,6 +304,7 @@ log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
 windows_import_state=""
 windows_import_confirmation=""
 imported_paths="0"
+progress "Waiting for Windows receive confirmation."
 if wait_for_windows_import "$payload_id"; then
   log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"

@@ -133,6 +133,7 @@ enum SettingsFile {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private static let transferProgressPrefix = "__MOONLIGHT_COMPANION_PROGRESS__ "
     private static let cancellableShellWrapper = #"""
 set -m
 child_pid=
@@ -171,6 +172,7 @@ exit "${status}"
     private var openWindowsReceiveButton: NSButton!
     private var cancelTransferButton: NSButton!
     private var output = Data()
+    private var transferProgressLineBuffer = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -597,6 +599,55 @@ exit "${status}"
     private func configureCancellableTransferTask(_ task: Process, scriptURL: URL, arguments: [String] = []) {
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
         task.arguments = ["-c", Self.cancellableShellWrapper, "moonlight-companion-transfer", scriptURL.path] + arguments
+    }
+
+    private func appendTransferOutput(_ data: Data, progressStatus: String) {
+        output.append(data)
+        guard let text = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        transferProgressLineBuffer += text
+        while let newlineRange = transferProgressLineBuffer.range(of: "\n") {
+            let line = String(transferProgressLineBuffer[..<newlineRange.lowerBound])
+            let nextIndex = transferProgressLineBuffer.index(after: newlineRange.lowerBound)
+            transferProgressLineBuffer.removeSubrange(..<nextIndex)
+            updateTransferProgress(from: line, status: progressStatus)
+        }
+    }
+
+    private func updateTransferProgress(from line: String, status: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(Self.transferProgressPrefix) else {
+            return
+        }
+
+        let messageStart = trimmed.index(trimmed.startIndex, offsetBy: Self.transferProgressPrefix.count)
+        let message = String(trimmed[messageStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return
+        }
+
+        statusLabel.stringValue = status
+        detailLabel.stringValue = message
+    }
+
+    private func filteredTransferOutputText() -> String? {
+        guard let text = String(data: output, encoding: .utf8) else {
+            return nil
+        }
+
+        let filteredLines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { line in
+                !line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .hasPrefix(Self.transferProgressPrefix)
+            }
+        let filtered = filteredLines
+            .map(String.init)
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return filtered.isEmpty ? nil : filtered
     }
 
     private func fail(_ message: String) {
@@ -1288,6 +1339,7 @@ exit "${status}"
         }
 
         output = Data()
+        transferProgressLineBuffer = ""
         setBusy(true, status: "Sending Files", detail: "Sending \(summary.detail) to Windows.")
         let transferResultStateURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("moonlight-companion-send-\(UUID().uuidString).state")
@@ -1301,13 +1353,14 @@ exit "${status}"
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
         environment["MOONLIGHT_TRANSFER_RESULT_STATE"] = transferResultStateURL.path
+        environment["MOONLIGHT_TRANSFER_PROGRESS_EVENTS"] = "yes"
         task.environment = environment
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             DispatchQueue.main.async {
-                self?.output.append(data)
+                self?.appendTransferOutput(data, progressStatus: "Sending Files")
             }
         }
 
@@ -1321,8 +1374,7 @@ exit "${status}"
                     return
                 }
                 self?.transferProcess = nil
-                let text = String(data: self?.output ?? Data(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let text = self?.filteredTransferOutputText()
                 if task.terminationStatus == 0 {
                     let transferResult = SettingsFile.parse(url: transferResultStateURL)
                     try? FileManager.default.removeItem(at: transferResultStateURL)
