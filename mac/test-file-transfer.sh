@@ -394,16 +394,22 @@ m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.t
 m2w_name="$(basename "$m2w_file")"
 m2w_collision_name="$(collision_name "$m2w_name")"
 m2w_out="${tmp_dir}/mac-to-windows-send.txt"
+m2w_state="${tmp_dir}/mac-to-windows-send-state.txt"
 printf 'Moonlight Companion Mac -> Windows test %s\n' "$stamp" > "$m2w_file"
 write_windows_file "$m2w_name" "existing Windows receive file ${stamp}"
 send_env=(MOONLIGHT_COMPANION_CONFIG="$config")
 if [[ "$(normalize_yes_no "$MOONLIGHT_CLIPBOARD_TCP")" == "yes" ]]; then
   send_env+=(MOONLIGHT_TRANSFER_REQUIRE_TCP_ACK=yes)
 fi
-env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_file" > "$m2w_out"
+env "${send_env[@]}" MOONLIGHT_TRANSFER_RESULT_STATE="$m2w_state" "${script_dir}/send-files-to-windows.sh" "$m2w_file" > "$m2w_out"
 if ! grep -q "Windows confirmed" "$m2w_out"; then
   echo "Mac -> Windows transfer did not receive Windows import confirmation." >&2
   cat "$m2w_out" >&2
+  exit 1
+fi
+if [[ ! -f "$m2w_state" || "$(meta_value id "$m2w_state")" != files:* ]]; then
+  echo "Mac -> Windows transfer did not write a GUI result state id." >&2
+  [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
   exit 1
 fi
 if ! wait_for_windows_file "$m2w_collision_name"; then

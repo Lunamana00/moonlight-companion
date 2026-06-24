@@ -658,6 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func requestWindowsReceiveFolderOpen(
         selectLatestImport: Bool,
+        expectedImportID: String? = nil,
         completion: @escaping (Bool, String) -> Void
     ) {
         let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
@@ -669,7 +670,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let task = Process()
         let pipe = Pipe()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = selectLatestImport ? [openerURL.path, "--latest-import"] : [openerURL.path]
+        var arguments = [openerURL.path]
+        if selectLatestImport {
+            arguments.append("--latest-import")
+        }
+        if let expectedImportID,
+           !expectedImportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments.append(contentsOf: ["--expected-id", expectedImportID])
+        }
+        task.arguments = arguments
         task.currentDirectoryURL = resourceURL
         task.standardOutput = pipe
         task.standardError = pipe
@@ -1214,6 +1223,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         output = Data()
         setBusy(true, status: "Sending Files", detail: "Sending \(summary.detail) to Windows.")
+        let transferResultStateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moonlight-companion-send-\(UUID().uuidString).state")
 
         let task = Process()
         let pipe = Pipe()
@@ -1224,6 +1235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         task.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        environment["MOONLIGHT_TRANSFER_RESULT_STATE"] = transferResultStateURL.path
         task.environment = environment
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -1241,6 +1253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let text = String(data: self?.output ?? Data(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if task.terminationStatus == 0 {
+                    let transferResult = SettingsFile.parse(url: transferResultStateURL)
+                    try? FileManager.default.removeItem(at: transferResultStateURL)
                     var detail = text?.isEmpty == false ? text! : "\(summary.detail) sent to Windows."
                     var pasteSummary = "Ready on the Windows clipboard."
                     if pasteAfterSend {
@@ -1251,7 +1265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
                     if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
                         self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive result.")
-                        self?.requestWindowsReceiveFolderOpen(selectLatestImport: true) { [weak self] succeeded, openDetail in
+                        self?.requestWindowsReceiveFolderOpen(
+                            selectLatestImport: true,
+                            expectedImportID: transferResult["id"]
+                        ) { [weak self] succeeded, openDetail in
                             let suffix = succeeded
                                 ? " \(openDetail)."
                                 : " Windows receive folder open failed: \(openDetail)"
@@ -1261,6 +1278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         self?.setBusy(false, status: "Files Sent", detail: detail)
                     }
                 } else {
+                    try? FileManager.default.removeItem(at: transferResultStateURL)
                     let detail = text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus)."
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
                     self?.setBusy(false, status: "Send Failed", detail: detail)

@@ -16,6 +16,7 @@ fi
 WINDOWS_SSH="${WINDOWS_SSH:-moonlight-windows}"
 MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}"
 select_latest_import="no"
+expected_id=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,8 +24,16 @@ while [[ $# -gt 0 ]]; do
       select_latest_import="yes"
       shift
       ;;
+    --expected-id)
+      if [[ $# -lt 2 ]]; then
+        echo "open-windows-receive-folder.sh: --expected-id requires a value" >&2
+        exit 2
+      fi
+      expected_id="$2"
+      shift 2
+      ;;
     *)
-      echo "usage: open-windows-receive-folder.sh [--latest-import]" >&2
+      echo "usage: open-windows-receive-folder.sh [--latest-import] [--expected-id <id>]" >&2
       exit 2
       ;;
   esac
@@ -50,11 +59,13 @@ encode_powershell() {
 
 transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
 select_latest_import_literal="$(ps_single_quoted "$select_latest_import")"
+expected_id_literal="$(ps_single_quoted "$expected_id")"
 read -r -d '' script <<POWERSHELL || true
 \$ErrorActionPreference = "Stop"
 \$ProgressPreference = "SilentlyContinue"
 \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal})
 \$selectLatestImport = (${select_latest_import_literal} -eq "yes")
+\$expectedId = ${expected_id_literal}
 if ([string]::IsNullOrWhiteSpace(\$dir)) {
   \$dir = Join-Path \$env:USERPROFILE "Downloads\\Moonlight Companion"
 }
@@ -76,8 +87,10 @@ if (\$selectLatestImport) {
     }
     \$importedCount = 0
     [void][int]::TryParse([string]\$state["imported_paths"], [ref]\$importedCount)
+    \$stateId = [string]\$state["id"]
     \$candidate = [string]\$state["imported_path_1"]
-    if (\$importedCount -eq 1 -and -not [string]::IsNullOrWhiteSpace(\$candidate) -and (Test-Path -LiteralPath \$candidate)) {
+    \$idMatches = [string]::IsNullOrWhiteSpace(\$expectedId) -or \$stateId -eq \$expectedId
+    if (\$idMatches -and \$importedCount -eq 1 -and -not [string]::IsNullOrWhiteSpace(\$candidate) -and (Test-Path -LiteralPath \$candidate)) {
       \$targetPath = \$candidate
       \$selectedLatestImport = \$true
     }

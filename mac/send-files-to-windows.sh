@@ -138,6 +138,24 @@ imported_names_summary() {
   summarize_imported_names "$total_count" "${names[@]}"
 }
 
+write_transfer_result_state() {
+  local state_path="${MOONLIGHT_TRANSFER_RESULT_STATE:-}"
+  [[ -n "$state_path" ]] || return 0
+
+  local state_dir tmp_path
+  state_dir="$(dirname "$state_path")"
+  tmp_path="${state_path}.tmp"
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  {
+    printf 'id=%s\n' "${payload_id:-}"
+    printf 'kind=%s\n' "${kind:-}"
+    printf 'bytes=%s\n' "${bytes:-}"
+    printf 'transport=%s\n' "${transport:-}"
+    printf 'confirmation=%s\n' "${windows_import_confirmation:-pending}"
+    printf 'imported_paths=%s\n' "${imported_paths:-0}"
+  } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$state_path" 2>/dev/null || rm -f "$tmp_path"
+}
+
 encode_powershell() {
   iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
 }
@@ -274,6 +292,7 @@ send_zip "$zip_path"
 log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
 windows_import_state=""
 windows_import_confirmation=""
+imported_paths="0"
 if wait_for_windows_import "$payload_id"; then
   log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
@@ -282,11 +301,13 @@ if wait_for_windows_import "$payload_id"; then
   if [[ -n "$imported_summary" ]]; then
     imported_suffix=": ${imported_summary}"
   fi
+  write_transfer_result_state
   if [[ "${imported_paths:-0}" == "1" ]]; then
     printf 'sent %s payload (%sB) via %s; Windows confirmed 1 item in the receive folder%s\n' "${kind:-files}" "$bytes" "$transport" "$imported_suffix"
   else
     printf 'sent %s payload (%sB) via %s; Windows confirmed %s items in the receive folder%s\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}" "$imported_suffix"
   fi
 else
+  write_transfer_result_state
   printf 'sent %s payload (%sB) via %s; Windows import confirmation is pending\n' "${kind:-files}" "$bytes" "$transport"
 fi
