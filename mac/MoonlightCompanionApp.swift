@@ -1114,6 +1114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !urls.isEmpty else { return }
         guard saveSettings() else { return }
         let pasteAfterSend = shouldPasteAfterSend(for: source)
+        let summary = fileTransferSummary(for: urls)
 
         let senderURL = resourceURL.appendingPathComponent("mac/send-files-to-windows.sh")
         guard FileManager.default.isExecutableFile(atPath: senderURL.path) else {
@@ -1122,7 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         output = Data()
-        setBusy(true, status: "Sending Files", detail: "Sending \(urls.count) item(s) to Windows.")
+        setBusy(true, status: "Sending Files", detail: "Sending \(summary.detail) to Windows.")
 
         let task = Process()
         let pipe = Pipe()
@@ -1150,14 +1151,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let text = String(data: self?.output ?? Data(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if task.terminationStatus == 0 {
-                    var detail = text?.isEmpty == false ? text! : "Files were sent to Windows."
+                    var detail = text?.isEmpty == false ? text! : "\(summary.detail) sent to Windows."
                     var pasteSummary = "Ready on the Windows clipboard."
                     if pasteAfterSend {
                         let pasted = self?.pasteIntoMoonlight() == true
                         pasteSummary = pasted ? "Pasted into the focused Moonlight app." : "Ready on the Windows clipboard; paste shortcut failed."
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
                     }
-                    self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(urls.count) item(s) transferred. \(pasteSummary)")
+                    self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
                     self?.setBusy(false, status: "Files Sent", detail: detail)
                 } else {
                     let detail = text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus)."
@@ -1176,6 +1177,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setBusy(false, status: "Send Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
         }
+    }
+
+    private struct TransferSummary {
+        let detail: String
+        let notification: String
+    }
+
+    private func fileTransferSummary(for urls: [URL]) -> TransferSummary {
+        let itemNames = urls.map { url in
+            url.lastPathComponent.isEmpty ? "file" : url.lastPathComponent
+        }
+        let itemText = itemNames.count == 1 ? "1 item" : "\(itemNames.count) items"
+        let bytes = urls.reduce(UInt64(0)) { partial, url in
+            partial + pathByteCount(url)
+        }
+        let sizeText = formattedByteCount(bytes)
+        let namesText = summarizedNames(itemNames)
+        let detail = "\(itemText) (\(sizeText)): \(namesText)"
+        let notification = "\(itemText) (\(sizeText))"
+        return TransferSummary(detail: detail, notification: notification)
+    }
+
+    private func summarizedNames(_ names: [String]) -> String {
+        guard !names.isEmpty else {
+            return "files"
+        }
+        let visibleNames = names.prefix(2).joined(separator: ", ")
+        let remaining = names.count - min(names.count, 2)
+        if remaining > 0 {
+            return "\(visibleNames), +\(remaining) more"
+        }
+        return visibleNames
+    }
+
+    private func formattedByteCount(_ bytes: UInt64) -> String {
+        let cappedBytes = min(bytes, UInt64(Int64.max))
+        return ByteCountFormatter.string(fromByteCount: Int64(cappedBytes), countStyle: .file)
+    }
+
+    private func pathByteCount(_ url: URL) -> UInt64 {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return 0
+        }
+
+        if isDirectory.boolValue {
+            return directoryByteCount(url)
+        }
+        return fileByteCount(url)
+    }
+
+    private func fileByteCount(_ url: URL) -> UInt64 {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return UInt64(values?.fileSize ?? 0)
+    }
+
+    private func directoryByteCount(_ url: URL) -> UInt64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: []
+        ) else {
+            return 0
+        }
+
+        var total: UInt64 = 0
+        for case let item as URL in enumerator {
+            let values = try? item.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if values?.isRegularFile == true {
+                total += UInt64(values?.fileSize ?? 0)
+            }
+        }
+        return total
     }
 
     private func shouldPasteAfterSend(for source: FileDropSource) -> Bool {
