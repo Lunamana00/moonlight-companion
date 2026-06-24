@@ -30,6 +30,7 @@ struct CompanionSettings {
         "MOONLIGHT_CLIPBOARD_MAX_BYTES",
         "MOONLIGHT_TRANSFER_MAC_DIR",
         "MOONLIGHT_TRANSFER_WINDOWS_DIR",
+        "MOONLIGHT_TRANSFER_DROP_OVERLAY",
         "MOONLIGHT_TRANSFER_AUTO_PASTE"
     ]
 
@@ -130,6 +131,7 @@ enum SettingsFile {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var dropStripWindow: NSPanel?
+    private var dropOverlayWindow: NSPanel?
     private var statusLabel: NSTextField!
     private var detailLabel: NSTextField!
     private var progressIndicator: NSProgressIndicator!
@@ -138,9 +140,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var saveButton: NSButton!
     private var stopButton: NSButton!
     private var dropStripButton: NSButton!
+    private var dropOverlayButton: NSButton!
     private var output = Data()
     private var process: Process?
     private var transferProcess: Process?
+    private var dropOverlayTimer: Timer?
+    private var dropOverlayManuallyShown = false
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
 
@@ -159,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.resourceURL = resourceURL
         settings = SettingsFile.load(resourceURL: resourceURL)
         buildWindow()
+        updateDropOverlayMonitor()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -231,15 +237,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         form.addArrangedSubview(sectionTitle("Transfer"))
         form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
         form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste into Moonlight after sending dropped files"))
         let dropView = FileDropView()
         dropView.delegate = self
         form.addArrangedSubview(row("Companion Drop", dropView))
+        dropOverlayButton = NSButton(title: "Show Moonlight Drop Overlay", target: self, action: #selector(toggleMoonlightDropOverlay))
+        dropOverlayButton.translatesAutoresizingMaskIntoConstraints = false
         dropStripButton = NSButton(title: "Show Moonlight Drop Strip", target: self, action: #selector(toggleMoonlightDropStrip))
         dropStripButton.translatesAutoresizingMaskIntoConstraints = false
         let openReceiveButton = NSButton(title: "Open Mac Receive Folder", target: self, action: #selector(openMacReceiveFolder))
         openReceiveButton.translatesAutoresizingMaskIntoConstraints = false
-        let transferButtons = NSStackView(views: [dropStripButton, openReceiveButton])
+        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, openReceiveButton])
         transferButtons.orientation = .horizontal
         transferButtons.alignment = .centerY
         transferButtons.spacing = 10
@@ -429,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             settings = collectSettings()
             try SettingsFile.save(settings)
+            updateDropOverlayMonitor()
             statusLabel.stringValue = "Saved"
             detailLabel.stringValue = SettingsFile.userURL.path
             return true
@@ -510,6 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         saveButton.isEnabled = !busy
         stopButton.isEnabled = !busy
         dropStripButton?.isEnabled = !busy
+        dropOverlayButton?.isEnabled = !busy
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
     }
@@ -620,6 +631,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showMoonlightDropStrip()
     }
 
+    @objc private func toggleMoonlightDropOverlay() {
+        guard saveSettings() else { return }
+        if let panel = dropOverlayWindow, panel.isVisible {
+            hideMoonlightDropOverlay()
+            return
+        }
+        showMoonlightDropOverlay(manual: true)
+    }
+
+    private func updateDropOverlayMonitor() {
+        dropOverlayTimer?.invalidate()
+        dropOverlayTimer = nil
+
+        guard settings.bool("MOONLIGHT_TRANSFER_DROP_OVERLAY") else {
+            if !dropOverlayManuallyShown {
+                hideMoonlightDropOverlay()
+            }
+            return
+        }
+
+        let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
+            self?.refreshDropOverlayForFileDrag()
+        }
+        dropOverlayTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func refreshDropOverlayForFileDrag() {
+        guard !dropOverlayManuallyShown else {
+            if dropOverlayWindow?.isVisible == true {
+                positionDropOverlay()
+            }
+            return
+        }
+
+        if shouldShowDropOverlayForCurrentDrag() {
+            showMoonlightDropOverlay(manual: false)
+        } else if dropOverlayWindow?.isVisible == true {
+            hideMoonlightDropOverlay()
+        }
+    }
+
+    private func shouldShowDropOverlayForCurrentDrag() -> Bool {
+        guard settings.bool("MOONLIGHT_TRANSFER_DROP_OVERLAY"),
+              (NSEvent.pressedMouseButtons & 1) == 1,
+              let moonlightFrame = moonlightWindowFrame() else {
+            return false
+        }
+
+        let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+        if frontmostName == "Moonlight" || frontmostName == "Moonlight Companion" {
+            return false
+        }
+
+        let mouseLocation = NSEvent.mouseLocation
+        guard moonlightFrame.insetBy(dx: -96, dy: -96).contains(mouseLocation) else {
+            return false
+        }
+
+        return !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+    }
+
+    private func showMoonlightDropOverlay(manual: Bool) {
+        if manual {
+            dropOverlayManuallyShown = true
+        }
+        guard let moonlightFrame = moonlightWindowFrame() else {
+            if manual {
+                fail("Moonlight window was not found.")
+            }
+            return
+        }
+
+        if dropOverlayWindow == nil {
+            let panel = NSPanel(
+                contentRect: moonlightFrame,
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            panel.title = "Moonlight Drop Overlay"
+            panel.isFloatingPanel = true
+            panel.level = .statusBar
+            panel.hidesOnDeactivate = false
+            panel.isReleasedWhenClosed = false
+            panel.isOpaque = false
+            panel.hasShadow = false
+            panel.backgroundColor = .clear
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.delegate = self
+
+            let overlayView = MoonlightDropOverlayView(frame: NSRect(origin: .zero, size: moonlightFrame.size))
+            overlayView.delegate = self
+            panel.contentView = overlayView
+            dropOverlayWindow = panel
+        }
+
+        positionDropOverlay(frame: moonlightFrame)
+        dropOverlayWindow?.orderFrontRegardless()
+        dropOverlayButton.title = "Hide Moonlight Drop Overlay"
+    }
+
+    private func hideMoonlightDropOverlay() {
+        dropOverlayManuallyShown = false
+        dropOverlayWindow?.orderOut(nil)
+        dropOverlayButton?.title = "Show Moonlight Drop Overlay"
+    }
+
+    private func positionDropOverlay(frame: NSRect? = nil) {
+        guard let panel = dropOverlayWindow else { return }
+        let targetFrame = frame ?? moonlightWindowFrame()
+        guard let targetFrame else { return }
+        panel.setFrame(targetFrame, display: true)
+        if let overlayView = panel.contentView as? MoonlightDropOverlayView {
+            overlayView.frame = NSRect(origin: .zero, size: targetFrame.size)
+        }
+    }
+
     private func showMoonlightDropStrip() {
         if dropStripWindow == nil {
             let size = NSSize(width: 260, height: 92)
@@ -660,13 +789,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let closingWindow = notification.object as? NSWindow,
-              let strip = dropStripWindow,
-              closingWindow === strip else {
+        guard let closingWindow = notification.object as? NSWindow else {
             return
         }
-        dropStripWindow = nil
-        dropStripButton?.title = "Show Moonlight Drop Strip"
+        if let strip = dropStripWindow, closingWindow === strip {
+            dropStripWindow = nil
+            dropStripButton?.title = "Show Moonlight Drop Strip"
+        }
+        if let overlay = dropOverlayWindow, closingWindow === overlay {
+            dropOverlayWindow = nil
+            dropOverlayManuallyShown = false
+            dropOverlayButton?.title = "Show Moonlight Drop Overlay"
+        }
     }
 
     private func positionDropStrip() {
@@ -906,19 +1040,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func quit() {
         process?.terminate()
         transferProcess?.terminate()
+        dropOverlayTimer?.invalidate()
+        dropOverlayWindow?.close()
         dropStripWindow?.close()
         NSApp.terminate(nil)
     }
 }
 
 extension AppDelegate: FileDropViewDelegate {
-    func fileDropView(_ view: FileDropView, didReceive urls: [URL]) {
+    func fileDropViewDidReceive(_ urls: [URL]) {
+        hideMoonlightDropOverlay()
         sendFilesToWindows(urls)
     }
 }
 
 protocol FileDropViewDelegate: AnyObject {
-    func fileDropView(_ view: FileDropView, didReceive urls: [URL])
+    func fileDropViewDidReceive(_ urls: [URL])
+}
+
+enum FileDropReader {
+    static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        guard let objects = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) else {
+            return []
+        }
+
+        return objects.compactMap { object in
+            if let url = object as? URL, url.isFileURL {
+                return url
+            }
+            if let nsURL = object as? NSURL {
+                let url = nsURL as URL
+                return url.isFileURL ? url : nil
+            }
+            return nil
+        }
+    }
+
+    static func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        fileURLs(from: sender.draggingPasteboard)
+    }
+}
+
+final class MoonlightDropOverlayView: NSView {
+    weak var delegate: FileDropViewDelegate?
+    private let titleLabel = NSTextField(labelWithString: "Drop to Windows")
+    private let detailLabel = NSTextField(labelWithString: "Release files anywhere on the Moonlight screen")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.10).cgColor
+        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.70).cgColor
+        layer?.borderWidth = 3
+        registerForDraggedTypes([.fileURL])
+
+        titleLabel.font = NSFont.systemFont(ofSize: 28, weight: .semibold)
+        titleLabel.textColor = .white
+        titleLabel.alignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        detailLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        detailLabel.textColor = NSColor.white.withAlphaComponent(0.82)
+        detailLabel.alignment = .center
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [titleLabel, detailLabel])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32)
+        ])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        FileDropReader.fileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        FileDropReader.fileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = FileDropReader.fileURLs(from: sender)
+        guard !urls.isEmpty else {
+            return false
+        }
+        delegate?.fileDropViewDidReceive(urls)
+        return true
+    }
 }
 
 final class FileDropView: NSView {
@@ -996,25 +1224,12 @@ final class FileDropView: NSView {
         guard !urls.isEmpty else {
             return false
         }
-        delegate?.fileDropView(self, didReceive: urls)
+        delegate?.fileDropViewDidReceive(urls)
         return true
     }
 
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
-        let pasteboard = sender.draggingPasteboard
-        guard let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) else {
-            return []
-        }
-        return objects.compactMap { object in
-            if let url = object as? URL, url.isFileURL {
-                return url
-            }
-            if let nsURL = object as? NSURL {
-                let url = nsURL as URL
-                return url.isFileURL ? url : nil
-            }
-            return nil
-        }
+        FileDropReader.fileURLs(from: sender)
     }
 }
 
