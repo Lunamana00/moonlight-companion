@@ -646,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard saveSettings() else { return }
 
         setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
-        requestWindowsReceiveFolderOpen { [weak self] succeeded, detail in
+        requestWindowsReceiveFolderOpen(selectLatestImport: false) { [weak self] succeeded, detail in
             if succeeded {
                 self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
             } else {
@@ -656,7 +656,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func requestWindowsReceiveFolderOpen(completion: @escaping (Bool, String) -> Void) {
+    private func requestWindowsReceiveFolderOpen(
+        selectLatestImport: Bool,
+        completion: @escaping (Bool, String) -> Void
+    ) {
         let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
         guard FileManager.default.isExecutableFile(atPath: openerURL.path) else {
             completion(false, "Windows receive folder opener is missing or not executable: \(openerURL.path)")
@@ -666,7 +669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let task = Process()
         let pipe = Pipe()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [openerURL.path]
+        task.arguments = selectLatestImport ? [openerURL.path, "--latest-import"] : [openerURL.path]
         task.currentDirectoryURL = resourceURL
         task.standardOutput = pipe
         task.standardError = pipe
@@ -1247,10 +1250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
                     if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
-                        self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive folder.")
-                        self?.requestWindowsReceiveFolderOpen { [weak self] succeeded, openDetail in
+                        self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive result.")
+                        self?.requestWindowsReceiveFolderOpen(selectLatestImport: true) { [weak self] succeeded, openDetail in
                             let suffix = succeeded
-                                ? " Windows receive folder opened."
+                                ? " \(openDetail)."
                                 : " Windows receive folder open failed: \(openDetail)"
                             self?.setBusy(false, status: "Files Sent", detail: detail + suffix)
                         }
