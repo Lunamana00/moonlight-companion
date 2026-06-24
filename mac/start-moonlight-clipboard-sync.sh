@@ -83,7 +83,7 @@ caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
 caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 transfer_notify="$(normalize_yes_no "${MOONLIGHT_TRANSFER_NOTIFY:-yes}")"
-transfer_reveal_mac_dir="$(normalize_yes_no "${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}")"
+transfer_reveal_mac_dir="$(normalize_yes_no "${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-yes}")"
 
 if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   if ! command -v swiftc >/dev/null 2>&1; then

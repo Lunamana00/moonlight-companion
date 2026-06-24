@@ -34,7 +34,7 @@ tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
 tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
-transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
+transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 
 remote_dir=".moonlight-clipboard-sync"
@@ -197,15 +197,22 @@ notify_windows_files_received() {
     item_text="${count:-1} items"
   fi
 
+  reveal_enabled="$(normalize_yes_no "$transfer_reveal_mac_dir")"
+  if [[ "$reveal_enabled" == "yes" ]]; then
+    notification_body="Received ${item_text} from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
+  else
+    notification_body="Received ${item_text} from Windows. Paste in Finder or open the Mac receive folder."
+  fi
+
   if [[ "$(normalize_yes_no "$transfer_notify")" == "yes" ]]; then
     /usr/bin/osascript -e '
 on run argv
   display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
 end run
-' "Received ${item_text} from Windows. Paste in Finder or open the Mac receive folder." >/dev/null 2>&1 || true
+' "$notification_body" >/dev/null 2>&1 || true
   fi
 
-  if [[ "$(normalize_yes_no "$transfer_reveal_mac_dir")" == "yes" ]]; then
+  if [[ "$reveal_enabled" == "yes" ]]; then
     reveal_paths=()
     while IFS= read -r file_path; do
       [[ -n "$file_path" ]] || continue

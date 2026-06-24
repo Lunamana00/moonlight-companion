@@ -266,8 +266,12 @@ func notifyWindowsFilesReceived(_ imported: [String: String]) {
     let rawCount = Int(imported["files"] ?? "") ?? 0
     let itemText = rawCount == 1 ? "1 item" : "\(max(rawCount, 1)) items"
 
+    let revealEnabled = boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: true)
+
     if boolEnv("MOONLIGHT_TRANSFER_NOTIFY", defaultValue: true) {
-        let body = "Received \(itemText) from Windows. Paste in Finder or open the Mac receive folder."
+        let body = revealEnabled
+            ? "Received \(itemText) from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
+            : "Received \(itemText) from Windows. Paste in Finder or open the Mac receive folder."
         let script = """
         on run argv
             display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
@@ -276,7 +280,7 @@ func notifyWindowsFilesReceived(_ imported: [String: String]) {
         _ = try? run("/usr/bin/osascript", ["-e", script, body])
     }
 
-    if boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: false) {
+    if revealEnabled {
         revealReceivedFiles(imported)
     }
 }
