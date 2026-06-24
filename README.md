@@ -82,7 +82,7 @@ For direct file transfer from Mac to Windows, drag files or folders from Finder 
 
 For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent exports that file clipboard payload over the Windows-to-Mac TCP channel. The Mac receiver copies the files into the configured Mac receive folder, places those files on the macOS clipboard, and notifies macOS so you can paste into Finder.
 
-Use `Test File Transfer` in the GUI to create small temporary test files and verify both directions without opening Terminal.
+Use `Test File Transfer` in the GUI to create small temporary test files, verify both directions, and clean up the test files without opening Terminal.
 
 ## Zero-Base Setup
 
