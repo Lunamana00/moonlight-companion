@@ -547,9 +547,14 @@ m2w_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-folder-${stamp}"
 m2w_dir_name="$(basename "$m2w_dir")"
 m2w_nested_path="nested/from-mac.txt"
 m2w_empty_dir_path="nested/empty-from-mac"
+m2w_windows_safe_nested_source_dir="nested/windows?unsafe*dir"
+m2w_windows_safe_nested_source_file="${m2w_windows_safe_nested_source_dir}/from:mac|nested?.txt"
+m2w_windows_safe_nested_expected_dir="nested/windows_unsafe_dir"
+m2w_windows_safe_nested_expected_file="${m2w_windows_safe_nested_expected_dir}/from_mac_nested_.txt"
 m2w_dir_out="${tmp_dir}/mac-to-windows-folder-send.txt"
-mkdir -p "${m2w_dir}/nested" "${m2w_dir}/${m2w_empty_dir_path}"
+mkdir -p "${m2w_dir}/nested" "${m2w_dir}/${m2w_empty_dir_path}" "${m2w_dir}/${m2w_windows_safe_nested_source_dir}"
 printf 'Moonlight Companion Mac -> Windows folder test %s\n' "$stamp" > "${m2w_dir}/${m2w_nested_path}"
+printf 'Moonlight Companion Mac -> Windows nested safe filename test %s\n' "$stamp" > "${m2w_dir}/${m2w_windows_safe_nested_source_file}"
 env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_dir" > "$m2w_dir_out"
 if ! grep -q "Windows confirmed" "$m2w_dir_out"; then
   echo "Mac -> Windows folder transfer did not receive Windows import confirmation." >&2
@@ -562,6 +567,14 @@ if ! wait_for_windows_path "${m2w_dir_name}/${m2w_nested_path}" "Leaf"; then
 fi
 if ! wait_for_windows_path "${m2w_dir_name}/${m2w_empty_dir_path}" "Container"; then
   echo "Mac -> Windows folder transfer did not preserve the empty nested folder." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_dir_name}/${m2w_windows_safe_nested_expected_file}" "Leaf"; then
+  echo "Mac -> Windows folder transfer did not sanitize a nested Windows-unsafe file name." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_dir_name}/${m2w_windows_safe_nested_expected_dir}" "Container"; then
+  echo "Mac -> Windows folder transfer did not sanitize a nested Windows-unsafe folder name." >&2
   exit 1
 fi
 remove_windows_path "$m2w_dir_name"

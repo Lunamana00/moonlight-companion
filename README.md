@@ -90,7 +90,7 @@ If the TCP channel is unavailable, the fallback polling path keeps the same rece
 
 The default setting enables Finder reveal so newly received Windows files appear immediately on the Mac side.
 
-Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary files, PNG image files, Korean file names, Windows-safe Mac file name conversion, file names with spaces and apostrophes, multi-item selections, nested folders, and empty subfolders, verify both directions, confirm the Mac-to-Windows receive-folder import, check same-name collision handling, and clean up the test payloads without opening Terminal.
+Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary files, PNG image files, Korean file names, Windows-safe Mac file and folder name conversion, file names with spaces and apostrophes, multi-item selections, nested folders, and empty subfolders, verify both directions, confirm the Mac-to-Windows receive-folder import, check same-name collision handling, and clean up the test payloads without opening Terminal.
 
 ## Zero-Base Setup
 
