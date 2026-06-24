@@ -399,6 +399,12 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     let payloadDir = "\(runtimeDir)/imported-windows-payload"
     let normalizedDir = "\(runtimeDir)/mac-normalized-payload"
     let statePath = "\(runtimeDir)/clipboard-tcp-windows-state.txt"
+    let receiveLockPath = "\(statePath).lock"
+
+    try? "receiving\n".write(toFile: receiveLockPath, atomically: true, encoding: .utf8)
+    defer {
+        try? fm.removeItem(atPath: receiveLockPath)
+    }
 
     try readPayload(fd: fd, byteCount: byteCount, to: zipPath)
     let archiveHash = try sha256Hex(file: zipPath)
@@ -407,14 +413,6 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
 
     let imported = parseMeta(try run(helper, ["import", payloadDir]))
     let winID = imported["id"] ?? ""
-    try writeState(path: statePath, values: [
-        "archive_hash": archiveHash,
-        "bytes": imported["bytes"] ?? "",
-        "kind": imported["kind"] ?? "",
-        "normalized_id": winID,
-        "windows_id": winID
-    ])
-    notifyWindowsFilesReceived(imported)
     try? cleanDirectory(normalizedDir)
     let normalizedOutput = try? run(helper, ["export", normalizedDir])
     let normalized = normalizedOutput.map(parseMeta) ?? [:]
@@ -427,6 +425,7 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
         "normalized_id": normalizedID,
         "windows_id": winID
     ])
+    notifyWindowsFilesReceived(imported)
     if imported["kind"] == "files" {
         log("Windows -> Mac TCP files \(receivedFileDetail(imported))", to: logPath)
     } else {

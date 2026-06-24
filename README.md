@@ -84,9 +84,11 @@ For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent e
 
 Receive folders never overwrite an existing file with the same name. Repeated same-name transfers use suffixes such as `-2` before the extension.
 
+Files received from Windows are marked as the current Mac clipboard state, so the background sync does not immediately echo them back to Windows.
+
 The default setting enables Finder reveal so newly received Windows files appear immediately on the Mac side.
 
-Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary test files, verify both directions, confirm the Mac-to-Windows receive-folder import, and clean up the test files without opening Terminal.
+Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary files and nested folders, verify both directions, confirm the Mac-to-Windows receive-folder import, check same-name collision handling, and clean up the test payloads without opening Terminal.
 
 ## Zero-Base Setup
 

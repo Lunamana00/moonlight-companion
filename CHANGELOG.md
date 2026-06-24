@@ -12,6 +12,9 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Windows-to-Mac file arrival notifications and TCP logs now include received file names and total size.
 - The file transfer self-test now refreshes the Mac TCP receiver when its helper was rebuilt, so tests exercise the current receiver binary instead of an already-running older one.
 - The file transfer self-test now verifies that repeated same-name transfers create collision-safe `-2` files on both Mac and Windows instead of overwriting existing receive-folder files.
+- The file transfer self-test now verifies nested folder transfers in both directions.
+- Windows-to-Mac TCP receives now write the final normalized clipboard state before notifications, preventing received files from being echoed back to Windows as new Mac-to-Windows sends.
+- The file transfer self-test now waits for Windows-to-Mac file and folder receives long enough to catch accidental echo-back uploads.
 
 ## v0.3.0 - 2026-06-24
 

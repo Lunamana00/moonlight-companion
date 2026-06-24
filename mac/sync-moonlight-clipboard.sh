@@ -33,6 +33,7 @@ tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
 tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
+tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
@@ -183,6 +184,15 @@ read_tcp_state() {
   return 0
 }
 
+tcp_receive_in_progress() {
+  [[ "$tcp_enabled" == "yes" && -f "$tcp_receive_lock" ]] || return 1
+
+  local now lock_mtime
+  now="$(date +%s)"
+  lock_mtime="$(stat -f "%m" "$tcp_receive_lock" 2>/dev/null || printf '0')"
+  (( now - lock_mtime < 15 ))
+}
+
 notify_windows_files_received() {
   local meta_path="$1"
   local kind count item_text
@@ -253,7 +263,7 @@ require_ready
 while true; do
   read_tcp_state
 
-  if "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
+  if ! tcp_receive_in_progress && "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
     mac_id="$(payload_id "$mac_meta")"
     mac_kind="$(payload_kind "$mac_meta")"
     mac_bytes="$(payload_bytes "$mac_meta")"
