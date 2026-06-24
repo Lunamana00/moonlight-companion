@@ -246,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE", title: "Paste after Moonlight window or strip drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste after Companion fallback drops"))
-        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify when Windows files arrive"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify on file transfers"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", title: "Open Mac receive folder when Windows files arrive"))
         let dropView = FileDropView(source: .companion)
         dropView.delegate = self
@@ -1011,13 +1011,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if task.terminationStatus == 0 {
                     var detail = text?.isEmpty == false ? text! : "Files were sent to Windows."
+                    var pasteSummary = "Ready on the Windows clipboard."
                     if pasteAfterSend {
                         let pasted = self?.pasteIntoMoonlight() == true
+                        pasteSummary = pasted ? "Pasted into the focused Moonlight app." : "Ready on the Windows clipboard; paste shortcut failed."
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
                     }
+                    self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(urls.count) item(s) transferred. \(pasteSummary)")
                     self?.setBusy(false, status: "Files Sent", detail: detail)
                 } else {
-                    self?.setBusy(false, status: "Send Failed", detail: text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus).")
+                    let detail = text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus)."
+                    self?.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
+                    self?.setBusy(false, status: "Send Failed", detail: detail)
                     self?.showFailure("File sender exited with status \(task.terminationStatus).")
                 }
             }
@@ -1027,6 +1032,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try task.run()
             transferProcess = task
         } catch {
+            notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: error.localizedDescription)
             setBusy(false, status: "Send Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
         }
@@ -1062,6 +1068,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             return false
         }
+    }
+
+    private func notifyMoonlightDropIfNeeded(source: FileDropSource, title: String, body: String) {
+        guard source == .moonlightSurface,
+              settings.bool("MOONLIGHT_TRANSFER_NOTIFY") else {
+            return
+        }
+
+        let script = """
+        on run argv
+            display notification (item 2 of argv) with title "Moonlight Companion" subtitle (item 1 of argv)
+        end run
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script, title, body]
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        try? task.run()
     }
 
     @objc private func openAccessibilitySettings() {

@@ -18,7 +18,7 @@ Current version: `v0.2.0`
 - Syncs clipboard payloads over persistent loopback TCP channels forwarded by SSH, with ZIP file polling as fallback.
 - Supports text, images, and file/folder clipboard payloads.
 - Lets you drop Mac files/folders onto the Moonlight window to send them to Windows.
-- Copies received file payloads into durable transfer folders on both Mac and Windows, with Mac notifications for Windows file arrivals.
+- Copies received file payloads into durable transfer folders on both Mac and Windows, with Mac notifications for file transfer events.
 - Maps Caps Lock to the Windows Korean IME Han/Eng toggle while the Windows agent is running.
 - Maps Mac-style Command shortcuts to Windows-style Control shortcuts while Moonlight is focused.
 - Uses SSH over Tailscale; no public port forwarding is required.
@@ -77,7 +77,7 @@ The same helper remaps Mac-style Command shortcuts to Windows-style Control shor
 
 Clipboard sync uses the same shape of transport: Moonlight Companion keeps separate TCP channels open for Mac-to-Windows and Windows-to-Mac clipboard payloads. Payloads are still encoded as ZIP archives for text, images, and file drops, and the older shared ZIP polling path remains available as a fallback.
 
-For direct file transfer from Mac to Windows, drag files or folders from Finder toward the Moonlight window. Companion detects the file drag near Moonlight and temporarily turns the whole Moonlight window into a drop target. The Companion window also keeps a fallback drop target and a small floating drop strip. Files are sent over the existing Mac-to-Windows clipboard TCP channel, imported into the Windows clipboard as file drops, and copied into the configured Windows receive folder. Moonlight window and strip drops can send `Ctrl+V` automatically after transfer so the files land in the focused Windows app.
+For direct file transfer from Mac to Windows, drag files or folders from Finder toward the Moonlight window. Companion detects the file drag near Moonlight and temporarily turns the whole Moonlight window into a drop target. The Companion window also keeps a fallback drop target and a small floating drop strip. Files are sent over the existing Mac-to-Windows clipboard TCP channel, imported into the Windows clipboard as file drops, and copied into the configured Windows receive folder. Moonlight window and strip drops can send `Ctrl+V` automatically after transfer so the files land in the focused Windows app, then notify macOS with the result.
 
 For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent exports that file clipboard payload over the Windows-to-Mac TCP channel. The Mac receiver copies the files into the configured Mac receive folder, places those files on the macOS clipboard, and notifies macOS so you can paste into Finder.
 
