@@ -326,6 +326,9 @@ func printManifest(_ manifest: Manifest) {
     print("id=\(manifest.id)")
     print("kind=\(manifest.kind)")
     print("bytes=\(manifest.bytes)")
+    if let files = manifest.files {
+        print("files=\(files.count)")
+    }
 }
 
 do {

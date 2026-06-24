@@ -220,6 +220,43 @@ func parseMeta(_ output: String) -> [String: String] {
     return result
 }
 
+func boolEnv(_ key: String, defaultValue: Bool) -> Bool {
+    guard let value = ProcessInfo.processInfo.environment[key] else {
+        return defaultValue
+    }
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "y", "yes", "true", "on":
+        return true
+    default:
+        return false
+    }
+}
+
+func notifyWindowsFilesReceived(_ imported: [String: String]) {
+    guard imported["kind"] == "files" else {
+        return
+    }
+
+    let rawCount = Int(imported["files"] ?? "") ?? 0
+    let itemText = rawCount == 1 ? "1 item" : "\(max(rawCount, 1)) items"
+
+    if boolEnv("MOONLIGHT_TRANSFER_NOTIFY", defaultValue: true) {
+        let body = "Received \(itemText) from Windows. Paste in Finder or open the Mac receive folder."
+        let script = """
+        on run argv
+            display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
+        end run
+        """
+        _ = try? run("/usr/bin/osascript", ["-e", script, body])
+    }
+
+    if boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: false),
+       let directory = ProcessInfo.processInfo.environment["MOONLIGHT_TRANSFER_MAC_DIR"],
+       !directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        _ = try? run("/usr/bin/open", [NSString(string: directory).expandingTildeInPath])
+    }
+}
+
 func cleanDirectory(_ path: String) throws {
     let url = URL(fileURLWithPath: path, isDirectory: true)
     if fm.fileExists(atPath: path) {
@@ -260,11 +297,19 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     _ = try run("/usr/bin/ditto", ["-x", "-k", "--noqtn", zipPath, payloadDir])
 
     let imported = parseMeta(try run(helper, ["import", payloadDir]))
+    let winID = imported["id"] ?? ""
+    try writeState(path: statePath, values: [
+        "archive_hash": archiveHash,
+        "bytes": imported["bytes"] ?? "",
+        "kind": imported["kind"] ?? "",
+        "normalized_id": winID,
+        "windows_id": winID
+    ])
+    notifyWindowsFilesReceived(imported)
     try? cleanDirectory(normalizedDir)
     let normalizedOutput = try? run(helper, ["export", normalizedDir])
     let normalized = normalizedOutput.map(parseMeta) ?? [:]
 
-    let winID = imported["id"] ?? ""
     let normalizedID = normalized["id"] ?? winID
     try writeState(path: statePath, values: [
         "archive_hash": archiveHash,

@@ -31,7 +31,9 @@ struct CompanionSettings {
         "MOONLIGHT_TRANSFER_MAC_DIR",
         "MOONLIGHT_TRANSFER_WINDOWS_DIR",
         "MOONLIGHT_TRANSFER_DROP_OVERLAY",
-        "MOONLIGHT_TRANSFER_AUTO_PASTE"
+        "MOONLIGHT_TRANSFER_AUTO_PASTE",
+        "MOONLIGHT_TRANSFER_NOTIFY",
+        "MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"
     ]
 
     var values: [String: String]
@@ -239,6 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste into Moonlight after sending dropped files"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify when Windows files arrive"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", title: "Open Mac receive folder when Windows files arrive"))
         let dropView = FileDropView()
         dropView.delegate = self
         form.addArrangedSubview(row("Companion Drop", dropView))

@@ -82,6 +82,8 @@ clip_w2m_local_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT:-$clip_
 caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
 caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
+transfer_notify="$(normalize_yes_no "${MOONLIGHT_TRANSFER_NOTIFY:-yes}")"
+transfer_reveal_mac_dir="$(normalize_yes_no "${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}")"
 
 if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   if ! command -v swiftc >/dev/null 2>&1; then
@@ -214,6 +216,10 @@ if [[ "$clip_tcp_enabled" == "yes" ]]; then
   <dict>
     <key>MOONLIGHT_TRANSFER_MAC_DIR</key>
     <string>${transfer_mac_dir}</string>
+    <key>MOONLIGHT_TRANSFER_NOTIFY</key>
+    <string>${transfer_notify}</string>
+    <key>MOONLIGHT_TRANSFER_REVEAL_MAC_DIR</key>
+    <string>${transfer_reveal_mac_dir}</string>
   </dict>
 </dict>
 </plist>
@@ -325,6 +331,10 @@ cat > "$plist" <<EOF
     <string>${runtime_dir}/clipboard-tcp-windows-state.txt</string>
     <key>MOONLIGHT_TRANSFER_MAC_DIR</key>
     <string>${transfer_mac_dir}</string>
+    <key>MOONLIGHT_TRANSFER_NOTIFY</key>
+    <string>${transfer_notify}</string>
+    <key>MOONLIGHT_TRANSFER_REVEAL_MAC_DIR</key>
+    <string>${transfer_reveal_mac_dir}</string>
   </dict>
 </dict>
 </plist>

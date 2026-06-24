@@ -18,6 +18,7 @@ flowchart LR
     Helper["moonclipctl Swift helper"]
     MacClipboard["macOS clipboard"]
     MacTransfer["Mac receive folder"]
+    MacNotify["macOS notification"]
   end
 
   subgraph Network["Tailscale private network"]
@@ -50,6 +51,7 @@ flowchart LR
   Launchd -->|"Mac -> Windows ZIP frame"| ClipTunnel
   ClipTcp -->|"import Windows -> Mac ZIP frame"| Helper
   Helper -->|"copy files"| MacTransfer
+  ClipTcp -->|"notify file arrivals"| MacNotify
   ClipTunnel <-->|"loopback TCP"| WinAgent
   Launchd <-->|"fallback ZIP payloads"| SSH
   SSH <-->|"copy payload archives"| PayloadDir
@@ -147,6 +149,7 @@ sequenceDiagram
   Receiver->>Helper: Import file payload
   Helper->>MacDir: Copy files into durable folder
   Helper->>MacClip: Set file URLs to copied files
+  Receiver-->>User: Notify files are ready on Mac
 ```
 
 ## Caps Lock Han/Eng Flow

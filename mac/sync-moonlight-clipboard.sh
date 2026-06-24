@@ -33,6 +33,9 @@ tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
 tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
+transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
+transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
+transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 
 remote_dir=".moonlight-clipboard-sync"
 remote_mac_zip="${remote_dir}/mac-to-windows.zip"
@@ -80,6 +83,10 @@ payload_kind() {
 
 payload_bytes() {
   awk -F= '/^bytes=/{print $2; exit}' "$1"
+}
+
+payload_files() {
+  awk -F= '/^files=/{print $2; exit}' "$1"
 }
 
 file_hash() {
@@ -172,6 +179,33 @@ read_tcp_state() {
   return 0
 }
 
+notify_windows_files_received() {
+  local meta_path="$1"
+  local kind count item_text
+
+  kind="$(payload_kind "$meta_path")"
+  [[ "$kind" == "files" ]] || return 0
+
+  count="$(payload_files "$meta_path")"
+  if [[ "$count" == "1" ]]; then
+    item_text="1 item"
+  else
+    item_text="${count:-1} items"
+  fi
+
+  if [[ "$(normalize_yes_no "$transfer_notify")" == "yes" ]]; then
+    /usr/bin/osascript -e '
+on run argv
+  display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
+end run
+' "Received ${item_text} from Windows. Paste in Finder or open the Mac receive folder." >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$(normalize_yes_no "$transfer_reveal_mac_dir")" == "yes" ]]; then
+    /usr/bin/open "$transfer_mac_dir" >/dev/null 2>&1 || true
+  fi
+}
+
 tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-clipboard-sync.XXXXXX")"
@@ -204,6 +238,7 @@ while true; do
     mac_bytes="$(payload_bytes "$mac_meta")"
 
     if [[ -n "$mac_id" && "$mac_id" != "$last_mac_id" ]]; then
+      read_tcp_state
       if [[ "$mac_id" == "$last_windows_id" ]]; then
         last_mac_id="$mac_id"
       elif (( mac_bytes > max_bytes )); then
@@ -232,6 +267,7 @@ while true; do
           win_id="$(payload_id "${tmp_dir}/windows-meta.txt")"
           win_kind="$(payload_kind "${tmp_dir}/windows-meta.txt")"
           win_bytes="$(payload_bytes "${tmp_dir}/windows-meta.txt")"
+          notify_windows_files_received "${tmp_dir}/windows-meta.txt"
           normalized_id="$win_id"
           if "$helper" export "$mac_normalized_payload" > "$mac_normalized_meta" 2>/dev/null; then
             normalized_id="$(payload_id "$mac_normalized_meta")"

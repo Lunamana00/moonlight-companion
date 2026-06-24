@@ -10,8 +10,9 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Added a temporary full-window Moonlight drop overlay that appears during Finder file drags near Moonlight.
 - Added a floating Moonlight drop strip for Mac-to-Windows file drops without aiming at the main Companion window.
 - Added an optional post-drop `Ctrl+V` action for pasting transferred files into the focused Windows app inside Moonlight.
+- Added Mac notifications for Windows-to-Mac file arrivals, plus an optional receive-folder reveal action.
 - Added durable Mac and Windows receive folders for imported file payloads.
-- Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, `MOONLIGHT_TRANSFER_DROP_OVERLAY`, and `MOONLIGHT_TRANSFER_AUTO_PASTE` settings.
+- Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, `MOONLIGHT_TRANSFER_DROP_OVERLAY`, `MOONLIGHT_TRANSFER_AUTO_PASTE`, `MOONLIGHT_TRANSFER_NOTIFY`, and `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` settings.
 - Added Moonlight-focused Command-to-Control shortcut remapping for Mac-style shortcuts.
 - Added `MOONLIGHT_SHORTCUT_REMAP` to enable or disable local shortcut remapping.
 - Added a settings GUI for editing launch, keyboard, and clipboard options before starting Moonlight.
