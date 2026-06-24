@@ -145,6 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dropStripButton: NSButton!
     private var dropOverlayButton: NSButton!
     private var testTransferButton: NSButton!
+    private var openMacReceiveButton: NSButton!
+    private var openWindowsReceiveButton: NSButton!
     private var output = Data()
     private var process: Process?
     private var transferProcess: Process?
@@ -266,9 +268,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dropStripButton.translatesAutoresizingMaskIntoConstraints = false
         testTransferButton = NSButton(title: "Test File Transfer", target: self, action: #selector(testFileTransfer))
         testTransferButton.translatesAutoresizingMaskIntoConstraints = false
-        let openReceiveButton = NSButton(title: "Open Mac Receive Folder", target: self, action: #selector(openMacReceiveFolder))
-        openReceiveButton.translatesAutoresizingMaskIntoConstraints = false
-        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openReceiveButton])
+        openMacReceiveButton = NSButton(title: "Open Mac Folder", target: self, action: #selector(openMacReceiveFolder))
+        openMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
+        openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openMacReceiveButton, openWindowsReceiveButton])
         transferButtons.orientation = .horizontal
         transferButtons.alignment = .centerY
         transferButtons.spacing = 10
@@ -542,6 +546,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dropStripButton?.isEnabled = !busy
         dropOverlayButton?.isEnabled = !busy
         testTransferButton?.isEnabled = !busy
+        openMacReceiveButton?.isEnabled = !busy
+        openWindowsReceiveButton?.isEnabled = !busy
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
     }
@@ -631,6 +637,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSWorkspace.shared.open(url)
         } catch {
             fail("Could not open receive folder: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func openWindowsReceiveFolder() {
+        guard saveSettings() else { return }
+
+        let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
+        guard FileManager.default.isExecutableFile(atPath: openerURL.path) else {
+            fail("Windows receive folder opener is missing or not executable: \(openerURL.path)")
+            return
+        }
+
+        output = Data()
+        setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
+
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [openerURL.path]
+        task.currentDirectoryURL = resourceURL
+        task.standardOutput = pipe
+        task.standardError = pipe
+        var environment = ProcessInfo.processInfo.environment
+        environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        task.environment = environment
+
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async {
+                self?.output.append(data)
+            }
+        }
+
+        task.terminationHandler = { [weak self] task in
+            DispatchQueue.main.async {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                self?.transferProcess = nil
+                let text = String(data: self?.output ?? Data(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let detail = text?.isEmpty == false ? text! : "Windows folder opener exited with status \(task.terminationStatus)."
+                if task.terminationStatus == 0 {
+                    self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
+                } else {
+                    self?.setBusy(false, status: "Open Failed", detail: detail)
+                    self?.showFailure("Windows receive folder opener exited with status \(task.terminationStatus).")
+                }
+            }
+        }
+
+        do {
+            try task.run()
+            transferProcess = task
+        } catch {
+            setBusy(false, status: "Open Failed", detail: error.localizedDescription)
+            fail(error.localizedDescription)
         }
     }
 
