@@ -72,8 +72,10 @@ if ([string]::IsNullOrWhiteSpace(\$dir)) {
 New-Item -ItemType Directory -Force -Path \$dir | Out-Null
 \$targetPath = \$dir
 \$selectedLatestImport = \$false
+\$openResult = "folder"
 
 if (\$selectLatestImport) {
+  \$openResult = "folder-no-state"
   \$statePath = Join-Path (Join-Path \$env:USERPROFILE ".moonlight-clipboard-sync") "mac-to-windows-import-state.txt"
   if (Test-Path -LiteralPath \$statePath) {
     \$state = @{}
@@ -93,6 +95,15 @@ if (\$selectLatestImport) {
     if (\$idMatches -and \$importedCount -eq 1 -and -not [string]::IsNullOrWhiteSpace(\$candidate) -and (Test-Path -LiteralPath \$candidate)) {
       \$targetPath = \$candidate
       \$selectedLatestImport = \$true
+      \$openResult = "selected"
+    } elseif (-not \$idMatches) {
+      \$openResult = "folder-id-mismatch"
+    } elseif (\$importedCount -ne 1) {
+      \$openResult = "folder-multi-item"
+    } elseif ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) {
+      \$openResult = "folder-missing-item"
+    } else {
+      \$openResult = "folder"
     }
   }
 }
@@ -106,19 +117,33 @@ Register-ScheduledTask -TaskName \$taskName -Action \$action -Principal \$princi
 Start-ScheduledTask -TaskName \$taskName
 Start-Sleep -Milliseconds 800
 Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
-if (\$selectedLatestImport) {
-  Write-Output "asked Windows to select the latest received item"
-} else {
-  Write-Output "asked Windows to open the receive folder"
-}
+Write-Output ("MOONLIGHT_OPEN_RESULT={0}" -f \$openResult)
 POWERSHELL
 
 encoded="$(printf '%s' "$script" | encode_powershell)"
-ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-  "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" >/dev/null
+remote_output="$(
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}"
+)"
+open_result="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_OPEN_RESULT" {sub(/\r$/, "", $2); print $2; exit}')"
 
-if [[ "$select_latest_import" == "yes" ]]; then
-  printf 'asked Windows to open the latest receive result\n'
-else
-  printf 'asked Windows to open the receive folder\n'
-fi
+case "$open_result" in
+  selected)
+    printf 'asked Windows to select the latest received item\n'
+    ;;
+  folder-id-mismatch)
+    printf 'asked Windows to open the receive folder; latest item did not match this transfer\n'
+    ;;
+  folder-multi-item)
+    printf 'asked Windows to open the receive folder for multiple received items\n'
+    ;;
+  folder-missing-item)
+    printf 'asked Windows to open the receive folder; latest received item was unavailable\n'
+    ;;
+  folder-no-state)
+    printf 'asked Windows to open the receive folder; latest receive state was unavailable\n'
+    ;;
+  *)
+    printf 'asked Windows to open the receive folder\n'
+    ;;
+esac
