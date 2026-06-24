@@ -89,6 +89,10 @@ payload_files() {
   awk -F= '/^files=/{print $2; exit}' "$1"
 }
 
+payload_file_paths() {
+  awk -F= '$1 ~ /^file_path_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
+}
+
 file_hash() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
@@ -202,7 +206,17 @@ end run
   fi
 
   if [[ "$(normalize_yes_no "$transfer_reveal_mac_dir")" == "yes" ]]; then
-    /usr/bin/open "$transfer_mac_dir" >/dev/null 2>&1 || true
+    reveal_paths=()
+    while IFS= read -r file_path; do
+      [[ -n "$file_path" ]] || continue
+      reveal_paths+=("$file_path")
+    done < <(payload_file_paths "$meta_path")
+
+    if ((${#reveal_paths[@]} > 0)); then
+      /usr/bin/open -R "${reveal_paths[@]}" >/dev/null 2>&1 || /usr/bin/open "$transfer_mac_dir" >/dev/null 2>&1 || true
+    else
+      /usr/bin/open "$transfer_mac_dir" >/dev/null 2>&1 || true
+    fi
   fi
 }
 

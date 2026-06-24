@@ -232,6 +232,32 @@ func boolEnv(_ key: String, defaultValue: Bool) -> Bool {
     }
 }
 
+func importedFilePaths(_ imported: [String: String]) -> [String] {
+    let count = Int(imported["file_paths"] ?? "") ?? 0
+    guard count > 0 else {
+        return []
+    }
+    return (1...count).compactMap { index in
+        let rawPath = imported["file_path_\(index)"] ?? ""
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : NSString(string: trimmed).expandingTildeInPath
+    }
+}
+
+func revealReceivedFiles(_ imported: [String: String]) {
+    let paths = importedFilePaths(imported)
+    if !paths.isEmpty {
+        if (try? run("/usr/bin/open", ["-R"] + paths)) != nil {
+            return
+        }
+    }
+
+    if let directory = ProcessInfo.processInfo.environment["MOONLIGHT_TRANSFER_MAC_DIR"],
+       !directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        _ = try? run("/usr/bin/open", [NSString(string: directory).expandingTildeInPath])
+    }
+}
+
 func notifyWindowsFilesReceived(_ imported: [String: String]) {
     guard imported["kind"] == "files" else {
         return
@@ -250,10 +276,8 @@ func notifyWindowsFilesReceived(_ imported: [String: String]) {
         _ = try? run("/usr/bin/osascript", ["-e", script, body])
     }
 
-    if boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: false),
-       let directory = ProcessInfo.processInfo.environment["MOONLIGHT_TRANSFER_MAC_DIR"],
-       !directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        _ = try? run("/usr/bin/open", [NSString(string: directory).expandingTildeInPath])
+    if boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: false) {
+        revealReceivedFiles(imported)
     }
 }
 

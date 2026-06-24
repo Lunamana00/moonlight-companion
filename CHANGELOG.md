@@ -15,7 +15,7 @@ No changes yet.
 - Added a floating Moonlight drop strip for Mac-to-Windows file drops without aiming at the main Companion window.
 - Added a GUI file transfer test that validates and cleans up Mac-to-Windows and Windows-to-Mac test files.
 - Added separate post-drop `Ctrl+V` controls so Moonlight window/strip drops can paste by default while the Companion fallback drop target stays opt-in.
-- Added Mac notifications for Moonlight screen-drop send results and Windows-to-Mac file arrivals, plus an optional receive-folder reveal action.
+- Added Mac notifications for Moonlight screen-drop send results and Windows-to-Mac file arrivals, plus an optional Finder reveal action for received files.
 - Added durable Mac and Windows receive folders for imported file payloads.
 - Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, `MOONLIGHT_TRANSFER_DROP_OVERLAY`, `MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE`, `MOONLIGHT_TRANSFER_AUTO_PASTE`, `MOONLIGHT_TRANSFER_NOTIFY`, and `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` settings.
 - Added Moonlight-focused Command-to-Control shortcut remapping for Mac-style shortcuts.
@@ -30,6 +30,7 @@ No changes yet.
 - The GUI `Permissions` button now starts the keyboard helper permission request before opening macOS Accessibility settings.
 - The macOS Caps Lock helper now also acts as the Moonlight keyboard helper.
 - The Moonlight file drop overlay now samples drag movement faster and uses pointer-path hit testing so fast drags across the stream window are caught more reliably.
+- Windows-to-Mac file arrivals now reveal the newly received files in Finder when receive-folder reveal is enabled, instead of only opening the folder.
 - Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
 - Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
 - Moonlight launch now waits longer for the stream window, logs display placement diagnostics, and attempts to place the window on the selected Mac display after startup.

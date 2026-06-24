@@ -20,6 +20,11 @@ struct Manifest: Codable {
     let files: [Item]?
 }
 
+struct ImportResult {
+    let manifest: Manifest
+    let fileURLs: [URL]
+}
+
 enum ClipError: Error, CustomStringConvertible {
     case usage
     case unsupported
@@ -256,9 +261,10 @@ func exportClipboard(to dir: URL) throws -> Manifest {
     throw ClipError.unsupported
 }
 
-func importClipboard(from dir: URL) throws -> Manifest {
+func importClipboard(from dir: URL) throws -> ImportResult {
     let manifest = try readManifest(from: dir)
     let pasteboard = NSPasteboard.general
+    var importedFileURLs: [URL] = []
 
     switch manifest.kind {
     case "text":
@@ -281,6 +287,7 @@ func importClipboard(from dir: URL) throws -> Manifest {
         if let transferDir = transferMacDirectory() {
             urls = try copyFiles(urls, to: transferDir)
         }
+        importedFileURLs = urls
         pasteboard.clearContents()
         let items = urls.map { url -> NSPasteboardItem in
             let item = NSPasteboardItem()
@@ -295,7 +302,7 @@ func importClipboard(from dir: URL) throws -> Manifest {
         throw ClipError.invalidManifest
     }
 
-    return manifest
+    return ImportResult(manifest: manifest, fileURLs: importedFileURLs)
 }
 
 func expandedPath(_ value: String) -> String {
@@ -322,12 +329,18 @@ func copyFiles(_ urls: [URL], to directory: URL) throws -> [URL] {
     }
 }
 
-func printManifest(_ manifest: Manifest) {
+func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {
     print("id=\(manifest.id)")
     print("kind=\(manifest.kind)")
     print("bytes=\(manifest.bytes)")
     if let files = manifest.files {
         print("files=\(files.count)")
+    }
+    if !fileURLs.isEmpty {
+        print("file_paths=\(fileURLs.count)")
+        for (index, url) in fileURLs.enumerated() {
+            print("file_path_\(index + 1)=\(url.path)")
+        }
     }
 }
 
@@ -354,8 +367,8 @@ do {
         printManifest(manifest)
     case "import":
         guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
-        let manifest = try importClipboard(from: dir)
-        printManifest(manifest)
+        let result = try importClipboard(from: dir)
+        printManifest(result.manifest, fileURLs: result.fileURLs)
     case "info":
         guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let manifest = try readManifest(from: dir)

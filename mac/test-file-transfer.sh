@@ -139,6 +139,12 @@ wait_for_mac_file() {
   return 1
 }
 
+meta_value() {
+  local key="$1"
+  local path="$2"
+  awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
+}
+
 if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$MOONLIGHT_CLIPBOARD_TCP")" != "yes" ]]; then
   echo "Clipboard TCP is disabled; enable MOONLIGHT_CLIPBOARD_TCP for the live transfer test." >&2
   exit 1
@@ -155,6 +161,22 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+echo "Testing received file metadata..."
+metadata_src="${tmp_dir}/moonlight-companion-transfer-test-receive-metadata-${stamp}.txt"
+metadata_payload="${tmp_dir}/receive-metadata-payload"
+metadata_out="${tmp_dir}/receive-metadata.txt"
+metadata_name="$(basename "$metadata_src")"
+printf 'Moonlight Companion receive metadata test %s\n' "$stamp" > "$metadata_src"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$metadata_payload" "$metadata_src" >/dev/null
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" import "$metadata_payload" > "$metadata_out"
+metadata_path="$(meta_value "file_path_1" "$metadata_out")"
+if [[ -z "$metadata_path" || ! -f "$metadata_path" || "$(basename "$metadata_path")" != "$metadata_name" ]]; then
+  echo "Windows -> Mac import did not report the received file path." >&2
+  exit 1
+fi
+rm -f "$metadata_path"
+echo "Received file metadata ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
