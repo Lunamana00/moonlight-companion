@@ -31,6 +31,7 @@ struct CompanionSettings {
         "MOONLIGHT_TRANSFER_MAC_DIR",
         "MOONLIGHT_TRANSFER_WINDOWS_DIR",
         "MOONLIGHT_TRANSFER_DROP_OVERLAY",
+        "MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_NOTIFY",
         "MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"
@@ -243,10 +244,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
         form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
-        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste into Moonlight after sending dropped files"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE", title: "Paste after Moonlight window or strip drops"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste after Companion fallback drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify when Windows files arrive"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", title: "Open Mac receive folder when Windows files arrive"))
-        let dropView = FileDropView()
+        let dropView = FileDropView(source: .companion)
         dropView.delegate = self
         form.addArrangedSubview(row("Companion Drop", dropView))
         dropOverlayButton = NSButton(title: "Show Moonlight Drop Overlay", target: self, action: #selector(toggleMoonlightDropOverlay))
@@ -808,6 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let dropView = FileDropView(
                 title: "Drop to Windows",
                 detail: "Release files here",
+                source: .moonlightSurface,
                 width: size.width - 24,
                 height: size.height - 28
             )
@@ -967,9 +970,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return NSRect(x: x, y: y, width: frame.width, height: frame.height)
     }
 
-    private func sendFilesToWindows(_ urls: [URL]) {
+    private func sendFilesToWindows(_ urls: [URL], source: FileDropSource) {
         guard !urls.isEmpty else { return }
         guard saveSettings() else { return }
+        let pasteAfterSend = shouldPasteAfterSend(for: source)
 
         let senderURL = resourceURL.appendingPathComponent("mac/send-files-to-windows.sh")
         guard FileManager.default.isExecutableFile(atPath: senderURL.path) else {
@@ -1007,7 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if task.terminationStatus == 0 {
                     var detail = text?.isEmpty == false ? text! : "Files were sent to Windows."
-                    if self?.settings.bool("MOONLIGHT_TRANSFER_AUTO_PASTE") == true {
+                    if pasteAfterSend {
                         let pasted = self?.pasteIntoMoonlight() == true
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
                     }
@@ -1025,6 +1029,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             setBusy(false, status: "Send Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
+        }
+    }
+
+    private func shouldPasteAfterSend(for source: FileDropSource) -> Bool {
+        switch source {
+        case .moonlightSurface:
+            return settings.bool("MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE")
+        case .companion:
+            return settings.bool("MOONLIGHT_TRANSFER_AUTO_PASTE")
         }
     }
 
@@ -1087,14 +1100,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 extension AppDelegate: FileDropViewDelegate {
-    func fileDropViewDidReceive(_ urls: [URL]) {
+    func fileDropViewDidReceive(_ urls: [URL], source: FileDropSource) {
         hideMoonlightDropOverlay()
-        sendFilesToWindows(urls)
+        sendFilesToWindows(urls, source: source)
     }
 }
 
 protocol FileDropViewDelegate: AnyObject {
-    func fileDropViewDidReceive(_ urls: [URL])
+    func fileDropViewDidReceive(_ urls: [URL], source: FileDropSource)
+}
+
+enum FileDropSource {
+    case companion
+    case moonlightSurface
 }
 
 enum FileDropReader {
@@ -1183,7 +1201,7 @@ final class MoonlightDropOverlayView: NSView {
         guard !urls.isEmpty else {
             return false
         }
-        delegate?.fileDropViewDidReceive(urls)
+        delegate?.fileDropViewDidReceive(urls, source: .moonlightSurface)
         return true
     }
 }
@@ -1192,16 +1210,19 @@ final class FileDropView: NSView {
     weak var delegate: FileDropViewDelegate?
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
+    private let source: FileDropSource
     private let preferredSize: NSSize
 
     init(
         title: String = "Drop files or folders",
         detail: String = "Sends to Windows clipboard and receive folder",
+        source: FileDropSource,
         width: CGFloat = 520,
         height: CGFloat = 96
     ) {
         titleLabel = NSTextField(labelWithString: title)
         detailLabel = NSTextField(labelWithString: detail)
+        self.source = source
         preferredSize = NSSize(width: width, height: height)
         super.init(frame: .zero)
         setup()
@@ -1210,6 +1231,7 @@ final class FileDropView: NSView {
     required init?(coder: NSCoder) {
         titleLabel = NSTextField(labelWithString: "Drop files or folders")
         detailLabel = NSTextField(labelWithString: "Sends to Windows clipboard and receive folder")
+        source = .companion
         preferredSize = NSSize(width: 520, height: 96)
         super.init(coder: coder)
         setup()
@@ -1263,7 +1285,7 @@ final class FileDropView: NSView {
         guard !urls.isEmpty else {
             return false
         }
-        delegate?.fileDropViewDidReceive(urls)
+        delegate?.fileDropViewDidReceive(urls, source: source)
         return true
     }
 
