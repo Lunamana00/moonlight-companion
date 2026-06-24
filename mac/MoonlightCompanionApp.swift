@@ -1526,6 +1526,23 @@ enum FileDropReader {
         fileURLs(from: sender.draggingPasteboard)
     }
 
+    static func dropSummary(for urls: [URL]) -> String {
+        guard !urls.isEmpty else {
+            return "No file selected"
+        }
+
+        let itemText = urls.count == 1 ? "1 item" : "\(urls.count) items"
+        let names = urls.map { url in
+            url.lastPathComponent.isEmpty ? "file" : url.lastPathComponent
+        }
+        let visibleNames = names.prefix(2).joined(separator: ", ")
+        let remaining = names.count - min(names.count, 2)
+        if remaining > 0 {
+            return "\(itemText): \(visibleNames), +\(remaining) more"
+        }
+        return "\(itemText): \(visibleNames)"
+    }
+
     private static func url(from object: Any) -> URL? {
         if let url = object as? URL, url.isFileURL {
             return url
@@ -1540,6 +1557,8 @@ enum FileDropReader {
 
 final class MoonlightDropOverlayView: NSView {
     weak var delegate: FileDropViewDelegate?
+    private let defaultTitle = "Drop to Windows"
+    private let defaultDetail = "Release files anywhere on the Moonlight screen"
     private let titleLabel = NSTextField(labelWithString: "Drop to Windows")
     private let detailLabel = NSTextField(labelWithString: "Release files anywhere on the Moonlight screen")
 
@@ -1555,8 +1574,7 @@ final class MoonlightDropOverlayView: NSView {
 
     private func setup() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.10).cgColor
-        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.70).cgColor
+        setActiveDropURLs([])
         layer?.borderWidth = 3
         registerForDraggedTypes([.fileURL, FileDropReader.filenamesPasteboardType])
 
@@ -1586,11 +1604,19 @@ final class MoonlightDropOverlayView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        FileDropReader.fileURLs(from: sender).isEmpty ? [] : .copy
+        dropOperation(for: sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        FileDropReader.fileURLs(from: sender).isEmpty ? [] : .copy
+        dropOperation(for: sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setActiveDropURLs([])
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        setActiveDropURLs([])
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -1598,8 +1624,29 @@ final class MoonlightDropOverlayView: NSView {
         guard !urls.isEmpty else {
             return false
         }
+        setActiveDropURLs([])
         delegate?.fileDropViewDidReceive(urls, source: .moonlightSurface)
         return true
+    }
+
+    private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+        let urls = FileDropReader.fileURLs(from: sender)
+        setActiveDropURLs(urls)
+        return urls.isEmpty ? [] : .copy
+    }
+
+    private func setActiveDropURLs(_ urls: [URL]) {
+        if urls.isEmpty {
+            layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.10).cgColor
+            layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.70).cgColor
+            titleLabel.stringValue = defaultTitle
+            detailLabel.stringValue = defaultDetail
+        } else {
+            layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.18).cgColor
+            layer?.borderColor = NSColor.systemGreen.withAlphaComponent(0.85).cgColor
+            titleLabel.stringValue = defaultTitle
+            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+        }
     }
 }
 
@@ -1607,6 +1654,8 @@ final class FileDropView: NSView {
     weak var delegate: FileDropViewDelegate?
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
+    private let defaultTitle: String
+    private let defaultDetail: String
     private let source: FileDropSource
     private let preferredSize: NSSize
 
@@ -1619,6 +1668,8 @@ final class FileDropView: NSView {
     ) {
         titleLabel = NSTextField(labelWithString: title)
         detailLabel = NSTextField(labelWithString: detail)
+        defaultTitle = title
+        defaultDetail = detail
         self.source = source
         preferredSize = NSSize(width: width, height: height)
         super.init(frame: .zero)
@@ -1628,6 +1679,8 @@ final class FileDropView: NSView {
     required init?(coder: NSCoder) {
         titleLabel = NSTextField(labelWithString: "Drop files or folders")
         detailLabel = NSTextField(labelWithString: "Sends to Windows clipboard and receive folder")
+        defaultTitle = "Drop files or folders"
+        defaultDetail = "Sends to Windows clipboard and receive folder"
         source = .companion
         preferredSize = NSSize(width: 520, height: 96)
         super.init(coder: coder)
@@ -1638,8 +1691,7 @@ final class FileDropView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        setActiveDropURLs([])
         registerForDraggedTypes([.fileURL, FileDropReader.filenamesPasteboardType])
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: preferredSize.width).isActive = true
@@ -1670,11 +1722,19 @@ final class FileDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        fileURLs(from: sender).isEmpty ? [] : .copy
+        dropOperation(for: sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        fileURLs(from: sender).isEmpty ? [] : .copy
+        dropOperation(for: sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setActiveDropURLs([])
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        setActiveDropURLs([])
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -1682,8 +1742,31 @@ final class FileDropView: NSView {
         guard !urls.isEmpty else {
             return false
         }
+        setActiveDropURLs([])
         delegate?.fileDropViewDidReceive(urls, source: source)
         return true
+    }
+
+    private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+        let urls = fileURLs(from: sender)
+        setActiveDropURLs(urls)
+        return urls.isEmpty ? [] : .copy
+    }
+
+    private func setActiveDropURLs(_ urls: [URL]) {
+        if urls.isEmpty {
+            layer?.borderColor = NSColor.separatorColor.cgColor
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            titleLabel.stringValue = defaultTitle
+            detailLabel.stringValue = defaultDetail
+            detailLabel.textColor = .secondaryLabelColor
+        } else {
+            layer?.borderColor = NSColor.systemGreen.cgColor
+            layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.12).cgColor
+            titleLabel.stringValue = "Drop to Windows"
+            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+            detailLabel.textColor = .labelColor
+        }
     }
 
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {

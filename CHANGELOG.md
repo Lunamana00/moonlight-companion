@@ -8,6 +8,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 
 - The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
+- Moonlight window, strip, and Companion file drops now show active drag feedback with the item count and dropped file names before release.
 - The GUI now has an `Open Windows Folder` action that asks the logged-in Windows session to open the configured receive folder in Explorer.
 - Added `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` for optionally opening the Windows receive result after successful Mac-to-Windows sends, selecting the single received item when possible.
 - Windows receive-result reveal now verifies the just-sent transfer id before selecting a single received item, avoiding stale receive-state selections.
