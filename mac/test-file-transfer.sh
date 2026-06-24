@@ -54,6 +54,17 @@ expand_mac_path() {
   printf '%s\n' "$value"
 }
 
+normalize_yes_no() {
+  case "${1:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      printf 'yes\n'
+      ;;
+    *)
+      printf 'no\n'
+      ;;
+  esac
+}
+
 ensure_helpers() {
   mkdir -p "$runtime_dir"
   if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
@@ -209,7 +220,11 @@ m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.t
 m2w_name="$(basename "$m2w_file")"
 m2w_out="${tmp_dir}/mac-to-windows-send.txt"
 printf 'Moonlight Companion Mac -> Windows test %s\n' "$stamp" > "$m2w_file"
-MOONLIGHT_COMPANION_CONFIG="$config" "${script_dir}/send-files-to-windows.sh" "$m2w_file" > "$m2w_out"
+send_env=(MOONLIGHT_COMPANION_CONFIG="$config")
+if [[ "$(normalize_yes_no "$MOONLIGHT_CLIPBOARD_TCP")" == "yes" ]]; then
+  send_env+=(MOONLIGHT_TRANSFER_REQUIRE_TCP_ACK=yes)
+fi
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_file" > "$m2w_out"
 if ! grep -q "Windows confirmed" "$m2w_out"; then
   echo "Mac -> Windows transfer did not receive Windows import confirmation." >&2
   cat "$m2w_out" >&2

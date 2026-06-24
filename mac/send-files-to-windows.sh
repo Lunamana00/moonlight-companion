@@ -90,10 +90,24 @@ wait_for_windows_import() {
   local state state_id
   [[ -n "$expected_id" ]] || return 1
 
+  if [[ -n "${tcp_ack_state:-}" ]]; then
+    state_id="$(printf '%s\n' "$tcp_ack_state" | state_value id)"
+    if [[ "$state_id" == "$expected_id" ]]; then
+      windows_import_state="$tcp_ack_state"
+      windows_import_confirmation="tcp-ack"
+      return 0
+    fi
+  fi
+
+  if [[ "$(normalize_yes_no "${MOONLIGHT_TRANSFER_REQUIRE_TCP_ACK:-no}")" == "yes" ]]; then
+    return 1
+  fi
+
   state="$(read_windows_import_state "$expected_id" 2>/dev/null || true)"
   state_id="$(printf '%s\n' "$state" | state_value id)"
   if [[ "$state_id" == "$expected_id" ]]; then
     windows_import_state="$state"
+    windows_import_confirmation="ssh-state"
     return 0
   fi
 
@@ -135,8 +149,10 @@ ensure_helpers() {
 send_zip() {
   local zip_path="$1"
   if [[ "$(normalize_yes_no "$MOONLIGHT_CLIPBOARD_TCP")" == "yes" && -x "$tcp_helper" ]]; then
-    if "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT" "$zip_path" >/dev/null 2>&1; then
-      printf 'tcp\n'
+    local output
+    if output="$("$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT" "$zip_path" 2>/dev/null)"; then
+      tcp_ack_state="$output"
+      transport="tcp"
       return 0
     fi
     log "File drop Mac -> Windows TCP unavailable; falling back to SSH payload"
@@ -145,7 +161,7 @@ send_zip() {
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
   scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_mac_tmp}" >/dev/null
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"
-  printf 'ssh\n'
+  transport="ssh"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -186,10 +202,14 @@ if (( bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
 fi
 
 zip_payload "$payload_dir" "$zip_path"
-transport="$(send_zip "$zip_path")"
+tcp_ack_state=""
+transport=""
+send_zip "$zip_path"
 log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
 windows_import_state=""
+windows_import_confirmation=""
 if wait_for_windows_import "$payload_id"; then
+  log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
   if [[ "${imported_paths:-0}" == "1" ]]; then
     printf 'sent %s payload (%sB) via %s; Windows confirmed 1 item in the receive folder\n' "${kind:-files}" "$bytes" "$transport"

@@ -949,6 +949,36 @@ function Read-TcpLine($stream) {
     throw "TCP header too long"
 }
 
+function Write-TcpLine($stream, [string]$line) {
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(("{0}`n" -f $line))
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+        return $true
+    } catch {
+        Write-AgentLog ("TCP response write error: {0}" -f $_.Exception.Message)
+        return $false
+    }
+}
+
+function Write-MacImportTcpAck($stream, $manifest) {
+    if ($null -eq $manifest) { return }
+
+    $paths = @()
+    if ($null -ne $manifest.importedPaths) {
+        $paths = @($manifest.importedPaths)
+    }
+
+    $fileCount = 0
+    if ($null -ne $manifest.files) {
+        $fileCount = @($manifest.files).Count
+    }
+
+    if (Write-TcpLine $stream ("MOONCLIPACK 1 id={0} kind={1} bytes={2} files={3} imported_paths={4}" -f $manifest.id, $manifest.kind, $manifest.bytes, $fileCount, $paths.Count)) {
+        Write-AgentLog ("Mac -> Windows TCP ack {0} ({1} imported)" -f $manifest.id, $paths.Count)
+    }
+}
+
 function Receive-TcpPayloadToFile($stream, $path, [long]$byteCount) {
     Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     $fileStream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
@@ -998,6 +1028,7 @@ function Receive-ClipboardTcpPayload($client) {
             $script:lastMacId = $imported.id
             $script:lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
             Write-MacImportState $imported $macArchiveHash
+            Write-MacImportTcpAck $stream $imported
             Write-AgentLog ("Mac -> Windows TCP {0} ({1}B)" -f $imported.kind, $imported.bytes)
         }
     } finally {

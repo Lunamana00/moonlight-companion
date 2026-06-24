@@ -66,7 +66,45 @@ write_windows_agent_settings() {
 }
 
 restart_windows_agent() {
-  local ps_script encoded
+  local restart_tmp ps_script encoded
+  restart_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-companion-restart-agent.XXXXXX.ps1")"
+  cat > "$restart_tmp" <<'POWERSHELL'
+$ErrorActionPreference = "SilentlyContinue"
+$ProgressPreference = "SilentlyContinue"
+$dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"
+$outPath = Join-Path $dir "_restart-windows-agent.out"
+Set-Content -LiteralPath $outPath -Value "restart_started" -Encoding UTF8
+$selfPid = $PID
+$agentProcesses = @(Get-CimInstance Win32_Process | Where-Object {
+  $_.ProcessId -ne $selfPid -and
+  $_.CommandLine -like "*windows-clipboard-agent.ps1*" -and
+  $_.CommandLine -notlike "*_restart-windows-agent.ps1*"
+})
+foreach ($agent in $agentProcesses) {
+  try { Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+}
+Start-Sleep -Milliseconds 800
+$vbs = Join-Path $dir "start-windows-clipboard-agent.vbs"
+Start-Process -FilePath "wscript.exe" -ArgumentList ('"{0}"' -f $vbs) -WindowStyle Hidden
+$agentCount = 0
+for ($i = 0; $i -lt 20; $i++) {
+  Start-Sleep -Milliseconds 500
+  $agents = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.ProcessId -ne $selfPid -and
+    $_.CommandLine -like "*windows-clipboard-agent.ps1*" -and
+    $_.CommandLine -notlike "*_restart-windows-agent.ps1*"
+  })
+  $agentCount = $agents.Count
+  if ($agentCount -ge 1) { break }
+}
+Add-Content -LiteralPath $outPath -Value ("agent_count={0}" -f $agentCount) -Encoding UTF8
+POWERSHELL
+  if ! scp "${scp_opts[@]}" "$restart_tmp" "${WINDOWS_SSH}:.moonlight-clipboard-sync/_restart-windows-agent.ps1" >/dev/null; then
+    rm -f "$restart_tmp"
+    return 1
+  fi
+  rm -f "$restart_tmp"
+
   read -r -d '' ps_script <<'POWERSHELL' || true
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -81,30 +119,13 @@ if ($startup) {
 $taskName = "MoonlightCompanionRestartAgent"
 $restartScript = Join-Path $dir "_restart-windows-agent.ps1"
 $outPath = Join-Path $dir "_restart-windows-agent.out"
-$restartBody = @'
-$ErrorActionPreference = "SilentlyContinue"
-$ProgressPreference = "SilentlyContinue"
-$dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"
-$outPath = Join-Path $dir "_restart-windows-agent.out"
-Set-Content -LiteralPath $outPath -Value "restart_started" -Encoding UTF8
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -like "*windows-clipboard-agent.ps1*" -and $_.CommandLine -notlike "*_restart-windows-agent.ps1*" } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-Start-Sleep -Milliseconds 800
-$vbs = Join-Path $dir "start-windows-clipboard-agent.vbs"
-Start-Process -FilePath "wscript.exe" -ArgumentList ('"{0}"' -f $vbs) -WindowStyle Hidden
-Start-Sleep -Seconds 3
-$agents = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*windows-clipboard-agent.ps1*" })
-Add-Content -LiteralPath $outPath -Value ("agent_count={0}" -f $agents.Count) -Encoding UTF8
-'@
-Set-Content -LiteralPath $restartScript -Value $restartBody -Encoding UTF8
 Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $restartScript)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
-for ($i = 0; $i -lt 30; $i++) {
+for ($i = 0; $i -lt 80; $i++) {
   if (Test-Path -LiteralPath $outPath) {
     $restartOutput = Get-Content -LiteralPath $outPath -Raw
     if ($restartOutput -match "agent_count=") {
@@ -115,7 +136,7 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if (Test-Path -LiteralPath $outPath) {
   $restartOutput = Get-Content -LiteralPath $outPath -Raw
-  if ($restartOutput -notmatch "agent_count=1") {
+  if ($restartOutput -notmatch "agent_count=[1-9][0-9]*") {
     throw "Windows agent restart failed: $restartOutput"
   }
 } else {

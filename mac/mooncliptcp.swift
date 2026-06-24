@@ -169,6 +169,55 @@ func readLine(fd: Int32, maxBytes: Int = 256) throws -> String {
     return line
 }
 
+func setReceiveTimeout(fd: Int32, milliseconds: Int) {
+    var timeout = timeval(
+        tv_sec: milliseconds / 1000,
+        tv_usec: Int32((milliseconds % 1000) * 1000)
+    )
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+}
+
+func readOptionalLine(fd: Int32, maxBytes: Int = 512) throws -> String? {
+    var bytes: [UInt8] = []
+    while bytes.count < maxBytes {
+        var byte: UInt8 = 0
+        let count = Darwin.read(fd, &byte, 1)
+        if count == 0 {
+            return bytes.isEmpty ? nil : String(bytes: bytes, encoding: .utf8)
+        }
+        if count < 0 {
+            if errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT {
+                return nil
+            }
+            throw ClipTcpError.socket("read failed")
+        }
+        if byte == 10 {
+            guard let line = String(bytes: bytes, encoding: .utf8) else {
+                throw ClipTcpError.protocolError("response is not utf8")
+            }
+            return line.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+        }
+        bytes.append(byte)
+    }
+    throw ClipTcpError.protocolError("response line too long")
+}
+
+func parseAckLine(_ line: String) -> [String: String]? {
+    let parts = line.split(separator: " ")
+    guard parts.count >= 2, parts[0] == "MOONCLIPACK", parts[1] == "1" else {
+        return nil
+    }
+
+    var result: [String: String] = [:]
+    for part in parts.dropFirst(2) {
+        let fields = part.split(separator: "=", maxSplits: 1)
+        if fields.count == 2 {
+            result[String(fields[0])] = String(fields[1])
+        }
+    }
+    return result
+}
+
 func readPayload(fd: Int32, byteCount: UInt64, to path: String) throws {
     let url = URL(fileURLWithPath: path)
     try? fm.removeItem(at: url)
@@ -349,7 +398,7 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     log("Windows -> Mac TCP \(imported["kind"] ?? "payload") (\(imported["bytes"] ?? "0")B)", to: logPath)
 }
 
-func sendPayload(host: String, port: UInt16, zipPath: String) throws {
+func sendPayload(host: String, port: UInt16, zipPath: String) throws -> [String: String]? {
     let data = try Data(contentsOf: URL(fileURLWithPath: zipPath))
     let fd = try connectSocket(host: host, port: port)
     defer { Darwin.close(fd) }
@@ -357,6 +406,12 @@ func sendPayload(host: String, port: UInt16, zipPath: String) throws {
     let header = "MOONCLIP 1 \(data.count)\n"
     try writeAll(fd: fd, data: Data(header.utf8))
     try writeAll(fd: fd, data: data)
+
+    setReceiveTimeout(fd: fd, milliseconds: 8_000)
+    guard let ackLine = try readOptionalLine(fd: fd) else {
+        return nil
+    }
+    return parseAckLine(ackLine)
 }
 
 func listen(host: String, port: UInt16, runtimeDir: String, helper: String, maxBytes: UInt64, logPath: String) throws {
@@ -386,10 +441,16 @@ do {
     switch command {
     case "send":
         guard CommandLine.arguments.count == 5 else { throw ClipTcpError.usage }
-        try sendPayload(
+        if let ack = try sendPayload(
             host: CommandLine.arguments[2],
             port: try parsePort(CommandLine.arguments[3]),
-            zipPath: CommandLine.arguments[4])
+            zipPath: CommandLine.arguments[4]) {
+            for key in ["id", "kind", "bytes", "files", "imported_paths"] {
+                if let value = ack[key] {
+                    print("\(key)=\(value)")
+                }
+            }
+        }
     case "listen":
         guard CommandLine.arguments.count == 8 else { throw ClipTcpError.usage }
         try listen(
