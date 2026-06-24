@@ -428,6 +428,24 @@ fi
 remove_windows_file "$m2w_apostrophe_name"
 echo "Mac -> Windows apostrophe filename ok."
 
+echo "Testing Mac -> Windows Korean filename transfer..."
+m2w_korean_name="moonlight-companion-transfer-test-한글 맥 (${stamp}).txt"
+m2w_korean_file="${tmp_dir}/${m2w_korean_name}"
+m2w_korean_out="${tmp_dir}/mac-to-windows-korean-send.txt"
+printf 'Moonlight Companion Mac -> Windows Korean filename test %s\n' "$stamp" > "$m2w_korean_file"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_korean_file" > "$m2w_korean_out"
+if ! grep -q "Windows confirmed" "$m2w_korean_out"; then
+  echo "Mac -> Windows Korean filename transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_korean_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_korean_name"; then
+  echo "Mac -> Windows Korean filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_korean_name"
+echo "Mac -> Windows Korean filename ok."
+
 echo "Testing Mac -> Windows multi-item transfer..."
 m2w_multi_file="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-file-${stamp}.txt"
 m2w_multi_file_name="$(basename "$m2w_multi_file")"
@@ -540,6 +558,25 @@ sleep 3
 assert_windows_path_absent "$w2m_apostrophe_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_apostrophe_name}"
 echo "Windows -> Mac apostrophe filename ok."
+
+echo "Testing Windows -> Mac Korean filename transfer..."
+w2m_korean_name="moonlight-companion-transfer-test-한글 윈도우 (${stamp}).txt"
+w2m_korean_file="${tmp_dir}/${w2m_korean_name}"
+w2m_korean_payload="${tmp_dir}/w2m-korean-payload"
+w2m_korean_zip="${tmp_dir}/windows-to-mac-korean.zip"
+printf 'Moonlight Companion Windows -> Mac Korean filename test %s\n' "$stamp" > "$w2m_korean_file"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_korean_payload" "$w2m_korean_file" >/dev/null
+zip_payload "$w2m_korean_payload" "$w2m_korean_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_korean_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_korean_name"; then
+  echo "Windows -> Mac Korean filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_korean_name" "Leaf"
+rm -f "${transfer_mac_dir}/${w2m_korean_name}"
+echo "Windows -> Mac Korean filename ok."
 
 echo "Testing Windows -> Mac multi-item transfer..."
 w2m_multi_file="${tmp_dir}/moonlight-companion-transfer-test-windows-multi-file-${stamp}.txt"

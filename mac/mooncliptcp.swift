@@ -294,9 +294,23 @@ func importedFilePaths(_ imported: [String: String]) -> [String] {
 }
 
 func importedFileNames(_ imported: [String: String]) -> [String] {
-    importedFilePaths(imported).map { path in
-        let name = URL(fileURLWithPath: path).lastPathComponent
-        return name.isEmpty ? "file" : name
+    let count = Int(imported["file_paths"] ?? "") ?? 0
+    guard count > 0 else {
+        return []
+    }
+
+    return (1...count).compactMap { index in
+        if let rawName = imported["file_name_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawName.isEmpty {
+            return rawName.precomposedStringWithCanonicalMapping
+        }
+        let rawPath = imported["file_path_\(index)"] ?? ""
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        let name = URL(fileURLWithPath: trimmed).lastPathComponent
+        return name.isEmpty ? "file" : name.precomposedStringWithCanonicalMapping
     }
 }
 

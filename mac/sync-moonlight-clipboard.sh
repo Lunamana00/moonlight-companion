@@ -94,8 +94,17 @@ payload_file_paths() {
   awk -F= '$1 ~ /^file_path_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
 }
 
+payload_manifest_file_names() {
+  awk -F= '$1 ~ /^file_name_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
+}
+
 payload_file_names() {
   local path name
+  if payload_manifest_file_names "$1" | grep -q .; then
+    payload_manifest_file_names "$1"
+    return 0
+  fi
+
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     name="$(basename "$path")"

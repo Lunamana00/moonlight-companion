@@ -340,6 +340,7 @@ func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {
         print("file_paths=\(fileURLs.count)")
         for (index, url) in fileURLs.enumerated() {
             print("file_path_\(index + 1)=\(url.path)")
+            print("file_name_\(index + 1)=\(url.lastPathComponent.precomposedStringWithCanonicalMapping)")
         }
     }
 }

@@ -770,13 +770,46 @@ function Read-JsonManifest($payloadDir) {
     return Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
-function Copy-ItemUnique($source, $destDir) {
+function Get-NormalizedFileName($name) {
+    if ([string]::IsNullOrWhiteSpace($name)) { return "file" }
+    return $name.Normalize([System.Text.NormalizationForm]::FormC)
+}
+
+function Normalize-PathTreeNames($path) {
+    if (-not (Test-Path -LiteralPath $path)) { return $path }
+
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($item.PSIsContainer) {
+        Get-ChildItem -LiteralPath $item.FullName -Force | ForEach-Object {
+            Normalize-PathTreeNames $_.FullName | Out-Null
+        }
+    }
+
+    $name = Split-Path -Leaf $item.FullName
+    $normalizedName = Get-NormalizedFileName $name
+    if ($name -eq $normalizedName) { return $item.FullName }
+
+    $parent = Split-Path -Parent $item.FullName
+    $candidate = $normalizedName
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($normalizedName)
+    $ext = [System.IO.Path]::GetExtension($normalizedName)
+    $index = 2
+    while (Test-Path -LiteralPath (Join-Path $parent $candidate)) {
+        $candidate = if ([string]::IsNullOrEmpty($ext)) { "$stem-$index" } else { "$stem-$index$ext" }
+        $index++
+    }
+
+    $dest = Join-Path $parent $candidate
+    Move-Item -LiteralPath $item.FullName -Destination $dest -Force -ErrorAction Stop
+    return $dest
+}
+
+function Copy-ItemUniqueNamed($source, $destDir, $name) {
     New-Item -ItemType Directory -Force -Path $destDir -ErrorAction Stop | Out-Null
-    $name = Split-Path -Leaf $source
-    if ([string]::IsNullOrWhiteSpace($name)) { $name = "file" }
-    $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
-    $ext = [System.IO.Path]::GetExtension($name)
-    $candidate = $name
+    $normalizedName = Get-NormalizedFileName $name
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($normalizedName)
+    $ext = [System.IO.Path]::GetExtension($normalizedName)
+    $candidate = $normalizedName
     $index = 2
     while (Test-Path -LiteralPath (Join-Path $destDir $candidate)) {
         $candidate = if ([string]::IsNullOrEmpty($ext)) { "$stem-$index" } else { "$stem-$index$ext" }
@@ -787,7 +820,11 @@ function Copy-ItemUnique($source, $destDir) {
     if (-not (Test-Path -LiteralPath $dest)) {
         throw "copy did not create destination: $dest"
     }
-    return $dest
+    return Normalize-PathTreeNames $dest
+}
+
+function Copy-ItemUnique($source, $destDir) {
+    return Copy-ItemUniqueNamed $source $destDir (Split-Path -Leaf $source)
 }
 
 function Export-ClipboardPayload($payloadDir) {
@@ -922,7 +959,7 @@ function Import-ClipboardPayload($payloadDir) {
             $targetPaths = @()
             foreach ($item in $manifest.files) {
                 $sourcePath = Join-Path $payloadDir $item.path
-                $targetPath = if ($useTransferDir) { Copy-ItemUnique $sourcePath $script:transferWindowsDir } else { $sourcePath }
+                $targetPath = if ($useTransferDir) { Copy-ItemUniqueNamed $sourcePath $script:transferWindowsDir $item.name } else { $sourcePath }
                 [void]$collection.Add($targetPath)
                 $targetPaths += $targetPath
             }
