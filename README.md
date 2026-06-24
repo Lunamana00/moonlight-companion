@@ -17,6 +17,8 @@ Current version: `v0.2.0`
 - Deploys a Windows clipboard agent over SSH.
 - Syncs clipboard payloads over persistent loopback TCP channels forwarded by SSH, with ZIP file polling as fallback.
 - Supports text, images, and file/folder clipboard payloads.
+- Lets you drop Mac files/folders into the Companion GUI to send them to Windows.
+- Copies received file payloads into durable transfer folders on both Mac and Windows.
 - Maps Caps Lock to the Windows Korean IME Han/Eng toggle while the Windows agent is running.
 - Maps Mac-style Command shortcuts to Windows-style Control shortcuts while Moonlight is focused.
 - Uses SSH over Tailscale; no public port forwarding is required.
@@ -74,6 +76,10 @@ When Moonlight is focused, the macOS keyboard helper intercepts Caps Lock and se
 The same helper remaps Mac-style Command shortcuts to Windows-style Control shortcuts while Moonlight is focused. That means common shortcuts such as `Cmd+C`, `Cmd+V`, `Cmd+X`, `Cmd+Z`, `Cmd+A`, `Cmd+S`, `Cmd+F`, and `Cmd+W` are delivered to Windows as their `Ctrl` equivalents.
 
 Clipboard sync uses the same shape of transport: Moonlight Companion keeps separate TCP channels open for Mac-to-Windows and Windows-to-Mac clipboard payloads. Payloads are still encoded as ZIP archives for text, images, and file drops, and the older shared ZIP polling path remains available as a fallback.
+
+For direct file transfer from Mac to Windows, drop files or folders onto the `Drop Files` area in the Companion GUI. The files are sent over the existing Mac-to-Windows clipboard TCP channel, imported into the Windows clipboard as file drops, and copied into the configured Windows receive folder.
+
+For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent exports that file clipboard payload over the Windows-to-Mac TCP channel. The Mac receiver copies the files into the configured Mac receive folder and also places those files on the macOS clipboard.
 
 ## Zero-Base Setup
 
@@ -177,6 +183,8 @@ MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
 MOONLIGHT_SHORTCUT_REMAP="yes"
 MOONLIGHT_CLIPBOARD_TCP="yes"
+MOONLIGHT_TRANSFER_MAC_DIR="${HOME}/Downloads/Moonlight Companion"
+MOONLIGHT_TRANSFER_WINDOWS_DIR="%USERPROFILE%\\Downloads\\Moonlight Companion"
 ```
 
 Build the wrapper app:
@@ -272,6 +280,11 @@ The clipboard bridge stores transient payloads under:
 
 - macOS: `~/Library/Application Support/MoonlightClipboardSync`
 - Windows: `%USERPROFILE%\.moonlight-clipboard-sync`
+
+Transferred file payloads are copied into durable receive folders:
+
+- macOS default: `~/Downloads/Moonlight Companion`
+- Windows default: `%USERPROFILE%\Downloads\Moonlight Companion`
 
 The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
 

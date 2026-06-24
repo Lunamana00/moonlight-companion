@@ -21,6 +21,7 @@ $MoonlightCapsLockHangulTcpPort = "47321"
 $MoonlightClipboardTcp = "yes"
 $MoonlightClipboardMacToWindowsTcpPort = "47331"
 $MoonlightClipboardWindowsToMacTcpPort = "47332"
+$MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -65,6 +66,14 @@ function Get-IntSetting($value, $defaultValue) {
         }
     } catch {}
     return $defaultValue
+}
+
+function Get-ExpandedPathSetting($value, $defaultValue) {
+    $raw = $defaultValue
+    if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace($value.ToString())) {
+        $raw = $value.ToString()
+    }
+    return [Environment]::ExpandEnvironmentVariables($raw)
 }
 
 function Install-CapsLockHangulHook {
@@ -827,8 +836,14 @@ function Import-ClipboardPayload($payloadDir) {
         }
         "files" {
             $collection = New-Object System.Collections.Specialized.StringCollection
+            $useTransferDir = -not [string]::IsNullOrWhiteSpace($script:transferWindowsDir)
+            if ($useTransferDir) {
+                New-Item -ItemType Directory -Force -Path $script:transferWindowsDir | Out-Null
+            }
             foreach ($item in $manifest.files) {
-                [void]$collection.Add((Join-Path $payloadDir $item.path))
+                $sourcePath = Join-Path $payloadDir $item.path
+                $targetPath = if ($useTransferDir) { Copy-ItemUnique $sourcePath $script:transferWindowsDir } else { $sourcePath }
+                [void]$collection.Add($targetPath)
             }
             [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
         }
@@ -1057,6 +1072,7 @@ $capsLockHangulHookInstalled = $false
 $enableClipboardTcp = Test-SettingEnabled $MoonlightClipboardTcp $true
 $clipboardMacToWindowsTcpPort = Get-IntSetting $MoonlightClipboardMacToWindowsTcpPort 47331
 $clipboardWindowsToMacTcpPort = Get-IntSetting $MoonlightClipboardWindowsToMacTcpPort 47332
+$transferWindowsDir = Get-ExpandedPathSetting $MoonlightTransferWindowsDir "%USERPROFILE%\Downloads\Moonlight Companion"
 $clipboardTcpListener = $null
 $loopSleepMs = if ($enableClipboardTcp) { 50 } else { $intervalMs }
 

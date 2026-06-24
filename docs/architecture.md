@@ -15,6 +15,7 @@ flowchart LR
     KeyboardAgent["macOS keyboard agent"]
     Helper["moonclipctl Swift helper"]
     MacClipboard["macOS clipboard"]
+    MacTransfer["Mac receive folder"]
   end
 
   subgraph Network["Tailscale private network"]
@@ -29,6 +30,7 @@ flowchart LR
     PayloadDir["%USERPROFILE%/.moonlight-clipboard-sync"]
     WinAgent["Windows GUI clipboard agent"]
     WinClipboard["Windows clipboard"]
+    WinTransfer["Windows receive folder"]
     Startup["User Startup folder"]
   end
 
@@ -43,6 +45,7 @@ flowchart LR
   Helper <-->|"read/write"| MacClipboard
   Launchd -->|"Mac -> Windows ZIP frame"| ClipTunnel
   ClipTcp -->|"import Windows -> Mac ZIP frame"| Helper
+  Helper -->|"copy files"| MacTransfer
   ClipTunnel <-->|"loopback TCP"| WinAgent
   Launchd <-->|"fallback ZIP payloads"| SSH
   SSH <-->|"copy payload archives"| PayloadDir
@@ -53,6 +56,7 @@ flowchart LR
   WinAgent <-->|"watch/import/export"| PayloadDir
   WinAgent -->|"toggle Korean IME mode"| WinAgent
   WinAgent <-->|"read/write"| WinClipboard
+  WinAgent -->|"copy files"| WinTransfer
   Wrapper -->|"install Startup entry"| Startup
   Startup -->|"starts in GUI session"| WinAgent
 ```
@@ -109,6 +113,37 @@ sequenceDiagram
   Sync-->>RemoteDir: Poll fallback archive
 ```
 
+## File Transfer Flow
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Wrapper as Moonlight Companion.app
+  participant Sender as send-files-to-windows.sh
+  participant Tunnel as SSH clipboard TCP tunnel
+  participant Agent as Windows GUI agent
+  participant WinDir as Windows receive folder
+  participant WinClip as Windows clipboard
+  participant Receiver as macOS TCP receiver
+  participant Helper as moonclipctl
+  participant MacDir as Mac receive folder
+  participant MacClip as macOS clipboard
+
+  User->>Wrapper: Drop Mac files/folders
+  Wrapper->>Sender: Export dropped paths as file payload
+  Sender->>Tunnel: Send ZIP frame
+  Tunnel->>Agent: Forward to loopback TCP listener
+  Agent->>WinDir: Copy files into durable folder
+  Agent->>WinClip: Set FileDropList to copied files
+
+  WinClip->>Agent: User copies files in Windows
+  Agent->>Tunnel: Send file payload ZIP frame
+  Tunnel->>Receiver: Forward to macOS loopback listener
+  Receiver->>Helper: Import file payload
+  Helper->>MacDir: Copy files into durable folder
+  Helper->>MacClip: Set file URLs to copied files
+```
+
 ## Caps Lock Han/Eng Flow
 
 ```mermaid
@@ -161,6 +196,8 @@ Only one primary clipboard kind is synced at a time:
 - `text`
 
 That priority is deliberate. File clipboard entries often also expose text paths or thumbnails, and those should not override the actual file-drop intent.
+
+When file payloads are imported, they are copied out of the transient payload directory into configured receive folders before the local clipboard points at them.
 
 ## Loop Prevention
 

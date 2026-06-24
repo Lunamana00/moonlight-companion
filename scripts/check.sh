@@ -10,6 +10,7 @@ bash -n \
   "${repo_dir}/scripts/package-release.sh" \
   "${repo_dir}/mac/moonlight-companion-launch.sh" \
   "${repo_dir}/mac/start-moonlight-clipboard-sync.sh" \
+  "${repo_dir}/mac/send-files-to-windows.sh" \
   "${repo_dir}/mac/status-moonlight-clipboard-sync.sh" \
   "${repo_dir}/mac/stop-moonlight-clipboard-sync.sh" \
   "${repo_dir}/mac/sync-moonlight-clipboard.sh"

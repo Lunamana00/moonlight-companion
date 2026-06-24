@@ -81,6 +81,7 @@ clip_w2m_remote_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT:-47332}"
 clip_w2m_local_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT:-$clip_w2m_remote_port}"
 caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
 caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
+transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 
 if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
   if ! command -v swiftc >/dev/null 2>&1; then
@@ -209,6 +210,11 @@ if [[ "$clip_tcp_enabled" == "yes" ]]; then
   <string>${log_dir}/moonlight-clipboard-tcp.out.log</string>
   <key>StandardErrorPath</key>
   <string>${log_dir}/moonlight-clipboard-tcp.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MOONLIGHT_TRANSFER_MAC_DIR</key>
+    <string>${transfer_mac_dir}</string>
+  </dict>
 </dict>
 </plist>
 EOF
@@ -317,6 +323,8 @@ cat > "$plist" <<EOF
     <string>${clip_m2w_local_port}</string>
     <key>MOONLIGHT_CLIPBOARD_TCP_STATE</key>
     <string>${runtime_dir}/clipboard-tcp-windows-state.txt</string>
+    <key>MOONLIGHT_TRANSFER_MAC_DIR</key>
+    <string>${transfer_mac_dir}</string>
   </dict>
 </dict>
 </plist>

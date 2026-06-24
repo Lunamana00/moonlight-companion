@@ -30,7 +30,7 @@ enum ClipError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: moonclipctl export|import <payload-dir>"
+            return "usage: moonclipctl export|import|info <payload-dir> | export-paths <payload-dir> <path>..."
         case .unsupported:
             return "unsupported-or-empty-clipboard"
         case .missingManifest:
@@ -277,7 +277,10 @@ func importClipboard(from dir: URL) throws -> Manifest {
         }
     case "files":
         guard let files = manifest.files else { throw ClipError.invalidManifest }
-        let urls = files.map { dir.appendingPathComponent($0.path).standardizedFileURL }
+        var urls = files.map { dir.appendingPathComponent($0.path).standardizedFileURL }
+        if let transferDir = transferMacDirectory() {
+            urls = try copyFiles(urls, to: transferDir)
+        }
         pasteboard.clearContents()
         let items = urls.map { url -> NSPasteboardItem in
             let item = NSPasteboardItem()
@@ -295,6 +298,30 @@ func importClipboard(from dir: URL) throws -> Manifest {
     return manifest
 }
 
+func expandedPath(_ value: String) -> String {
+    let nsValue = value as NSString
+    return nsValue.expandingTildeInPath
+}
+
+func transferMacDirectory() -> URL? {
+    let raw = ProcessInfo.processInfo.environment["MOONLIGHT_TRANSFER_MAC_DIR"] ?? ""
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    return URL(fileURLWithPath: expandedPath(trimmed), isDirectory: true)
+}
+
+func copyFiles(_ urls: [URL], to directory: URL) throws -> [URL] {
+    try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    var used = Set<String>()
+    return try urls.map { source in
+        let dest = uniqueDestination(for: source, in: directory, used: &used)
+        try fm.copyItem(at: source, to: dest)
+        return dest.standardizedFileURL
+    }
+}
+
 func printManifest(_ manifest: Manifest) {
     print("id=\(manifest.id)")
     print("kind=\(manifest.kind)")
@@ -302,7 +329,7 @@ func printManifest(_ manifest: Manifest) {
 }
 
 do {
-    guard CommandLine.arguments.count == 3 else {
+    guard CommandLine.arguments.count >= 3 else {
         throw ClipError.usage
     }
 
@@ -311,13 +338,23 @@ do {
 
     switch command {
     case "export":
+        guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let manifest = try exportClipboard(to: dir)
         try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
         printManifest(manifest)
+    case "export-paths":
+        guard CommandLine.arguments.count >= 4 else { throw ClipError.usage }
+        try ensureCleanDirectory(dir)
+        let urls = CommandLine.arguments.dropFirst(3).map { URL(fileURLWithPath: $0).standardizedFileURL }
+        let manifest = try exportFiles(urls, to: dir)
+        try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
+        printManifest(manifest)
     case "import":
+        guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let manifest = try importClipboard(from: dir)
         printManifest(manifest)
     case "info":
+        guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let manifest = try readManifest(from: dir)
         printManifest(manifest)
     default:

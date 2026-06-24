@@ -26,7 +26,9 @@ struct CompanionSettings {
         "MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT",
         "MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT",
         "MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT",
-        "MOONLIGHT_CLIPBOARD_MAX_BYTES"
+        "MOONLIGHT_CLIPBOARD_MAX_BYTES",
+        "MOONLIGHT_TRANSFER_MAC_DIR",
+        "MOONLIGHT_TRANSFER_WINDOWS_DIR"
     ]
 
     var values: [String: String]
@@ -134,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopButton: NSButton!
     private var output = Data()
     private var process: Process?
+    private var transferProcess: Process?
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
 
@@ -220,6 +223,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         form.addArrangedSubview(check("MOONLIGHT_CAPSLOCK_HANGUL", title: "Caps Lock toggles Windows Han/Eng"))
         form.addArrangedSubview(check("MOONLIGHT_SHORTCUT_REMAP", title: "Map Command shortcuts to Windows Control shortcuts"))
         form.addArrangedSubview(check("MOONLIGHT_CLIPBOARD_TCP", title: "Use TCP clipboard channels"))
+
+        form.addArrangedSubview(sectionTitle("Transfer"))
+        form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
+        form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
+        let dropView = FileDropView()
+        dropView.delegate = self
+        form.addArrangedSubview(row("Drop Files", dropView))
+        let openReceiveButton = NSButton(title: "Open Mac Receive Folder", target: self, action: #selector(openMacReceiveFolder))
+        openReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("", openReceiveButton))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -562,6 +575,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(logDir)
     }
 
+    @objc private func openMacReceiveFolder() {
+        let settings = collectSettings()
+        let rawPath = settings["MOONLIGHT_TRANSFER_MAC_DIR"].isEmpty
+            ? "${HOME}/Downloads/Moonlight Companion"
+            : settings["MOONLIGHT_TRANSFER_MAC_DIR"]
+        let url = URL(fileURLWithPath: expandedUserPath(rawPath), isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(url)
+        } catch {
+            fail("Could not open receive folder: \(error.localizedDescription)")
+        }
+    }
+
+    private func expandedUserPath(_ rawPath: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let expanded = rawPath
+            .replacingOccurrences(of: "${HOME}", with: home)
+            .replacingOccurrences(of: "$HOME", with: home)
+        return (expanded as NSString).expandingTildeInPath
+    }
+
+    private func sendFilesToWindows(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard saveSettings() else { return }
+
+        let senderURL = resourceURL.appendingPathComponent("mac/send-files-to-windows.sh")
+        guard FileManager.default.isExecutableFile(atPath: senderURL.path) else {
+            fail("File sender is missing or not executable: \(senderURL.path)")
+            return
+        }
+
+        output = Data()
+        setBusy(true, status: "Sending Files", detail: "Sending \(urls.count) item(s) to Windows.")
+
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [senderURL.path] + urls.map(\.path)
+        task.currentDirectoryURL = resourceURL
+        task.standardOutput = pipe
+        task.standardError = pipe
+        var environment = ProcessInfo.processInfo.environment
+        environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        task.environment = environment
+
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async {
+                self?.output.append(data)
+            }
+        }
+
+        task.terminationHandler = { [weak self] task in
+            DispatchQueue.main.async {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                self?.transferProcess = nil
+                let text = String(data: self?.output ?? Data(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if task.terminationStatus == 0 {
+                    self?.setBusy(false, status: "Files Sent", detail: text?.isEmpty == false ? text! : "Files were sent to Windows.")
+                } else {
+                    self?.setBusy(false, status: "Send Failed", detail: text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus).")
+                    self?.showFailure("File sender exited with status \(task.terminationStatus).")
+                }
+            }
+        }
+
+        do {
+            try task.run()
+            transferProcess = task
+        } catch {
+            setBusy(false, status: "Send Failed", detail: error.localizedDescription)
+            fail(error.localizedDescription)
+        }
+    }
+
     @objc private func openAccessibilitySettings() {
         requestKeyboardHelperPermissions()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
@@ -589,7 +680,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         process?.terminate()
+        transferProcess?.terminate()
         NSApp.terminate(nil)
+    }
+}
+
+extension AppDelegate: FileDropViewDelegate {
+    func fileDropView(_ view: FileDropView, didReceive urls: [URL]) {
+        sendFilesToWindows(urls)
+    }
+}
+
+protocol FileDropViewDelegate: AnyObject {
+    func fileDropView(_ view: FileDropView, didReceive urls: [URL])
+}
+
+final class FileDropView: NSView {
+    weak var delegate: FileDropViewDelegate?
+    private let titleLabel = NSTextField(labelWithString: "Drop files or folders")
+    private let detailLabel = NSTextField(labelWithString: "Sends to Windows clipboard and receive folder")
+
+    init() {
+        super.init(frame: .zero)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        registerForDraggedTypes([.fileURL])
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: 520).isActive = true
+        heightAnchor.constraint(equalToConstant: 96).isActive = true
+
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        titleLabel.alignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        detailLabel.font = NSFont.systemFont(ofSize: 12)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.alignment = .center
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [titleLabel, detailLabel])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16)
+        ])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        fileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        fileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(from: sender)
+        guard !urls.isEmpty else {
+            return false
+        }
+        delegate?.fileDropView(self, didReceive: urls)
+        return true
+    }
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let pasteboard = sender.draggingPasteboard
+        guard let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) else {
+            return []
+        }
+        return objects.compactMap { object in
+            if let url = object as? URL, url.isFileURL {
+                return url
+            }
+            if let nsURL = object as? NSURL {
+                let url = nsURL as URL
+                return url.isFileURL ? url : nil
+            }
+            return nil
+        }
     }
 }
 
