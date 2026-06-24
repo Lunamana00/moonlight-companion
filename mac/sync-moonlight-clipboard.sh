@@ -306,6 +306,7 @@ windows_payload="${runtime_dir}/imported-windows-payload"
 last_mac_id=""
 last_windows_id=""
 last_windows_archive_hash=""
+last_windows_fallback_archive_hash=""
 last_windows_poll="0"
 last_tcp_state_hash=""
 upload_transport="ssh"
@@ -345,7 +346,7 @@ while true; do
     last_windows_poll="$now"
     if download_from_windows "$windows_zip" 2>/dev/null; then
       archive_hash="$(file_hash "$windows_zip")"
-      if [[ "$archive_hash" != "$last_windows_archive_hash" ]]; then
+      if [[ "$archive_hash" != "$last_windows_archive_hash" && "$archive_hash" != "$last_windows_fallback_archive_hash" ]]; then
         unzip_payload "$windows_zip" "$windows_payload"
         if "$helper" import "$windows_payload" > "${tmp_dir}/windows-meta.txt" 2>/dev/null; then
           win_id="$(payload_id "${tmp_dir}/windows-meta.txt")"
@@ -357,6 +358,7 @@ while true; do
             normalized_id="$(payload_id "$mac_normalized_meta")"
           fi
           last_windows_archive_hash="$archive_hash"
+          last_windows_fallback_archive_hash="$archive_hash"
           last_windows_id="$win_id"
           last_mac_id="$normalized_id"
           if [[ "$win_kind" == "files" ]]; then
@@ -365,6 +367,7 @@ while true; do
             log "Windows -> Mac ${win_kind} (${win_bytes}B)"
           fi
         else
+          last_windows_fallback_archive_hash="$archive_hash"
           log "Windows -> Mac import failed"
         fi
       fi

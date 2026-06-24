@@ -17,6 +17,9 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now waits for Windows-to-Mac file and folder receives long enough to catch accidental echo-back uploads.
 - Windows-to-Mac fallback polling notifications and logs now use the same received file name and total size summary as the TCP receiver.
 - The file transfer self-test now verifies that empty nested folders survive Mac-to-Windows and Windows-to-Mac folder transfers.
+- The file transfer self-test now verifies that file names with spaces and parentheses survive in both directions.
+- Windows file-drop export now skips stale clipboard file references instead of producing a broken transfer payload.
+- macOS fallback polling now tracks remote ZIP hashes separately from TCP receive state to avoid retrying stale fallback payloads after TCP transfers.
 
 ## v0.3.0 - 2026-06-24
 

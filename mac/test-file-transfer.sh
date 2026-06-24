@@ -323,7 +323,14 @@ cleanup_mac_self_test_files "$transfer_mac_dir"
 cleanup_windows_self_test_files
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
-trap 'rm -rf "$tmp_dir"' EXIT
+
+cleanup_self_test_artifacts() {
+  rm -rf "$tmp_dir"
+  cleanup_mac_self_test_files "$transfer_mac_dir"
+  cleanup_windows_self_test_files
+}
+
+trap cleanup_self_test_artifacts EXIT
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
@@ -369,6 +376,24 @@ fi
 remove_windows_file "$m2w_name"
 remove_windows_file "$m2w_collision_name"
 echo "Mac -> Windows ok."
+
+echo "Testing Mac -> Windows spaced filename transfer..."
+m2w_spaced_name="moonlight-companion-transfer-test-spaced mac (${stamp}).txt"
+m2w_spaced_file="${tmp_dir}/${m2w_spaced_name}"
+m2w_spaced_out="${tmp_dir}/mac-to-windows-spaced-send.txt"
+printf 'Moonlight Companion Mac -> Windows spaced filename test %s\n' "$stamp" > "$m2w_spaced_file"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_spaced_file" > "$m2w_spaced_out"
+if ! grep -q "Windows confirmed" "$m2w_spaced_out"; then
+  echo "Mac -> Windows spaced filename transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_spaced_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_spaced_name"; then
+  echo "Mac -> Windows spaced filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_spaced_name"
+echo "Mac -> Windows spaced filename ok."
 
 echo "Testing Mac -> Windows folder transfer..."
 m2w_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-folder-${stamp}"
@@ -416,6 +441,25 @@ assert_windows_path_absent "$w2m_name" "Leaf"
 assert_windows_path_absent "$w2m_collision_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_name}" "${transfer_mac_dir}/${w2m_collision_name}"
 echo "Windows -> Mac ok."
+
+echo "Testing Windows -> Mac spaced filename transfer..."
+w2m_spaced_name="moonlight-companion-transfer-test-spaced windows (${stamp}).txt"
+w2m_spaced_file="${tmp_dir}/${w2m_spaced_name}"
+w2m_spaced_payload="${tmp_dir}/w2m-spaced-payload"
+w2m_spaced_zip="${tmp_dir}/windows-to-mac-spaced.zip"
+printf 'Moonlight Companion Windows -> Mac spaced filename test %s\n' "$stamp" > "$w2m_spaced_file"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_spaced_payload" "$w2m_spaced_file" >/dev/null
+zip_payload "$w2m_spaced_payload" "$w2m_spaced_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_spaced_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_spaced_name"; then
+  echo "Windows -> Mac spaced filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_spaced_name" "Leaf"
+rm -f "${transfer_mac_dir}/${w2m_spaced_name}"
+echo "Windows -> Mac spaced filename ok."
 
 echo "Testing Windows -> Mac folder transfer..."
 w2m_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-folder-${stamp}"

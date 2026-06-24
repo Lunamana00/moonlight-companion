@@ -742,6 +742,7 @@ function Read-JsonManifest($payloadDir) {
 }
 
 function Copy-ItemUnique($source, $destDir) {
+    New-Item -ItemType Directory -Force -Path $destDir -ErrorAction Stop | Out-Null
     $name = Split-Path -Leaf $source
     if ([string]::IsNullOrWhiteSpace($name)) { $name = "file" }
     $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
@@ -753,7 +754,10 @@ function Copy-ItemUnique($source, $destDir) {
         $index++
     }
     $dest = Join-Path $destDir $candidate
-    Copy-Item -LiteralPath $source -Destination $dest -Recurse -Force
+    Copy-Item -LiteralPath $source -Destination $dest -Recurse -Force -ErrorAction Stop
+    if (-not (Test-Path -LiteralPath $dest)) {
+        throw "copy did not create destination: $dest"
+    }
     return $dest
 }
 
@@ -768,22 +772,26 @@ function Export-ClipboardPayload($payloadDir) {
         $bytes = 0L
 
         foreach ($path in [System.Windows.Forms.Clipboard]::GetFileDropList()) {
-            if (-not (Test-Path -LiteralPath $path)) { continue }
-            $dest = Copy-ItemUnique $path $filesDir
-            $item = Get-Item -LiteralPath $dest
-            $isDirectory = [bool]$item.PSIsContainer
-            $itemBytes = if ($isDirectory) { Get-DirectoryBytes $dest } else { $item.Length }
-            $itemHash = Get-PathHash $dest
-            $bytes += $itemBytes
-            $relativePath = "files/" + (Split-Path -Leaf $dest)
-            $items += [pscustomobject]@{
-                name = Split-Path -Leaf $dest
-                path = $relativePath
-                isDirectory = $isDirectory
-                bytes = $itemBytes
+            try {
+                if (-not (Test-Path -LiteralPath $path)) { continue }
+                $dest = Copy-ItemUnique $path $filesDir
+                $item = Get-Item -LiteralPath $dest -ErrorAction Stop
+                $isDirectory = [bool]$item.PSIsContainer
+                $itemBytes = if ($isDirectory) { Get-DirectoryBytes $dest } else { $item.Length }
+                $itemHash = Get-PathHash $dest
+                $bytes += $itemBytes
+                $relativePath = "files/" + (Split-Path -Leaf $dest)
+                $items += [pscustomobject]@{
+                    name = Split-Path -Leaf $dest
+                    path = $relativePath
+                    isDirectory = $isDirectory
+                    bytes = $itemBytes
+                }
+                $itemKind = if ($isDirectory) { "d" } else { "f" }
+                $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $dest), $itemHash))
+            } catch {
+                Write-AgentLog ("skip stale Windows file-drop item: {0}" -f $_.Exception.Message)
             }
-            $itemKind = if ($isDirectory) { "d" } else { "f" }
-            $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $dest), $itemHash))
         }
 
         if ($items.Count -gt 0) {
