@@ -1533,7 +1533,7 @@ enum FileDropReader {
 
         let itemText = urls.count == 1 ? "1 item" : "\(urls.count) items"
         let names = urls.map { url in
-            url.lastPathComponent.isEmpty ? "file" : url.lastPathComponent
+            shortenedDisplayName(url.lastPathComponent.isEmpty ? "file" : url.lastPathComponent)
         }
         let visibleNames = names.prefix(2).joined(separator: ", ")
         let remaining = names.count - min(names.count, 2)
@@ -1541,6 +1541,16 @@ enum FileDropReader {
             return "\(itemText): \(visibleNames), +\(remaining) more"
         }
         return "\(itemText): \(visibleNames)"
+    }
+
+    private static func shortenedDisplayName(_ name: String, maxCharacters: Int = 34) -> String {
+        guard name.count > maxCharacters, maxCharacters >= 8 else {
+            return name
+        }
+
+        let prefixCount = (maxCharacters - 1) / 2
+        let suffixCount = maxCharacters - prefixCount - 1
+        return "\(name.prefix(prefixCount))...\(name.suffix(suffixCount))"
     }
 
     private static func url(from object: Any) -> URL? {
@@ -1586,6 +1596,8 @@ final class MoonlightDropOverlayView: NSView {
         detailLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
         detailLabel.textColor = NSColor.white.withAlphaComponent(0.82)
         detailLabel.alignment = .center
+        detailLabel.lineBreakMode = .byTruncatingMiddle
+        detailLabel.maximumNumberOfLines = 1
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [titleLabel, detailLabel])
@@ -1704,6 +1716,8 @@ final class FileDropView: NSView {
         detailLabel.font = NSFont.systemFont(ofSize: 12)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.alignment = .center
+        detailLabel.lineBreakMode = .byTruncatingMiddle
+        detailLabel.maximumNumberOfLines = 1
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [titleLabel, detailLabel])
