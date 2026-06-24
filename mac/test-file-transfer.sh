@@ -68,6 +68,12 @@ normalize_yes_no() {
   esac
 }
 
+ps_single_quoted() {
+  local value="$1"
+  value=${value//\'/\'\'}
+  printf "'%s'" "$value"
+}
+
 ensure_helpers() {
   mkdir -p "$runtime_dir"
   if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
@@ -103,8 +109,11 @@ zip_payload() {
 windows_path_exists() {
   local relative_path="$1"
   local path_type="${2:-Any}"
-  local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); \$relative = '${relative_path}' -replace '/', [System.IO.Path]::DirectorySeparatorChar; \$path = Join-Path \$dir \$relative; if ('${path_type}' -eq 'Any') { if (Test-Path -LiteralPath \$path) { exit 0 } else { exit 1 } } elseif (Test-Path -LiteralPath \$path -PathType ${path_type}) { exit 0 } else { exit 1 }"
+  local script encoded transfer_dir_literal relative_literal path_type_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  relative_literal="$(ps_single_quoted "$relative_path")"
+  path_type_literal="$(ps_single_quoted "$path_type")"
+  script="\$ErrorActionPreference = 'Stop'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); \$relative = ${relative_literal} -replace '/', [System.IO.Path]::DirectorySeparatorChar; \$path = Join-Path \$dir \$relative; \$pathType = ${path_type_literal}; if (\$pathType -eq 'Any') { if (Test-Path -LiteralPath \$path) { exit 0 } else { exit 1 } } elseif (Test-Path -LiteralPath \$path -PathType \$pathType) { exit 0 } else { exit 1 }"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1
@@ -115,8 +124,9 @@ windows_file_exists() {
 }
 
 cleanup_windows_self_test_files() {
-  local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); if (Test-Path -LiteralPath \$dir) { Get-ChildItem -LiteralPath \$dir | Where-Object { \$_.Name -like 'moonlight-companion-transfer-test-*' } | Remove-Item -Recurse -Force }"
+  local script encoded transfer_dir_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); if (Test-Path -LiteralPath \$dir) { Get-ChildItem -LiteralPath \$dir | Where-Object { \$_.Name -like 'moonlight-companion-transfer-test-*' } | Remove-Item -Recurse -Force }"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
@@ -125,8 +135,11 @@ cleanup_windows_self_test_files() {
 write_windows_file() {
   local file_name="$1"
   local content="$2"
-  local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); New-Item -ItemType Directory -Force -Path \$dir | Out-Null; Set-Content -LiteralPath (Join-Path \$dir '${file_name}') -Value '${content}' -Encoding UTF8"
+  local script encoded transfer_dir_literal file_name_literal content_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  file_name_literal="$(ps_single_quoted "$file_name")"
+  content_literal="$(ps_single_quoted "$content")"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); New-Item -ItemType Directory -Force -Path \$dir | Out-Null; Set-Content -LiteralPath (Join-Path \$dir ${file_name_literal}) -Value ${content_literal} -Encoding UTF8"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
@@ -134,8 +147,10 @@ write_windows_file() {
 
 remove_windows_path() {
   local relative_path="$1"
-  local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); \$relative = '${relative_path}' -replace '/', [System.IO.Path]::DirectorySeparatorChar; \$path = Join-Path \$dir \$relative; if (Test-Path -LiteralPath \$path) { Remove-Item -LiteralPath \$path -Recurse -Force }"
+  local script encoded transfer_dir_literal relative_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  relative_literal="$(ps_single_quoted "$relative_path")"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); \$relative = ${relative_literal} -replace '/', [System.IO.Path]::DirectorySeparatorChar; \$path = Join-Path \$dir \$relative; if (Test-Path -LiteralPath \$path) { Remove-Item -LiteralPath \$path -Recurse -Force }"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
@@ -395,6 +410,24 @@ fi
 remove_windows_file "$m2w_spaced_name"
 echo "Mac -> Windows spaced filename ok."
 
+echo "Testing Mac -> Windows apostrophe filename transfer..."
+m2w_apostrophe_name="moonlight-companion-transfer-test-mac's file (${stamp}).txt"
+m2w_apostrophe_file="${tmp_dir}/${m2w_apostrophe_name}"
+m2w_apostrophe_out="${tmp_dir}/mac-to-windows-apostrophe-send.txt"
+printf 'Moonlight Companion Mac -> Windows apostrophe filename test %s\n' "$stamp" > "$m2w_apostrophe_file"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_apostrophe_file" > "$m2w_apostrophe_out"
+if ! grep -q "Windows confirmed" "$m2w_apostrophe_out"; then
+  echo "Mac -> Windows apostrophe filename transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_apostrophe_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_apostrophe_name"; then
+  echo "Mac -> Windows apostrophe filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_apostrophe_name"
+echo "Mac -> Windows apostrophe filename ok."
+
 echo "Testing Mac -> Windows folder transfer..."
 m2w_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-folder-${stamp}"
 m2w_dir_name="$(basename "$m2w_dir")"
@@ -460,6 +493,25 @@ sleep 3
 assert_windows_path_absent "$w2m_spaced_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_spaced_name}"
 echo "Windows -> Mac spaced filename ok."
+
+echo "Testing Windows -> Mac apostrophe filename transfer..."
+w2m_apostrophe_name="moonlight-companion-transfer-test-windows's file (${stamp}).txt"
+w2m_apostrophe_file="${tmp_dir}/${w2m_apostrophe_name}"
+w2m_apostrophe_payload="${tmp_dir}/w2m-apostrophe-payload"
+w2m_apostrophe_zip="${tmp_dir}/windows-to-mac-apostrophe.zip"
+printf 'Moonlight Companion Windows -> Mac apostrophe filename test %s\n' "$stamp" > "$w2m_apostrophe_file"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_apostrophe_payload" "$w2m_apostrophe_file" >/dev/null
+zip_payload "$w2m_apostrophe_payload" "$w2m_apostrophe_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_apostrophe_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_apostrophe_name"; then
+  echo "Windows -> Mac apostrophe filename transfer did not preserve the file name." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_apostrophe_name" "Leaf"
+rm -f "${transfer_mac_dir}/${w2m_apostrophe_name}"
+echo "Windows -> Mac apostrophe filename ok."
 
 echo "Testing Windows -> Mac folder transfer..."
 w2m_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-folder-${stamp}"
