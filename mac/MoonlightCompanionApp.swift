@@ -34,7 +34,8 @@ struct CompanionSettings {
         "MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_NOTIFY",
-        "MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"
+        "MOONLIGHT_TRANSFER_REVEAL_MAC_DIR",
+        "MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR"
     ]
 
     var values: [String: String]
@@ -259,6 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste after Companion fallback drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify on file transfers"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", title: "Reveal received Mac files in Finder"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR", title: "Reveal sent Windows files in Explorer"))
         let dropView = FileDropView(source: .companion)
         dropView.delegate = self
         form.addArrangedSubview(row("Companion Drop", dropView))
@@ -643,14 +645,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func openWindowsReceiveFolder() {
         guard saveSettings() else { return }
 
+        setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
+        requestWindowsReceiveFolderOpen { [weak self] succeeded, detail in
+            if succeeded {
+                self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
+            } else {
+                self?.setBusy(false, status: "Open Failed", detail: detail)
+                self?.showFailure("Windows receive folder opener failed.")
+            }
+        }
+    }
+
+    private func requestWindowsReceiveFolderOpen(completion: @escaping (Bool, String) -> Void) {
         let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
         guard FileManager.default.isExecutableFile(atPath: openerURL.path) else {
-            fail("Windows receive folder opener is missing or not executable: \(openerURL.path)")
+            completion(false, "Windows receive folder opener is missing or not executable: \(openerURL.path)")
             return
         }
-
-        output = Data()
-        setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
 
         let task = Process()
         let pipe = Pipe()
@@ -663,27 +674,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
         task.environment = environment
 
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            DispatchQueue.main.async {
-                self?.output.append(data)
-            }
-        }
-
         task.terminationHandler = { [weak self] task in
+            let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: outputData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = text?.isEmpty == false ? text! : "Windows folder opener exited with status \(task.terminationStatus)."
             DispatchQueue.main.async {
-                pipe.fileHandleForReading.readabilityHandler = nil
-                self?.transferProcess = nil
-                let text = String(data: self?.output ?? Data(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let detail = text?.isEmpty == false ? text! : "Windows folder opener exited with status \(task.terminationStatus)."
-                if task.terminationStatus == 0 {
-                    self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
-                } else {
-                    self?.setBusy(false, status: "Open Failed", detail: detail)
-                    self?.showFailure("Windows receive folder opener exited with status \(task.terminationStatus).")
+                if self?.transferProcess === task {
+                    self?.transferProcess = nil
                 }
+                completion(task.terminationStatus == 0, detail)
             }
         }
 
@@ -691,8 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try task.run()
             transferProcess = task
         } catch {
-            setBusy(false, status: "Open Failed", detail: error.localizedDescription)
-            fail(error.localizedDescription)
+            completion(false, error.localizedDescription)
         }
     }
 
@@ -1247,7 +1246,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
                     }
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
-                    self?.setBusy(false, status: "Files Sent", detail: detail)
+                    if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
+                        self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive folder.")
+                        self?.requestWindowsReceiveFolderOpen { [weak self] succeeded, openDetail in
+                            let suffix = succeeded
+                                ? " Windows receive folder opened."
+                                : " Windows receive folder open failed: \(openDetail)"
+                            self?.setBusy(false, status: "Files Sent", detail: detail + suffix)
+                        }
+                    } else {
+                        self?.setBusy(false, status: "Files Sent", detail: detail)
+                    }
                 } else {
                     let detail = text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus)."
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)

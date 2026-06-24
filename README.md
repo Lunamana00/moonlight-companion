@@ -201,6 +201,7 @@ MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE="yes"
 MOONLIGHT_TRANSFER_AUTO_PASTE="no"
 MOONLIGHT_TRANSFER_NOTIFY="yes"
 MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="yes"
+MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR="no"
 ```
 
 Build the wrapper app:
@@ -302,7 +303,7 @@ Transferred file payloads are copied into durable receive folders:
 - macOS default: `~/Downloads/Moonlight Companion`
 - Windows default: `%USERPROFILE%\Downloads\Moonlight Companion`
 
-Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can also ask Windows to open the configured receive folder in Explorer. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder, and leave the received files ready to paste in Finder. The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
+Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can ask Windows to open the configured receive folder in Explorer, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` can open it automatically after successful Mac-to-Windows sends. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder, and leave the received files ready to paste in Finder. The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
 
 If Caps Lock Han/Eng switching does not respond, check:
 

@@ -9,6 +9,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
 - The GUI now has an `Open Windows Folder` action that asks the logged-in Windows session to open the configured receive folder in Explorer.
+- Added `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` for optionally opening the Windows receive folder after successful Mac-to-Windows sends.
 - Mac-to-Windows send results now show the actual Windows receive-folder file names, including names sanitized for Windows.
 - Mac-to-Windows TCP file drops now receive the Windows import acknowledgement on the same TCP connection, avoiding the extra SSH confirmation round trip when both sides are current.
 - The file transfer self-test now requires the same-connection TCP acknowledgement when TCP clipboard transfer is enabled, while normal sends still keep the SSH state fallback.
@@ -44,7 +45,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Added separate post-drop `Ctrl+V` controls so Moonlight window/strip drops can paste by default while the Companion fallback drop target stays opt-in.
 - Added Mac notifications for Moonlight screen-drop send results and Windows-to-Mac file arrivals, plus an optional Finder reveal action for received files.
 - Added durable Mac and Windows receive folders for imported file payloads.
-- Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, `MOONLIGHT_TRANSFER_DROP_OVERLAY`, `MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE`, `MOONLIGHT_TRANSFER_AUTO_PASTE`, `MOONLIGHT_TRANSFER_NOTIFY`, and `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` settings.
+- Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, `MOONLIGHT_TRANSFER_DROP_OVERLAY`, `MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE`, `MOONLIGHT_TRANSFER_AUTO_PASTE`, `MOONLIGHT_TRANSFER_NOTIFY`, `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR`, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` settings.
 - Added Moonlight-focused Command-to-Control shortcut remapping for Mac-style shortcuts.
 - Added `MOONLIGHT_SHORTCUT_REMAP` to enable or disable local shortcut remapping.
 - Added a settings GUI for editing launch, keyboard, and clipboard options before starting Moonlight.
