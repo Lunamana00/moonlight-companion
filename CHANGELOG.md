@@ -16,6 +16,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Windows-to-Mac TCP receives now write the final normalized clipboard state before notifications, preventing received files from being echoed back to Windows as new Mac-to-Windows sends.
 - The file transfer self-test now waits for Windows-to-Mac file and folder receives long enough to catch accidental echo-back uploads.
 - Windows-to-Mac fallback polling notifications and logs now use the same received file name and total size summary as the TCP receiver.
+- The file transfer self-test now verifies that empty nested folders survive Mac-to-Windows and Windows-to-Mac folder transfers.
 
 ## v0.3.0 - 2026-06-24
 

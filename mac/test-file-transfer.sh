@@ -199,8 +199,16 @@ wait_for_mac_file() {
 wait_for_mac_path() {
   local directory="$1"
   local relative_path="$2"
+  local path_type="${3:-Any}"
+  local full_path="${directory}/${relative_path}"
   for _ in {1..20}; do
-    if [[ -e "${directory}/${relative_path}" ]]; then
+    if [[ "$path_type" == "Directory" && -d "$full_path" ]]; then
+      return 0
+    fi
+    if [[ "$path_type" == "File" && -f "$full_path" ]]; then
+      return 0
+    fi
+    if [[ "$path_type" == "Any" && -e "$full_path" ]]; then
       return 0
     fi
     sleep 0.25
@@ -366,8 +374,9 @@ echo "Testing Mac -> Windows folder transfer..."
 m2w_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-folder-${stamp}"
 m2w_dir_name="$(basename "$m2w_dir")"
 m2w_nested_path="nested/from-mac.txt"
+m2w_empty_dir_path="nested/empty-from-mac"
 m2w_dir_out="${tmp_dir}/mac-to-windows-folder-send.txt"
-mkdir -p "${m2w_dir}/nested"
+mkdir -p "${m2w_dir}/nested" "${m2w_dir}/${m2w_empty_dir_path}"
 printf 'Moonlight Companion Mac -> Windows folder test %s\n' "$stamp" > "${m2w_dir}/${m2w_nested_path}"
 env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_dir" > "$m2w_dir_out"
 if ! grep -q "Windows confirmed" "$m2w_dir_out"; then
@@ -377,6 +386,10 @@ if ! grep -q "Windows confirmed" "$m2w_dir_out"; then
 fi
 if ! wait_for_windows_path "${m2w_dir_name}/${m2w_nested_path}" "Leaf"; then
   echo "Mac -> Windows folder transfer did not preserve the nested file." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_dir_name}/${m2w_empty_dir_path}" "Container"; then
+  echo "Mac -> Windows folder transfer did not preserve the empty nested folder." >&2
   exit 1
 fi
 remove_windows_path "$m2w_dir_name"
@@ -408,16 +421,21 @@ echo "Testing Windows -> Mac folder transfer..."
 w2m_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-folder-${stamp}"
 w2m_dir_name="$(basename "$w2m_dir")"
 w2m_nested_path="nested/from-windows.txt"
+w2m_empty_dir_path="nested/empty-from-windows"
 w2m_payload_dir="${tmp_dir}/w2m-folder-payload"
 w2m_zip_path="${tmp_dir}/windows-to-mac-folder.zip"
-mkdir -p "${w2m_dir}/nested"
+mkdir -p "${w2m_dir}/nested" "${w2m_dir}/${w2m_empty_dir_path}"
 printf 'Moonlight Companion Windows -> Mac folder test %s\n' "$stamp" > "${w2m_dir}/${w2m_nested_path}"
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_payload_dir" "$w2m_dir" >/dev/null
 zip_payload "$w2m_payload_dir" "$w2m_zip_path"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
   "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_zip_path"
-if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_dir_name}/${w2m_nested_path}"; then
+if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_dir_name}/${w2m_nested_path}" "File"; then
   echo "Windows -> Mac folder transfer did not preserve the nested file." >&2
+  exit 1
+fi
+if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_dir_name}/${w2m_empty_dir_path}" "Directory"; then
+  echo "Windows -> Mac folder transfer did not preserve the empty nested folder." >&2
   exit 1
 fi
 sleep 3
