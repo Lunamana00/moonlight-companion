@@ -169,6 +169,7 @@ exit "${status}"
     private var dropOverlayButton: NSButton!
     private var testTransferButton: NSButton!
     private var openMacReceiveButton: NSButton!
+    private var revealMacReceiveButton: NSButton!
     private var openWindowsReceiveButton: NSButton!
     private var cancelTransferButton: NSButton!
     private var output = Data()
@@ -301,17 +302,25 @@ exit "${status}"
         testTransferButton.translatesAutoresizingMaskIntoConstraints = false
         openMacReceiveButton = NSButton(title: "Open Mac Folder", target: self, action: #selector(openMacReceiveFolder))
         openMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        revealMacReceiveButton = NSButton(title: "Reveal Last Mac Receive", target: self, action: #selector(revealLatestMacReceive))
+        revealMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton = NSButton(title: "Cancel", target: self, action: #selector(cancelTransferOperation))
         cancelTransferButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton.isEnabled = false
-        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openMacReceiveButton, openWindowsReceiveButton, cancelTransferButton])
-        transferButtons.orientation = .horizontal
-        transferButtons.alignment = .centerY
-        transferButtons.spacing = 10
-        transferButtons.translatesAutoresizingMaskIntoConstraints = false
-        form.addArrangedSubview(row("", transferButtons))
+        let transferDropButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, cancelTransferButton])
+        transferDropButtons.orientation = .horizontal
+        transferDropButtons.alignment = .centerY
+        transferDropButtons.spacing = 10
+        transferDropButtons.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("Drop Actions", transferDropButtons))
+        let transferFolderButtons = NSStackView(views: [openMacReceiveButton, revealMacReceiveButton, openWindowsReceiveButton])
+        transferFolderButtons.orientation = .horizontal
+        transferFolderButtons.alignment = .centerY
+        transferFolderButtons.spacing = 10
+        transferFolderButtons.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("Folders", transferFolderButtons))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -581,6 +590,7 @@ exit "${status}"
         dropOverlayButton?.isEnabled = !busy
         testTransferButton?.isEnabled = !busy
         openMacReceiveButton?.isEnabled = !busy
+        revealMacReceiveButton?.isEnabled = !busy
         openWindowsReceiveButton?.isEnabled = !busy
         cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
@@ -734,6 +744,10 @@ exit "${status}"
     }
 
     @objc private func openMacReceiveFolder() {
+        openMacReceiveFolderWithStatusUpdate(true)
+    }
+
+    private func openMacReceiveFolderWithStatusUpdate(_ updateStatus: Bool) {
         let settings = collectSettings()
         let rawPath = settings["MOONLIGHT_TRANSFER_MAC_DIR"].isEmpty
             ? "${HOME}/Downloads/Moonlight Companion"
@@ -742,8 +756,52 @@ exit "${status}"
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             NSWorkspace.shared.open(url)
+            if updateStatus {
+                statusLabel.stringValue = "Mac Folder Opened"
+                detailLabel.stringValue = url.path
+            }
         } catch {
             fail("Could not open receive folder: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func revealLatestMacReceive() {
+        let state = SettingsFile.parse(url: latestMacReceiveStateURL())
+        let urls = latestMacReceiveFileURLs(from: state)
+        let existingURLs = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !existingURLs.isEmpty else {
+            openMacReceiveFolderWithStatusUpdate(false)
+            statusLabel.stringValue = "Mac Folder Opened"
+            detailLabel.stringValue = urls.isEmpty
+                ? "No latest received Mac file state was found yet."
+                : "The latest received file was no longer found; opened the receive folder."
+            return
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting(existingURLs)
+        statusLabel.stringValue = "Mac Files Revealed"
+        detailLabel.stringValue = FileDropReader.dropSummary(for: existingURLs)
+    }
+
+    private func latestMacReceiveStateURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MoonlightClipboardSync/clipboard-tcp-windows-state.txt")
+    }
+
+    private func latestMacReceiveFileURLs(from state: [String: String]) -> [URL] {
+        guard state["kind"] == "files" else {
+            return []
+        }
+
+        let count = Int(state["file_paths"] ?? "") ?? Int(state["files"] ?? "") ?? 0
+        guard count > 0 else {
+            return []
+        }
+
+        return (1...count).compactMap { index in
+            let rawPath = state["file_path_\(index)"] ?? ""
+            let path = expandedUserPath(rawPath.trimmingCharacters(in: .whitespacesAndNewlines))
+            return path.isEmpty ? nil : URL(fileURLWithPath: path)
         }
     }
 

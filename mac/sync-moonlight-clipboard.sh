@@ -172,6 +172,24 @@ state_value() {
   awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
 }
 
+write_windows_receive_state() {
+  local meta_path="$1"
+  local archive_hash="$2"
+  local normalized_id="$3"
+  local state_dir tmp_path
+  state_dir="$(dirname "$tcp_state")"
+  tmp_path="${tcp_state}.tmp"
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  {
+    printf 'archive_hash=%s\n' "$archive_hash"
+    printf 'bytes=%s\n' "$(payload_bytes "$meta_path")"
+    printf 'kind=%s\n' "$(payload_kind "$meta_path")"
+    printf 'normalized_id=%s\n' "$normalized_id"
+    printf 'windows_id=%s\n' "$(payload_id "$meta_path")"
+    awk -F= '$1 == "files" || $1 == "file_paths" || $1 ~ /^file_path_[0-9]+$/ || $1 ~ /^file_name_[0-9]+$/ { print }' "$meta_path"
+  } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$tcp_state" 2>/dev/null || rm -f "$tmp_path"
+}
+
 dir_size_bytes() {
   du -sk "$1" | awk '{print $1 * 1024}'
 }
@@ -366,6 +384,7 @@ while true; do
           if "$helper" export "$mac_normalized_payload" > "$mac_normalized_meta" 2>/dev/null; then
             normalized_id="$(payload_id "$mac_normalized_meta")"
           fi
+          write_windows_receive_state "${tmp_dir}/windows-meta.txt" "$archive_hash" "$normalized_id"
           last_windows_archive_hash="$archive_hash"
           last_windows_fallback_archive_hash="$archive_hash"
           last_windows_id="$win_id"

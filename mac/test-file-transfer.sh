@@ -24,6 +24,7 @@ MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\
 runtime_dir="${MOONLIGHT_CLIPBOARD_RUNTIME_DIR:-${HOME}/Library/Application Support/MoonlightClipboardSync}"
 helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
 tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
+tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
@@ -642,6 +643,16 @@ MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRAN
   "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$zip_path"
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_collision_name"; then
   echo "Windows -> Mac transfer did not create a collision-safe file in the Mac receive folder." >&2
+  exit 1
+fi
+if ! grep -Fqx "file_path_1=${transfer_mac_dir}/${w2m_collision_name}" "$tcp_state"; then
+  echo "Windows -> Mac transfer did not record the latest received Mac file path." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! grep -Fqx "file_name_1=${w2m_collision_name}" "$tcp_state"; then
+  echo "Windows -> Mac transfer did not record the latest received Mac file name." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
   exit 1
 fi
 sleep 3

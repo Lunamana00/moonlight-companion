@@ -401,6 +401,30 @@ func writeState(path: String, values: [String: String]) throws {
     try fm.moveItem(atPath: tmp, toPath: path)
 }
 
+func receiveStateValues(
+    imported: [String: String],
+    archiveHash: String,
+    normalizedID: String,
+    windowsID: String
+) -> [String: String] {
+    var values = [
+        "archive_hash": archiveHash,
+        "bytes": imported["bytes"] ?? "",
+        "files": imported["files"] ?? "",
+        "file_paths": imported["file_paths"] ?? "",
+        "kind": imported["kind"] ?? "",
+        "normalized_id": normalizedID,
+        "windows_id": windowsID
+    ]
+
+    for (key, value) in imported {
+        if key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
+            values[key] = value
+        }
+    }
+    return values
+}
+
 func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64, logPath: String) throws {
     let header = try readLine(fd: fd)
     let parts = header.split(separator: " ")
@@ -435,13 +459,15 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     let normalized = normalizedOutput.map(parseMeta) ?? [:]
 
     let normalizedID = normalized["id"] ?? winID
-    try writeState(path: statePath, values: [
-        "archive_hash": archiveHash,
-        "bytes": imported["bytes"] ?? "",
-        "kind": imported["kind"] ?? "",
-        "normalized_id": normalizedID,
-        "windows_id": winID
-    ])
+    try writeState(
+        path: statePath,
+        values: receiveStateValues(
+            imported: imported,
+            archiveHash: archiveHash,
+            normalizedID: normalizedID,
+            windowsID: winID
+        )
+    )
     notifyWindowsFilesReceived(imported)
     if imported["kind"] == "files" {
         log("Windows -> Mac TCP files \(receivedFileDetail(imported))", to: logPath)
