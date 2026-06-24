@@ -94,6 +94,65 @@ payload_file_paths() {
   awk -F= '$1 ~ /^file_path_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
 }
 
+payload_file_names() {
+  local path name
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    name="$(basename "$path")"
+    [[ -n "$name" ]] || name="file"
+    printf '%s\n' "$name"
+  done < <(payload_file_paths "$1")
+}
+
+format_bytes() {
+  local bytes="${1:-0}"
+  awk -v bytes="$bytes" '
+    BEGIN {
+      if (bytes < 1024) {
+        printf "%d bytes", bytes
+      } else if (bytes < 1048576) {
+        printf "%.1f KB", bytes / 1024
+      } else if (bytes < 1073741824) {
+        printf "%.1f MB", bytes / 1048576
+      } else {
+        printf "%.1f GB", bytes / 1073741824
+      }
+    }
+  '
+}
+
+summarize_names() {
+  local names=("$@")
+  local count="${#names[@]}"
+  if (( count == 0 )); then
+    printf 'files'
+  elif (( count == 1 )); then
+    printf '%s' "${names[0]}"
+  elif (( count == 2 )); then
+    printf '%s, %s' "${names[0]}" "${names[1]}"
+  else
+    printf '%s, %s, +%d more' "${names[0]}" "${names[1]}" "$((count - 2))"
+  fi
+}
+
+received_file_detail() {
+  local meta_path="$1"
+  local count item_text size_text names_text name
+  local file_names=()
+  count="$(payload_files "$meta_path")"
+  if [[ "$count" == "1" ]]; then
+    item_text="1 item"
+  else
+    item_text="${count:-1} items"
+  fi
+  size_text="$(format_bytes "$(payload_bytes "$meta_path")")"
+  while IFS= read -r name; do
+    file_names+=("$name")
+  done < <(payload_file_names "$meta_path")
+  names_text="$(summarize_names "${file_names[@]}")"
+  printf '%s (%s): %s' "$item_text" "$size_text" "$names_text"
+}
+
 file_hash() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
@@ -195,23 +254,17 @@ tcp_receive_in_progress() {
 
 notify_windows_files_received() {
   local meta_path="$1"
-  local kind count item_text
+  local kind detail
 
   kind="$(payload_kind "$meta_path")"
   [[ "$kind" == "files" ]] || return 0
 
-  count="$(payload_files "$meta_path")"
-  if [[ "$count" == "1" ]]; then
-    item_text="1 item"
-  else
-    item_text="${count:-1} items"
-  fi
-
+  detail="$(received_file_detail "$meta_path")"
   reveal_enabled="$(normalize_yes_no "$transfer_reveal_mac_dir")"
   if [[ "$reveal_enabled" == "yes" ]]; then
-    notification_body="Received ${item_text} from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
+    notification_body="Received ${detail} from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
   else
-    notification_body="Received ${item_text} from Windows. Paste in Finder or open the Mac receive folder."
+    notification_body="Received ${detail} from Windows. Paste in Finder or open the Mac receive folder."
   fi
 
   if [[ "$(normalize_yes_no "$transfer_notify")" == "yes" ]]; then
@@ -306,7 +359,11 @@ while true; do
           last_windows_archive_hash="$archive_hash"
           last_windows_id="$win_id"
           last_mac_id="$normalized_id"
-          log "Windows -> Mac ${win_kind} (${win_bytes}B)"
+          if [[ "$win_kind" == "files" ]]; then
+            log "Windows -> Mac files $(received_file_detail "${tmp_dir}/windows-meta.txt")"
+          else
+            log "Windows -> Mac ${win_kind} (${win_bytes}B)"
+          fi
         else
           log "Windows -> Mac import failed"
         fi
