@@ -428,6 +428,34 @@ fi
 remove_windows_file "$m2w_apostrophe_name"
 echo "Mac -> Windows apostrophe filename ok."
 
+echo "Testing Mac -> Windows multi-item transfer..."
+m2w_multi_file="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-file-${stamp}.txt"
+m2w_multi_file_name="$(basename "$m2w_multi_file")"
+m2w_multi_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-folder-${stamp}"
+m2w_multi_dir_name="$(basename "$m2w_multi_dir")"
+m2w_multi_nested_path="nested/from-mac-multi.txt"
+m2w_multi_out="${tmp_dir}/mac-to-windows-multi-send.txt"
+mkdir -p "${m2w_multi_dir}/nested"
+printf 'Moonlight Companion Mac -> Windows multi file test %s\n' "$stamp" > "$m2w_multi_file"
+printf 'Moonlight Companion Mac -> Windows multi folder test %s\n' "$stamp" > "${m2w_multi_dir}/${m2w_multi_nested_path}"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_multi_file" "$m2w_multi_dir" > "$m2w_multi_out"
+if ! grep -q "Windows confirmed 2 items" "$m2w_multi_out"; then
+  echo "Mac -> Windows multi-item transfer did not receive confirmation for both items." >&2
+  cat "$m2w_multi_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_multi_file_name"; then
+  echo "Mac -> Windows multi-item transfer did not preserve the top-level file." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_multi_dir_name}/${m2w_multi_nested_path}" "Leaf"; then
+  echo "Mac -> Windows multi-item transfer did not preserve the folder item." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_multi_file_name"
+remove_windows_path "$m2w_multi_dir_name"
+echo "Mac -> Windows multi-item ok."
+
 echo "Testing Mac -> Windows folder transfer..."
 m2w_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-folder-${stamp}"
 m2w_dir_name="$(basename "$m2w_dir")"
@@ -512,6 +540,36 @@ sleep 3
 assert_windows_path_absent "$w2m_apostrophe_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_apostrophe_name}"
 echo "Windows -> Mac apostrophe filename ok."
+
+echo "Testing Windows -> Mac multi-item transfer..."
+w2m_multi_file="${tmp_dir}/moonlight-companion-transfer-test-windows-multi-file-${stamp}.txt"
+w2m_multi_file_name="$(basename "$w2m_multi_file")"
+w2m_multi_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-multi-folder-${stamp}"
+w2m_multi_dir_name="$(basename "$w2m_multi_dir")"
+w2m_multi_nested_path="nested/from-windows-multi.txt"
+w2m_multi_payload="${tmp_dir}/w2m-multi-payload"
+w2m_multi_zip="${tmp_dir}/windows-to-mac-multi.zip"
+mkdir -p "${w2m_multi_dir}/nested"
+printf 'Moonlight Companion Windows -> Mac multi file test %s\n' "$stamp" > "$w2m_multi_file"
+printf 'Moonlight Companion Windows -> Mac multi folder test %s\n' "$stamp" > "${w2m_multi_dir}/${w2m_multi_nested_path}"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_multi_payload" "$w2m_multi_file" "$w2m_multi_dir" >/dev/null
+zip_payload "$w2m_multi_payload" "$w2m_multi_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_multi_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_multi_file_name"; then
+  echo "Windows -> Mac multi-item transfer did not preserve the top-level file." >&2
+  exit 1
+fi
+if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_multi_dir_name}/${w2m_multi_nested_path}" "File"; then
+  echo "Windows -> Mac multi-item transfer did not preserve the folder item." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_multi_file_name" "Leaf"
+assert_windows_path_absent "$w2m_multi_dir_name" "Container"
+rm -f "${transfer_mac_dir}/${w2m_multi_file_name}"
+rm -rf "${transfer_mac_dir:?}/${w2m_multi_dir_name}"
+echo "Windows -> Mac multi-item ok."
 
 echo "Testing Windows -> Mac folder transfer..."
 w2m_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-folder-${stamp}"

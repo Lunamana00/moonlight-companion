@@ -19,7 +19,8 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now verifies that empty nested folders survive Mac-to-Windows and Windows-to-Mac folder transfers.
 - The file transfer self-test now verifies that file names with spaces and parentheses survive in both directions.
 - The file transfer self-test now escapes PowerShell string literals and verifies apostrophe file names in both directions.
-- Windows file-drop export now skips stale clipboard file references instead of producing a broken transfer payload.
+- The file transfer self-test now verifies multi-item file-plus-folder selections in both directions.
+- Windows file-drop export now skips stale or partially missing clipboard file lists instead of producing broken or partial transfer payloads.
 - macOS fallback polling now tracks remote ZIP hashes separately from TCP receive state to avoid retrying stale fallback payloads after TCP transfers.
 
 ## v0.3.0 - 2026-06-24

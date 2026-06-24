@@ -735,6 +735,35 @@ function Write-MacImportState($manifest, $archiveHash) {
     Write-KeyValueState $macImportState $lines
 }
 
+function Get-FileDropIdFromPaths($paths) {
+    $hashLines = New-Object System.Collections.Generic.List[string]
+
+    foreach ($path in @($paths)) {
+        try {
+            if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) {
+                return ""
+            }
+
+            $item = Get-Item -LiteralPath $path -ErrorAction Stop
+            $itemKind = if ($item.PSIsContainer) { "d" } else { "f" }
+            $itemHash = Get-PathHash $path
+            $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $path), $itemHash))
+        } catch {
+            return ""
+        }
+    }
+
+    if ($hashLines.Count -eq 0) { return "" }
+    return "files:" + (Get-StringHash (($hashLines | Sort-Object) -join "`n"))
+}
+
+function Get-ImportedPayloadNormalizedId($manifest) {
+    if ($null -eq $manifest) { return "" }
+    if ($manifest.kind -ne "files") { return "" }
+    if ($null -eq $manifest.importedPaths) { return "" }
+    return Get-FileDropIdFromPaths @($manifest.importedPaths)
+}
+
 function Read-JsonManifest($payloadDir) {
     $manifestPath = Join-Path $payloadDir "manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) { return $null }
@@ -765,15 +794,20 @@ function Export-ClipboardPayload($payloadDir) {
     Clear-Directory $payloadDir
 
     if ([System.Windows.Forms.Clipboard]::ContainsFileDropList()) {
+        $fileDropPaths = @([System.Windows.Forms.Clipboard]::GetFileDropList())
         $filesDir = Join-Path $payloadDir "files"
         New-Item -ItemType Directory -Force -Path $filesDir | Out-Null
         $items = @()
         $hashLines = New-Object System.Collections.Generic.List[string]
         $bytes = 0L
+        $completeFileDrop = $true
 
-        foreach ($path in [System.Windows.Forms.Clipboard]::GetFileDropList()) {
+        foreach ($path in $fileDropPaths) {
             try {
-                if (-not (Test-Path -LiteralPath $path)) { continue }
+                if (-not (Test-Path -LiteralPath $path)) {
+                    $completeFileDrop = $false
+                    break
+                }
                 $dest = Copy-ItemUnique $path $filesDir
                 $item = Get-Item -LiteralPath $dest -ErrorAction Stop
                 $isDirectory = [bool]$item.PSIsContainer
@@ -790,11 +824,12 @@ function Export-ClipboardPayload($payloadDir) {
                 $itemKind = if ($isDirectory) { "d" } else { "f" }
                 $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $dest), $itemHash))
             } catch {
-                Write-AgentLog ("skip stale Windows file-drop item: {0}" -f $_.Exception.Message)
+                $completeFileDrop = $false
+                break
             }
         }
 
-        if ($items.Count -gt 0) {
+        if ($completeFileDrop -and $items.Count -eq $fileDropPaths.Count -and $items.Count -gt 0) {
             $id = "files:" + (Get-StringHash (($hashLines | Sort-Object) -join "`n"))
             $manifest = [pscustomobject]@{
                 version = 2
@@ -1031,10 +1066,14 @@ function Receive-ClipboardTcpPayload($client) {
         Expand-Payload $macZip $importDir
         $imported = Import-ClipboardPayload $importDir
         if ($null -ne $imported) {
-            $normalized = Export-ClipboardPayload $normalizedDir
+            $normalizedId = Get-ImportedPayloadNormalizedId $imported
+            if ([string]::IsNullOrWhiteSpace($normalizedId)) {
+                $normalized = Export-ClipboardPayload $normalizedDir
+                $normalizedId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+            }
             $script:lastMacArchiveHash = $macArchiveHash
             $script:lastMacId = $imported.id
-            $script:lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+            $script:lastWindowsId = $normalizedId
             Write-MacImportState $imported $macArchiveHash
             Write-MacImportTcpAck $stream $imported
             Write-AgentLog ("Mac -> Windows TCP {0} ({1}B)" -f $imported.kind, $imported.bytes)
@@ -1204,10 +1243,14 @@ try {
                     Expand-Payload $macZip $importDir
                     $imported = Import-ClipboardPayload $importDir
                     if ($null -ne $imported) {
-                        $normalized = Export-ClipboardPayload $normalizedDir
+                        $normalizedId = Get-ImportedPayloadNormalizedId $imported
+                        if ([string]::IsNullOrWhiteSpace($normalizedId)) {
+                            $normalized = Export-ClipboardPayload $normalizedDir
+                            $normalizedId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+                        }
                         $lastMacArchiveHash = $macArchiveHash
                         $lastMacId = $imported.id
-                        $lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+                        $lastWindowsId = $normalizedId
                         Write-MacImportState $imported $macArchiveHash
                         Write-AgentLog ("Mac -> Windows {0} ({1}B)" -f $imported.kind, $imported.bytes)
                     }
