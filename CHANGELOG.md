@@ -11,6 +11,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now requires the same-connection TCP acknowledgement when TCP clipboard transfer is enabled, while normal sends still keep the SSH state fallback.
 - Windows-to-Mac file arrival notifications and TCP logs now include received file names and total size.
 - The file transfer self-test now refreshes the Mac TCP receiver when its helper was rebuilt, so tests exercise the current receiver binary instead of an already-running older one.
+- The file transfer self-test now verifies that repeated same-name transfers create collision-safe `-2` files on both Mac and Windows instead of overwriting existing receive-folder files.
 
 ## v0.3.0 - 2026-06-24
 

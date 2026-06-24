@@ -116,6 +116,16 @@ cleanup_windows_self_test_files() {
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
+write_windows_file() {
+  local file_name="$1"
+  local content="$2"
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); New-Item -ItemType Directory -Force -Path \$dir | Out-Null; Set-Content -LiteralPath (Join-Path \$dir '${file_name}') -Value '${content}' -Encoding UTF8"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
 remove_windows_file() {
   local file_name="$1"
   local script encoded
@@ -187,6 +197,19 @@ meta_value() {
   awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
 }
 
+collision_name() {
+  local file_name="$1"
+  local stem ext
+  if [[ "$file_name" == *.* ]]; then
+    stem="${file_name%.*}"
+    ext=".${file_name##*.}"
+  else
+    stem="$file_name"
+    ext=""
+  fi
+  printf '%s-2%s\n' "$stem" "$ext"
+}
+
 if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$MOONLIGHT_CLIPBOARD_TCP")" != "yes" ]]; then
   echo "Clipboard TCP is disabled; enable MOONLIGHT_CLIPBOARD_TCP for the live transfer test." >&2
   exit 1
@@ -239,22 +262,26 @@ metadata_src="${tmp_dir}/moonlight-companion-transfer-test-receive-metadata-${st
 metadata_payload="${tmp_dir}/receive-metadata-payload"
 metadata_out="${tmp_dir}/receive-metadata.txt"
 metadata_name="$(basename "$metadata_src")"
+metadata_collision_name="$(collision_name "$metadata_name")"
 printf 'Moonlight Companion receive metadata test %s\n' "$stamp" > "$metadata_src"
+printf 'existing Mac receive file %s\n' "$stamp" > "${transfer_mac_dir}/${metadata_name}"
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$metadata_payload" "$metadata_src" >/dev/null
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" import "$metadata_payload" > "$metadata_out"
 metadata_path="$(meta_value "file_path_1" "$metadata_out")"
-if [[ -z "$metadata_path" || ! -f "$metadata_path" || "$(basename "$metadata_path")" != "$metadata_name" ]]; then
-  echo "Windows -> Mac import did not report the received file path." >&2
+if [[ -z "$metadata_path" || ! -f "$metadata_path" || "$(basename "$metadata_path")" != "$metadata_collision_name" ]]; then
+  echo "Windows -> Mac import did not report the collision-safe received file path." >&2
   exit 1
 fi
-rm -f "$metadata_path"
+rm -f "$metadata_path" "${transfer_mac_dir}/${metadata_name}"
 echo "Received file metadata ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"
+m2w_collision_name="$(collision_name "$m2w_name")"
 m2w_out="${tmp_dir}/mac-to-windows-send.txt"
 printf 'Moonlight Companion Mac -> Windows test %s\n' "$stamp" > "$m2w_file"
+write_windows_file "$m2w_name" "existing Windows receive file ${stamp}"
 send_env=(MOONLIGHT_COMPANION_CONFIG="$config")
 if [[ "$(normalize_yes_no "$MOONLIGHT_CLIPBOARD_TCP")" == "yes" ]]; then
   send_env+=(MOONLIGHT_TRANSFER_REQUIRE_TCP_ACK=yes)
@@ -265,28 +292,31 @@ if ! grep -q "Windows confirmed" "$m2w_out"; then
   cat "$m2w_out" >&2
   exit 1
 fi
-if ! wait_for_windows_file "$m2w_name"; then
-  echo "Mac -> Windows transfer did not appear in the Windows receive folder." >&2
+if ! wait_for_windows_file "$m2w_collision_name"; then
+  echo "Mac -> Windows transfer did not create a collision-safe file in the Windows receive folder." >&2
   exit 1
 fi
 remove_windows_file "$m2w_name"
+remove_windows_file "$m2w_collision_name"
 echo "Mac -> Windows ok."
 
 echo "Testing Windows -> Mac file transfer..."
 w2m_file="${tmp_dir}/moonlight-companion-transfer-test-windows-to-mac-${stamp}.txt"
 w2m_name="$(basename "$w2m_file")"
+w2m_collision_name="$(collision_name "$w2m_name")"
 printf 'Moonlight Companion Windows -> Mac test %s\n' "$stamp" > "$w2m_file"
+printf 'existing Mac receive file %s\n' "$stamp" > "${transfer_mac_dir}/${w2m_name}"
 payload_dir="${tmp_dir}/w2m-payload"
 zip_path="${tmp_dir}/windows-to-mac.zip"
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$payload_dir" "$w2m_file" >/dev/null
 zip_payload "$payload_dir" "$zip_path"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
   "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$zip_path"
-if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_name"; then
-  echo "Windows -> Mac transfer did not appear in the Mac receive folder." >&2
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_collision_name"; then
+  echo "Windows -> Mac transfer did not create a collision-safe file in the Mac receive folder." >&2
   exit 1
 fi
-rm -f "${transfer_mac_dir}/${w2m_name}"
+rm -f "${transfer_mac_dir}/${w2m_name}" "${transfer_mac_dir}/${w2m_collision_name}"
 echo "Windows -> Mac ok."
 
 echo "File transfer test passed."

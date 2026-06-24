@@ -82,6 +82,8 @@ For direct file transfer from Mac to Windows, drag files or folders from Finder 
 
 For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent exports that file clipboard payload over the Windows-to-Mac TCP channel. The Mac receiver copies the files into the configured Mac receive folder, places those files on the macOS clipboard, and notifies macOS with the received file names and total size so you can paste into Finder. When `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` is enabled, Finder reveals the newly received files directly instead of only opening the receive folder.
 
+Receive folders never overwrite an existing file with the same name. Repeated same-name transfers use suffixes such as `-2` before the extension.
+
 The default setting enables Finder reveal so newly received Windows files appear immediately on the Mac side.
 
 Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary test files, verify both directions, confirm the Mac-to-Windows receive-folder import, and clean up the test files without opening Terminal.
