@@ -4,7 +4,9 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- The Moonlight file drop overlay now stays magnetically captured for the active file drag after it ray-hits the stream window, reducing flicker while dragging across or just past Moonlight.
 
 ## v0.3.0 - 2026-06-24
 

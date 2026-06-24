@@ -154,8 +154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dropOverlayLastDragLocation: NSPoint?
     private var dropOverlayMouseDownFrontmostName = ""
     private var dropOverlayMouseDownAt = Date.distantPast
-    private let dropOverlayActivationMargin: CGFloat = 96
-    private let dropOverlayRefreshInterval: TimeInterval = 0.06
+    private var dropOverlayDragCaptured = false
+    private var dropOverlayLastFileDragAt = Date.distantPast
+    private let dropOverlayActivationMargin: CGFloat = 128
+    private let dropOverlayRefreshInterval: TimeInterval = 0.04
+    private let dropOverlayFileDragGraceInterval: TimeInterval = 0.45
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
 
@@ -759,6 +762,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let mouseLocation = NSEvent.mouseLocation
         let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+        let hasFileDrag = !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+
+        if dropOverlayDragCaptured {
+            if hasFileDrag {
+                dropOverlayLastFileDragAt = Date()
+            }
+            return hasFileDrag || Date().timeIntervalSince(dropOverlayLastFileDragAt) <= dropOverlayFileDragGraceInterval
+        }
 
         if dropOverlayMouseDownLocation == nil {
             dropOverlayMouseDownLocation = mouseLocation
@@ -793,7 +804,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
-        return !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+        if hasFileDrag {
+            dropOverlayDragCaptured = true
+            dropOverlayLastFileDragAt = Date()
+            return true
+        }
+        return false
     }
 
     private func resetDropOverlayDragTracking() {
@@ -801,6 +817,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dropOverlayLastDragLocation = nil
         dropOverlayMouseDownFrontmostName = ""
         dropOverlayMouseDownAt = .distantPast
+        dropOverlayDragCaptured = false
+        dropOverlayLastFileDragAt = .distantPast
     }
 
     private func dragPathHitsDropActivationFrame(
