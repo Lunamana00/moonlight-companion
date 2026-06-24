@@ -8,6 +8,7 @@ $dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"
 $macZip = Join-Path $dir "mac-to-windows.zip"
 $windowsZip = Join-Path $dir "windows-to-mac.zip"
 $windowsTmpZip = Join-Path $dir "windows-to-mac.tmp.zip"
+$macImportState = Join-Path $dir "mac-to-windows-import-state.txt"
 $exportRoot = Join-Path $dir "windows-payloads"
 $importDir = Join-Path $dir "imported-mac-payload"
 $normalizedDir = Join-Path $dir "windows-normalized-payload"
@@ -699,6 +700,41 @@ function Write-JsonManifest($manifest, $payloadDir) {
     )
 }
 
+function Write-KeyValueState($path, [string[]]$lines) {
+    $tmpPath = "$path.tmp"
+    Set-Content -LiteralPath $tmpPath -Value $lines -Encoding UTF8
+    Move-Item -LiteralPath $tmpPath -Destination $path -Force
+}
+
+function Write-MacImportState($manifest, $archiveHash) {
+    if ($null -eq $manifest) { return }
+
+    $paths = @()
+    if ($null -ne $manifest.importedPaths) {
+        $paths = @($manifest.importedPaths)
+    }
+
+    $fileCount = 0
+    if ($null -ne $manifest.files) {
+        $fileCount = @($manifest.files).Count
+    }
+
+    $lines = @(
+        "archive_hash=$archiveHash",
+        "id=$($manifest.id)",
+        "kind=$($manifest.kind)",
+        "bytes=$($manifest.bytes)",
+        "files=$fileCount",
+        "imported_paths=$($paths.Count)"
+    )
+
+    for ($i = 0; $i -lt $paths.Count; $i++) {
+        $lines += "imported_path_$($i + 1)=$($paths[$i])"
+    }
+
+    Write-KeyValueState $macImportState $lines
+}
+
 function Read-JsonManifest($payloadDir) {
     $manifestPath = Join-Path $payloadDir "manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) { return $null }
@@ -840,12 +876,15 @@ function Import-ClipboardPayload($payloadDir) {
             if ($useTransferDir) {
                 New-Item -ItemType Directory -Force -Path $script:transferWindowsDir | Out-Null
             }
+            $targetPaths = @()
             foreach ($item in $manifest.files) {
                 $sourcePath = Join-Path $payloadDir $item.path
                 $targetPath = if ($useTransferDir) { Copy-ItemUnique $sourcePath $script:transferWindowsDir } else { $sourcePath }
                 [void]$collection.Add($targetPath)
+                $targetPaths += $targetPath
             }
             [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
+            $manifest | Add-Member -NotePropertyName importedPaths -NotePropertyValue $targetPaths -Force
         }
         default {
             return $null
@@ -958,6 +997,7 @@ function Receive-ClipboardTcpPayload($client) {
             $script:lastMacArchiveHash = $macArchiveHash
             $script:lastMacId = $imported.id
             $script:lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+            Write-MacImportState $imported $macArchiveHash
             Write-AgentLog ("Mac -> Windows TCP {0} ({1}B)" -f $imported.kind, $imported.bytes)
         }
     } finally {
@@ -1129,6 +1169,7 @@ try {
                         $lastMacArchiveHash = $macArchiveHash
                         $lastMacId = $imported.id
                         $lastWindowsId = if ($null -ne $normalized) { $normalized.id } else { $imported.id }
+                        Write-MacImportState $imported $macArchiveHash
                         Write-AgentLog ("Mac -> Windows {0} ({1}B)" -f $imported.kind, $imported.bytes)
                     }
                 }

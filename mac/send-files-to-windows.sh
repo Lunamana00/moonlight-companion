@@ -67,6 +67,39 @@ payload_value() {
   awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
 }
 
+state_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key {value = substr($0, length(key) + 2); sub(/\r$/, "", value); print value; exit}'
+}
+
+encode_powershell() {
+  iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
+}
+
+read_windows_import_state() {
+  local expected_id="$1"
+  local script encoded
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$expected = '${expected_id}'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$path = Join-Path \$dir 'mac-to-windows-import-state.txt'; \$deadline = (Get-Date).AddMilliseconds(1800); do { if (Test-Path -LiteralPath \$path) { \$text = Get-Content -LiteralPath \$path -Raw -Encoding UTF8; if (\$text -match ('(?m)^id=' + [regex]::Escape(\$expected) + '\\r?\$')) { Write-Output \$text; exit 0 } }; Start-Sleep -Milliseconds 150 } while ((Get-Date) -lt \$deadline); exit 1"
+  encoded="$(printf '%s' "$script" | encode_powershell)"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}"
+}
+
+wait_for_windows_import() {
+  local expected_id="$1"
+  local state state_id
+  [[ -n "$expected_id" ]] || return 1
+
+  state="$(read_windows_import_state "$expected_id" 2>/dev/null || true)"
+  state_id="$(printf '%s\n' "$state" | state_value id)"
+  if [[ "$state_id" == "$expected_id" ]]; then
+    windows_import_state="$state"
+    return 0
+  fi
+
+  return 1
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -139,6 +172,7 @@ zip_path="${tmp_dir}/mac-to-windows.zip"
 "$helper" export-paths "$payload_dir" "$@" > "$meta_path"
 kind="$(payload_value kind "$meta_path")"
 bytes="$(payload_value bytes "$meta_path")"
+payload_id="$(payload_value id "$meta_path")"
 
 if [[ -z "$bytes" ]]; then
   echo "could not read payload metadata" >&2
@@ -154,4 +188,14 @@ fi
 zip_payload "$payload_dir" "$zip_path"
 transport="$(send_zip "$zip_path")"
 log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
-printf 'sent %s payload (%sB) via %s\n' "${kind:-files}" "$bytes" "$transport"
+windows_import_state=""
+if wait_for_windows_import "$payload_id"; then
+  imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
+  if [[ "${imported_paths:-0}" == "1" ]]; then
+    printf 'sent %s payload (%sB) via %s; Windows confirmed 1 item in the receive folder\n' "${kind:-files}" "$bytes" "$transport"
+  else
+    printf 'sent %s payload (%sB) via %s; Windows confirmed %s items in the receive folder\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}"
+  fi
+else
+  printf 'sent %s payload (%sB) via %s; Windows import confirmation is pending\n' "${kind:-files}" "$bytes" "$transport"
+fi
