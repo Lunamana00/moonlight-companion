@@ -148,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var transferProcess: Process?
     private var dropOverlayTimer: Timer?
     private var dropOverlayManuallyShown = false
+    private var dropOverlayMouseDownLocation: NSPoint?
+    private var dropOverlayMouseDownFrontmostName = ""
+    private var dropOverlayMouseDownAt = Date.distantPast
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
 
@@ -678,23 +681,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func shouldShowDropOverlayForCurrentDrag() -> Bool {
-        guard settings.bool("MOONLIGHT_TRANSFER_DROP_OVERLAY"),
-              (NSEvent.pressedMouseButtons & 1) == 1,
-              let moonlightFrame = moonlightWindowFrame() else {
+        guard settings.bool("MOONLIGHT_TRANSFER_DROP_OVERLAY") else {
+            resetDropOverlayDragTracking()
             return false
         }
 
-        let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-        if frontmostName == "Moonlight" || frontmostName == "Moonlight Companion" {
+        guard (NSEvent.pressedMouseButtons & 1) == 1,
+              let moonlightFrame = moonlightWindowFrame() else {
+            resetDropOverlayDragTracking()
             return false
         }
 
         let mouseLocation = NSEvent.mouseLocation
+        let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+
+        if dropOverlayMouseDownLocation == nil {
+            dropOverlayMouseDownLocation = mouseLocation
+            dropOverlayMouseDownFrontmostName = frontmostName
+            dropOverlayMouseDownAt = Date()
+            return false
+        }
+
+        if dropOverlayMouseDownFrontmostName == "Moonlight" || dropOverlayMouseDownFrontmostName == "Moonlight Companion" {
+            return false
+        }
+
+        guard Date().timeIntervalSince(dropOverlayMouseDownAt) >= 0.10,
+              let mouseDownLocation = dropOverlayMouseDownLocation,
+              distance(from: mouseDownLocation, to: mouseLocation) >= 18 else {
+            return false
+        }
+
         guard moonlightFrame.insetBy(dx: -96, dy: -96).contains(mouseLocation) else {
             return false
         }
 
         return !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+    }
+
+    private func resetDropOverlayDragTracking() {
+        dropOverlayMouseDownLocation = nil
+        dropOverlayMouseDownFrontmostName = ""
+        dropOverlayMouseDownAt = .distantPast
+    }
+
+    private func distance(from start: NSPoint, to end: NSPoint) -> CGFloat {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        return sqrt(dx * dx + dy * dy)
     }
 
     private func showMoonlightDropOverlay(manual: Bool) {
@@ -739,6 +773,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func hideMoonlightDropOverlay() {
         dropOverlayManuallyShown = false
+        resetDropOverlayDragTracking()
         dropOverlayWindow?.orderOut(nil)
         dropOverlayButton?.title = "Show Moonlight Drop Overlay"
     }
