@@ -10,6 +10,7 @@ flowchart LR
     Wrapper["Moonlight Companion.app"]
     Config["Config file"]
     Moonlight["Moonlight.app"]
+    DropStrip["Floating drop strip"]
     Launchd["macOS launchd sync agent"]
     ClipTcp["macOS clipboard TCP receiver"]
     KeyboardAgent["macOS keyboard agent"]
@@ -38,6 +39,7 @@ flowchart LR
   Wrapper -->|"deploy agent files"| SSH
   Wrapper -->|"start/restart"| Launchd
   Wrapper -->|"launch/stop/place window"| Moonlight
+  Wrapper -->|"show near Moonlight"| DropStrip
   Moonlight <-->|"stream"| Stream
   Stream <-->|"Sunshine protocol"| Sunshine
 
@@ -129,12 +131,13 @@ sequenceDiagram
   participant MacDir as Mac receive folder
   participant MacClip as macOS clipboard
 
-  User->>Wrapper: Drop Mac files/folders
+  User->>Wrapper: Drop Mac files/folders on floating strip
   Wrapper->>Sender: Export dropped paths as file payload
   Sender->>Tunnel: Send ZIP frame
   Tunnel->>Agent: Forward to loopback TCP listener
   Agent->>WinDir: Copy files into durable folder
   Agent->>WinClip: Set FileDropList to copied files
+  Wrapper-->>Moonlight: Optional Ctrl+V after drop
 
   WinClip->>Agent: User copies files in Windows
   Agent->>Tunnel: Send file payload ZIP frame

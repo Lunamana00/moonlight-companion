@@ -7,8 +7,10 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 ### Added
 
 - Added a GUI file drop target for sending Mac files and folders to Windows over the existing clipboard TCP channel.
+- Added a floating Moonlight drop strip for Mac-to-Windows file drops without aiming at the main Companion window.
+- Added an optional post-drop `Ctrl+V` action for pasting transferred files into the focused Windows app inside Moonlight.
 - Added durable Mac and Windows receive folders for imported file payloads.
-- Added `MOONLIGHT_TRANSFER_MAC_DIR` and `MOONLIGHT_TRANSFER_WINDOWS_DIR` settings.
+- Added `MOONLIGHT_TRANSFER_MAC_DIR`, `MOONLIGHT_TRANSFER_WINDOWS_DIR`, and `MOONLIGHT_TRANSFER_AUTO_PASTE` settings.
 - Added Moonlight-focused Command-to-Control shortcut remapping for Mac-style shortcuts.
 - Added `MOONLIGHT_SHORTCUT_REMAP` to enable or disable local shortcut remapping.
 - Added a settings GUI for editing launch, keyboard, and clipboard options before starting Moonlight.

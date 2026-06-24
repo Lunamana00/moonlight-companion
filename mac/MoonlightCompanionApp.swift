@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 struct CompanionSettings {
@@ -28,7 +29,8 @@ struct CompanionSettings {
         "MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT",
         "MOONLIGHT_CLIPBOARD_MAX_BYTES",
         "MOONLIGHT_TRANSFER_MAC_DIR",
-        "MOONLIGHT_TRANSFER_WINDOWS_DIR"
+        "MOONLIGHT_TRANSFER_WINDOWS_DIR",
+        "MOONLIGHT_TRANSFER_AUTO_PASTE"
     ]
 
     var values: [String: String]
@@ -125,8 +127,9 @@ enum SettingsFile {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
+    private var dropStripWindow: NSPanel?
     private var statusLabel: NSTextField!
     private var detailLabel: NSTextField!
     private var progressIndicator: NSProgressIndicator!
@@ -134,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopMoonlightButton: NSButton!
     private var saveButton: NSButton!
     private var stopButton: NSButton!
+    private var dropStripButton: NSButton!
     private var output = Data()
     private var process: Process?
     private var transferProcess: Process?
@@ -227,12 +231,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         form.addArrangedSubview(sectionTitle("Transfer"))
         form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
         form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste into Moonlight after sending dropped files"))
         let dropView = FileDropView()
         dropView.delegate = self
-        form.addArrangedSubview(row("Drop Files", dropView))
+        form.addArrangedSubview(row("Companion Drop", dropView))
+        dropStripButton = NSButton(title: "Show Moonlight Drop Strip", target: self, action: #selector(toggleMoonlightDropStrip))
+        dropStripButton.translatesAutoresizingMaskIntoConstraints = false
         let openReceiveButton = NSButton(title: "Open Mac Receive Folder", target: self, action: #selector(openMacReceiveFolder))
         openReceiveButton.translatesAutoresizingMaskIntoConstraints = false
-        form.addArrangedSubview(row("", openReceiveButton))
+        let transferButtons = NSStackView(views: [dropStripButton, openReceiveButton])
+        transferButtons.orientation = .horizontal
+        transferButtons.alignment = .centerY
+        transferButtons.spacing = 10
+        transferButtons.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("", transferButtons))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -497,6 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopMoonlightButton.isEnabled = !busy
         saveButton.isEnabled = !busy
         stopButton.isEnabled = !busy
+        dropStripButton?.isEnabled = !busy
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
     }
@@ -597,6 +610,190 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (expanded as NSString).expandingTildeInPath
     }
 
+    @objc private func toggleMoonlightDropStrip() {
+        guard saveSettings() else { return }
+        if let panel = dropStripWindow, panel.isVisible {
+            panel.orderOut(nil)
+            dropStripButton.title = "Show Moonlight Drop Strip"
+            return
+        }
+        showMoonlightDropStrip()
+    }
+
+    private func showMoonlightDropStrip() {
+        if dropStripWindow == nil {
+            let size = NSSize(width: 260, height: 92)
+            let panel = NSPanel(
+                contentRect: NSRect(origin: .zero, size: size),
+                styleMask: [.titled, .closable, .utilityWindow],
+                backing: .buffered,
+                defer: false
+            )
+            panel.title = "Moonlight Drop"
+            panel.isFloatingPanel = true
+            panel.level = .floating
+            panel.hidesOnDeactivate = false
+            panel.isReleasedWhenClosed = false
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.delegate = self
+
+            let dropView = FileDropView(
+                title: "Drop to Windows",
+                detail: "Release files here",
+                width: size.width - 24,
+                height: size.height - 28
+            )
+            dropView.delegate = self
+            let content = NSView(frame: NSRect(origin: .zero, size: size))
+            content.addSubview(dropView)
+            panel.contentView = content
+            NSLayoutConstraint.activate([
+                dropView.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+                dropView.centerYAnchor.constraint(equalTo: content.centerYAnchor)
+            ])
+            dropStripWindow = panel
+        }
+
+        positionDropStrip()
+        dropStripWindow?.orderFrontRegardless()
+        dropStripButton.title = "Hide Moonlight Drop Strip"
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow,
+              let strip = dropStripWindow,
+              closingWindow === strip else {
+            return
+        }
+        dropStripWindow = nil
+        dropStripButton?.title = "Show Moonlight Drop Strip"
+    }
+
+    private func positionDropStrip() {
+        guard let panel = dropStripWindow else { return }
+
+        let panelSize = panel.frame.size
+        let moonlightFrame = moonlightWindowFrame()
+        let targetFrame: NSRect
+        if let moonlightFrame {
+            targetFrame = NSRect(
+                x: moonlightFrame.maxX - panelSize.width - 16,
+                y: moonlightFrame.maxY - panelSize.height - 44,
+                width: panelSize.width,
+                height: panelSize.height
+            )
+        } else {
+            let visibleFrame = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
+            targetFrame = NSRect(
+                x: visibleFrame.maxX - panelSize.width - 18,
+                y: visibleFrame.midY - panelSize.height / 2,
+                width: panelSize.width,
+                height: panelSize.height
+            )
+        }
+
+        panel.setFrame(clampedFrame(targetFrame, near: moonlightFrame), display: true)
+    }
+
+    private func moonlightWindowFrame() -> NSRect? {
+        moonlightWindowFrameFromCoreGraphics() ?? moonlightWindowFrameFromSystemEvents()
+    }
+
+    private func moonlightWindowFrameFromCoreGraphics() -> NSRect? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        for window in windows {
+            guard (window[kCGWindowOwnerName as String] as? String) == "Moonlight",
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let boundsDictionary = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
+                  bounds.width >= 200,
+                  bounds.height >= 200 else {
+                continue
+            }
+            return appKitFrameFromTopLeftFrame(
+                x: Double(bounds.origin.x),
+                y: Double(bounds.origin.y),
+                width: Double(bounds.width),
+                height: Double(bounds.height)
+            )
+        }
+        return nil
+    }
+
+    private func moonlightWindowFrameFromSystemEvents() -> NSRect? {
+        let script = """
+        tell application "System Events"
+            set moonProcesses to processes whose name is "Moonlight"
+            if (count of moonProcesses) is 0 then return ""
+            tell item 1 of moonProcesses
+                if (count of windows) is 0 then return ""
+                set windowPosition to position of window 1
+                set windowSize to size of window 1
+                return (item 1 of windowPosition as text) & "," & (item 2 of windowPosition as text) & "," & (item 1 of windowSize as text) & "," & (item 2 of windowSize as text)
+            end tell
+        end tell
+        """
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let rawText = String(data: output, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawText.isEmpty else {
+            return nil
+        }
+
+        let parts = rawText.split(separator: ",").compactMap {
+            Double(String($0).trimmingCharacters(in: .whitespaces))
+        }
+        guard parts.count == 4 else {
+            return nil
+        }
+
+        return appKitFrameFromTopLeftFrame(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+    }
+
+    private func appKitFrameFromTopLeftFrame(x: Double, y: Double, width: Double, height: Double) -> NSRect? {
+        guard let mainHeight = NSScreen.screens.first?.frame.height else {
+            return nil
+        }
+        return NSRect(x: x, y: mainHeight - y - height, width: width, height: height)
+    }
+
+    private func clampedFrame(_ frame: NSRect, near reference: NSRect?) -> NSRect {
+        let point = reference.map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSPoint(x: frame.midX, y: frame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens.first
+        guard let visibleFrame = screen?.visibleFrame else {
+            return frame
+        }
+
+        let minX = visibleFrame.minX + 8
+        let maxX = visibleFrame.maxX - frame.width - 8
+        let minY = visibleFrame.minY + 8
+        let maxY = visibleFrame.maxY - frame.height - 8
+        let x = min(max(frame.minX, minX), maxX)
+        let y = min(max(frame.minY, minY), maxY)
+        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
+    }
+
     private func sendFilesToWindows(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         guard saveSettings() else { return }
@@ -636,7 +833,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let text = String(data: self?.output ?? Data(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if task.terminationStatus == 0 {
-                    self?.setBusy(false, status: "Files Sent", detail: text?.isEmpty == false ? text! : "Files were sent to Windows.")
+                    var detail = text?.isEmpty == false ? text! : "Files were sent to Windows."
+                    if self?.settings.bool("MOONLIGHT_TRANSFER_AUTO_PASTE") == true {
+                        let pasted = self?.pasteIntoMoonlight() == true
+                        detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
+                    }
+                    self?.setBusy(false, status: "Files Sent", detail: detail)
                 } else {
                     self?.setBusy(false, status: "Send Failed", detail: text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus).")
                     self?.showFailure("File sender exited with status \(task.terminationStatus).")
@@ -650,6 +852,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             setBusy(false, status: "Send Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
+        }
+    }
+
+    private func pasteIntoMoonlight() -> Bool {
+        let script = """
+        tell application "Moonlight" to activate
+        delay 0.15
+        tell application "System Events"
+            keystroke "v" using control down
+        end tell
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
         }
     }
 
@@ -681,6 +906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() {
         process?.terminate()
         transferProcess?.terminate()
+        dropStripWindow?.close()
         NSApp.terminate(nil)
     }
 }
@@ -697,15 +923,27 @@ protocol FileDropViewDelegate: AnyObject {
 
 final class FileDropView: NSView {
     weak var delegate: FileDropViewDelegate?
-    private let titleLabel = NSTextField(labelWithString: "Drop files or folders")
-    private let detailLabel = NSTextField(labelWithString: "Sends to Windows clipboard and receive folder")
+    private let titleLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let preferredSize: NSSize
 
-    init() {
+    init(
+        title: String = "Drop files or folders",
+        detail: String = "Sends to Windows clipboard and receive folder",
+        width: CGFloat = 520,
+        height: CGFloat = 96
+    ) {
+        titleLabel = NSTextField(labelWithString: title)
+        detailLabel = NSTextField(labelWithString: detail)
+        preferredSize = NSSize(width: width, height: height)
         super.init(frame: .zero)
         setup()
     }
 
     required init?(coder: NSCoder) {
+        titleLabel = NSTextField(labelWithString: "Drop files or folders")
+        detailLabel = NSTextField(labelWithString: "Sends to Windows clipboard and receive folder")
+        preferredSize = NSSize(width: 520, height: 96)
         super.init(coder: coder)
         setup()
     }
@@ -718,8 +956,8 @@ final class FileDropView: NSView {
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         registerForDraggedTypes([.fileURL])
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: 520).isActive = true
-        heightAnchor.constraint(equalToConstant: 96).isActive = true
+        widthAnchor.constraint(equalToConstant: preferredSize.width).isActive = true
+        heightAnchor.constraint(equalToConstant: preferredSize.height).isActive = true
 
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         titleLabel.alignment = .center

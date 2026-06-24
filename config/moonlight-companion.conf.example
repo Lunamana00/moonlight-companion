@@ -33,3 +33,4 @@ MOONLIGHT_CLIPBOARD_MAX_BYTES="52428800"
 # Durable folders used when file payloads are transferred.
 MOONLIGHT_TRANSFER_MAC_DIR="${HOME}/Downloads/Moonlight Companion"
 MOONLIGHT_TRANSFER_WINDOWS_DIR="%USERPROFILE%\\Downloads\\Moonlight Companion"
+MOONLIGHT_TRANSFER_AUTO_PASTE="no"
