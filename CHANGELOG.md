@@ -7,6 +7,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 ### Changed
 
 - The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
+- The GUI now offers a Cancel action for in-progress file sends, transfer tests, and Windows receive-folder reveal requests.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
 - Moonlight window, strip, and Companion file drops now show active drag feedback with the item count and dropped file names before release.
 - Active file-drop feedback now shortens long file names and keeps drop labels to one line so compact drop targets stay stable.

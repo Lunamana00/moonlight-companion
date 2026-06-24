@@ -148,9 +148,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var testTransferButton: NSButton!
     private var openMacReceiveButton: NSButton!
     private var openWindowsReceiveButton: NSButton!
+    private var cancelTransferButton: NSButton!
     private var output = Data()
     private var process: Process?
-    private var transferProcess: Process?
+    private var transferProcess: Process? {
+        didSet {
+            cancelTransferButton?.isEnabled = transferProcess != nil
+        }
+    }
+    private var cancelledTransferProcessIDs = Set<Int32>()
     private var dropOverlayTimer: Timer?
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
@@ -274,7 +280,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
-        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openMacReceiveButton, openWindowsReceiveButton])
+        cancelTransferButton = NSButton(title: "Cancel", target: self, action: #selector(cancelTransferOperation))
+        cancelTransferButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelTransferButton.isEnabled = false
+        let transferButtons = NSStackView(views: [dropOverlayButton, dropStripButton, testTransferButton, openMacReceiveButton, openWindowsReceiveButton, cancelTransferButton])
         transferButtons.orientation = .horizontal
         transferButtons.alignment = .centerY
         transferButtons.spacing = 10
@@ -550,8 +559,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         testTransferButton?.isEnabled = !busy
         openMacReceiveButton?.isEnabled = !busy
         openWindowsReceiveButton?.isEnabled = !busy
+        cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
+    }
+
+    private func consumeTransferCancellation(for task: Process) -> Bool {
+        let processID = task.processIdentifier
+        guard cancelledTransferProcessIDs.contains(processID) else {
+            return false
+        }
+        cancelledTransferProcessIDs.remove(processID)
+        return true
     }
 
     private func fail(_ message: String) {
@@ -628,6 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSWorkspace.shared.open(logDir)
     }
 
+    @objc private func cancelTransferOperation() {
+        guard let task = transferProcess else { return }
+        cancelledTransferProcessIDs.insert(task.processIdentifier)
+        task.terminate()
+        cancelTransferButton?.isEnabled = false
+        statusLabel.stringValue = "Cancelling"
+        detailLabel.stringValue = "Stopping the current transfer operation."
+    }
+
     @objc private func openMacReceiveFolder() {
         let settings = collectSettings()
         let rawPath = settings["MOONLIGHT_TRANSFER_MAC_DIR"].isEmpty
@@ -647,6 +675,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
         requestWindowsReceiveFolderOpen(selectLatestImport: false) { [weak self] succeeded, detail in
+            if detail == "cancelled" {
+                self?.setBusy(false, status: "Cancelled", detail: "Windows receive folder open was cancelled.")
+                return
+            }
             if succeeded {
                 self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
             } else {
@@ -692,8 +724,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let detail = text?.isEmpty == false ? text! : "Windows folder opener exited with status \(task.terminationStatus)."
             DispatchQueue.main.async {
+                let cancelled = self?.consumeTransferCancellation(for: task) == true
                 if self?.transferProcess === task {
                     self?.transferProcess = nil
+                }
+                if cancelled {
+                    completion(false, "cancelled")
+                    return
                 }
                 completion(task.terminationStatus == 0, detail)
             }
@@ -741,6 +778,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         task.terminationHandler = { [weak self] task in
             DispatchQueue.main.async {
                 pipe.fileHandleForReading.readabilityHandler = nil
+                if self?.consumeTransferCancellation(for: task) == true {
+                    self?.transferProcess = nil
+                    self?.setBusy(false, status: "Cancelled", detail: "File transfer test was cancelled.")
+                    return
+                }
                 self?.transferProcess = nil
                 let text = String(data: self?.output ?? Data(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1249,6 +1291,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         task.terminationHandler = { [weak self] task in
             DispatchQueue.main.async {
                 pipe.fileHandleForReading.readabilityHandler = nil
+                if self?.consumeTransferCancellation(for: task) == true {
+                    self?.transferProcess = nil
+                    try? FileManager.default.removeItem(at: transferResultStateURL)
+                    self?.setBusy(false, status: "Cancelled", detail: "\(summary.detail) send was cancelled.")
+                    return
+                }
                 self?.transferProcess = nil
                 let text = String(data: self?.output ?? Data(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1269,6 +1317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             selectLatestImport: true,
                             expectedImportID: transferResult["id"]
                         ) { [weak self] succeeded, openDetail in
+                            if openDetail == "cancelled" {
+                                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.")
+                                return
+                            }
                             let suffix = succeeded
                                 ? " \(openDetail)."
                                 : " Windows receive folder open failed: \(openDetail)"
