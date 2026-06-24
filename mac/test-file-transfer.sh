@@ -94,7 +94,7 @@ windows_file_exists() {
 
 cleanup_windows_self_test_files() {
   local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); if (Test-Path -LiteralPath \$dir) { Get-ChildItem -LiteralPath \$dir -File | Where-Object { \$_.Name -like 'mac-to-windows-*.txt' -or \$_.Name -like 'windows-to-mac-*.txt' } | Remove-Item -Force }"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables('${MOONLIGHT_TRANSFER_WINDOWS_DIR}'); if (Test-Path -LiteralPath \$dir) { Get-ChildItem -LiteralPath \$dir -File | Where-Object { \$_.Name -like 'moonlight-companion-transfer-test-*.txt' } | Remove-Item -Force }"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
@@ -123,7 +123,7 @@ wait_for_windows_file() {
 cleanup_mac_self_test_files() {
   local directory="$1"
   find "$directory" -maxdepth 1 -type f \
-    \( -name 'mac-to-windows-*.txt' -o -name 'windows-to-mac-*.txt' \) \
+    -name 'moonlight-companion-transfer-test-*.txt' \
     -delete 2>/dev/null || true
 }
 
@@ -157,7 +157,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 echo "Testing Mac -> Windows file transfer..."
-m2w_file="${tmp_dir}/mac-to-windows-${stamp}.txt"
+m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"
 printf 'Moonlight Companion Mac -> Windows test %s\n' "$stamp" > "$m2w_file"
 MOONLIGHT_COMPANION_CONFIG="$config" "${script_dir}/send-files-to-windows.sh" "$m2w_file" >/dev/null
@@ -169,7 +169,7 @@ remove_windows_file "$m2w_name"
 echo "Mac -> Windows ok."
 
 echo "Testing Windows -> Mac file transfer..."
-w2m_file="${tmp_dir}/windows-to-mac-${stamp}.txt"
+w2m_file="${tmp_dir}/moonlight-companion-transfer-test-windows-to-mac-${stamp}.txt"
 w2m_name="$(basename "$w2m_file")"
 printf 'Moonlight Companion Windows -> Mac test %s\n' "$stamp" > "$w2m_file"
 payload_dir="${tmp_dir}/w2m-payload"
