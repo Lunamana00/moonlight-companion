@@ -329,6 +329,9 @@ func summarizedNames(_ names: [String]) -> String {
 
 func formattedByteCount(_ value: String?) -> String {
     let bytes = UInt64(value ?? "") ?? 0
+    if bytes == 0 {
+        return "0 bytes"
+    }
     let capped = min(bytes, UInt64(Int64.max))
     return ByteCountFormatter.string(fromByteCount: Int64(capped), countStyle: .file)
 }

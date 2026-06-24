@@ -514,6 +514,29 @@ fi
 remove_windows_file "$m2w_image_name"
 echo "Mac -> Windows image file ok."
 
+echo "Testing Mac -> Windows empty file transfer..."
+m2w_empty_file_name="moonlight-companion-transfer-test-empty-mac-${stamp}.txt"
+m2w_empty_file="${tmp_dir}/${m2w_empty_file_name}"
+m2w_empty_out="${tmp_dir}/mac-to-windows-empty-send.txt"
+: > "$m2w_empty_file"
+m2w_empty_hash="$(mac_file_sha256 "$m2w_empty_file")"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_empty_file" > "$m2w_empty_out"
+if ! grep -q "Windows confirmed" "$m2w_empty_out"; then
+  echo "Mac -> Windows empty file transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_empty_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_empty_file_name"; then
+  echo "Mac -> Windows empty file transfer did not create the empty file." >&2
+  exit 1
+fi
+if [[ "$(windows_file_sha256 "$m2w_empty_file_name")" != "$m2w_empty_hash" ]]; then
+  echo "Mac -> Windows empty file transfer changed the file bytes." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_empty_file_name"
+echo "Mac -> Windows empty file ok."
+
 echo "Testing Mac -> Windows multi-item transfer..."
 m2w_multi_file="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-file-${stamp}.txt"
 m2w_multi_file_name="$(basename "$m2w_multi_file")"
@@ -551,10 +574,16 @@ m2w_windows_safe_nested_source_dir="nested/windows?unsafe*dir"
 m2w_windows_safe_nested_source_file="${m2w_windows_safe_nested_source_dir}/from:mac|nested?.txt"
 m2w_windows_safe_nested_expected_dir="nested/windows_unsafe_dir"
 m2w_windows_safe_nested_expected_file="${m2w_windows_safe_nested_expected_dir}/from_mac_nested_.txt"
+m2w_reserved_nested_source_file="nested/CON.txt"
+m2w_reserved_nested_expected_file="nested/_CON.txt"
+m2w_trailing_nested_source_file="nested/trailing dot. "
+m2w_trailing_nested_expected_file="nested/trailing dot"
 m2w_dir_out="${tmp_dir}/mac-to-windows-folder-send.txt"
 mkdir -p "${m2w_dir}/nested" "${m2w_dir}/${m2w_empty_dir_path}" "${m2w_dir}/${m2w_windows_safe_nested_source_dir}"
 printf 'Moonlight Companion Mac -> Windows folder test %s\n' "$stamp" > "${m2w_dir}/${m2w_nested_path}"
 printf 'Moonlight Companion Mac -> Windows nested safe filename test %s\n' "$stamp" > "${m2w_dir}/${m2w_windows_safe_nested_source_file}"
+printf 'Moonlight Companion Mac -> Windows reserved filename test %s\n' "$stamp" > "${m2w_dir}/${m2w_reserved_nested_source_file}"
+printf 'Moonlight Companion Mac -> Windows trailing filename test %s\n' "$stamp" > "${m2w_dir}/${m2w_trailing_nested_source_file}"
 env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_dir" > "$m2w_dir_out"
 if ! grep -q "Windows confirmed" "$m2w_dir_out"; then
   echo "Mac -> Windows folder transfer did not receive Windows import confirmation." >&2
@@ -575,6 +604,14 @@ if ! wait_for_windows_path "${m2w_dir_name}/${m2w_windows_safe_nested_expected_f
 fi
 if ! wait_for_windows_path "${m2w_dir_name}/${m2w_windows_safe_nested_expected_dir}" "Container"; then
   echo "Mac -> Windows folder transfer did not sanitize a nested Windows-unsafe folder name." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_dir_name}/${m2w_reserved_nested_expected_file}" "Leaf"; then
+  echo "Mac -> Windows folder transfer did not sanitize a nested Windows-reserved file name." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${m2w_dir_name}/${m2w_trailing_nested_expected_file}" "Leaf"; then
+  echo "Mac -> Windows folder transfer did not sanitize a nested trailing-dot file name." >&2
   exit 1
 fi
 remove_windows_path "$m2w_dir_name"
@@ -681,6 +718,30 @@ sleep 3
 assert_windows_path_absent "$w2m_image_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_image_name}"
 echo "Windows -> Mac image file ok."
+
+echo "Testing Windows -> Mac empty file transfer..."
+w2m_empty_file_name="moonlight-companion-transfer-test-empty-windows-${stamp}.txt"
+w2m_empty_file="${tmp_dir}/${w2m_empty_file_name}"
+w2m_empty_payload="${tmp_dir}/w2m-empty-payload"
+w2m_empty_zip="${tmp_dir}/windows-to-mac-empty.zip"
+: > "$w2m_empty_file"
+w2m_empty_hash="$(mac_file_sha256 "$w2m_empty_file")"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_empty_payload" "$w2m_empty_file" >/dev/null
+zip_payload "$w2m_empty_payload" "$w2m_empty_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_empty_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_empty_file_name"; then
+  echo "Windows -> Mac empty file transfer did not create the empty file." >&2
+  exit 1
+fi
+if [[ "$(mac_file_sha256 "${transfer_mac_dir}/${w2m_empty_file_name}")" != "$w2m_empty_hash" ]]; then
+  echo "Windows -> Mac empty file transfer changed the file bytes." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_empty_file_name" "Leaf"
+rm -f "${transfer_mac_dir}/${w2m_empty_file_name}"
+echo "Windows -> Mac empty file ok."
 
 echo "Testing Windows -> Mac multi-item transfer..."
 w2m_multi_file="${tmp_dir}/moonlight-companion-transfer-test-windows-multi-file-${stamp}.txt"

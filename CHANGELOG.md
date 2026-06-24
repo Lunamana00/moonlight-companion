@@ -22,6 +22,8 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now verifies Korean file names in both directions.
 - The file transfer self-test now verifies PNG image files in both directions with SHA-256 byte checks.
 - Mac-origin file and folder names that contain Windows-invalid characters are now converted to safe receive-folder names without changing file bytes.
+- The file transfer self-test now verifies empty files plus nested Windows-reserved and trailing-dot Mac names.
+- Windows-to-Mac TCP receive details now show zero-byte files as `0 bytes` instead of a rounded file-size label.
 - The file transfer self-test now verifies multi-item file-plus-folder selections in both directions.
 - Windows receive-folder imports now normalize incoming Mac file and folder names to composed Unicode so Korean names arrive naturally.
 - macOS receive notifications and logs now use composed display names from the import helper for Korean file names.
