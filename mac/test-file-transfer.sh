@@ -28,6 +28,8 @@ source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
 deploy_agent="${script_dir}/deploy-windows-agent.sh"
 start_services="${script_dir}/start-moonlight-clipboard-sync.sh"
+clip_tcp_label="com.lunamana.moonlight-clipboard-tcp-receiver"
+tcp_helper_rebuilt="no"
 
 ssh_opts=(
   -q
@@ -82,6 +84,7 @@ ensure_helpers() {
       exit 1
     fi
     swiftc "$source_tcp_helper" -o "$tcp_helper"
+    tcp_helper_rebuilt="yes"
   fi
   chmod 700 "$tcp_helper"
 }
@@ -156,6 +159,28 @@ mac_transfer_services_ready() {
   /usr/bin/nc -z 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" >/dev/null 2>&1
 }
 
+mac_tcp_receiver_stale() {
+  local pid started_at started_epoch helper_epoch
+  pid="$(pgrep -f "mooncliptcp listen 127\\.0\\.0\\.1 ${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT}" | head -n 1 || true)"
+  [[ -n "$pid" && -x "$tcp_helper" ]] || return 1
+
+  started_at="$(ps -p "$pid" -o lstart= | sed 's/^[[:space:]]*//')"
+  started_epoch="$(date -j -f "%a %b %e %T %Y" "$started_at" "+%s" 2>/dev/null || printf '0')"
+  helper_epoch="$(stat -f "%m" "$tcp_helper" 2>/dev/null || printf '0')"
+  [[ "$helper_epoch" -gt "$started_epoch" ]]
+}
+
+restart_mac_tcp_receiver() {
+  launchctl kickstart -k "gui/$(id -u)/${clip_tcp_label}" >/dev/null 2>&1 || return 1
+  for _ in {1..30}; do
+    if mac_transfer_services_ready; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 meta_value() {
   local key="$1"
   local path="$2"
@@ -176,7 +201,17 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
 fi
 
 if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_SERVICE_START:-no}" != "yes" ]]; then
-  if mac_transfer_services_ready; then
+  if [[ "$tcp_helper_rebuilt" == "yes" ]] || mac_tcp_receiver_stale; then
+    echo "Refreshing Mac transfer services..."
+    if ! restart_mac_tcp_receiver; then
+      MOONLIGHT_COMPANION_CONFIG="$config" "$start_services" >/dev/null
+    fi
+    if ! mac_transfer_services_ready; then
+      echo "Mac transfer TCP receiver did not become ready." >&2
+      exit 1
+    fi
+    echo "Mac transfer services ready."
+  elif mac_transfer_services_ready; then
     echo "Mac transfer services ready."
   else
     echo "Starting Mac transfer services..."

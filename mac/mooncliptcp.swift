@@ -293,6 +293,40 @@ func importedFilePaths(_ imported: [String: String]) -> [String] {
     }
 }
 
+func importedFileNames(_ imported: [String: String]) -> [String] {
+    importedFilePaths(imported).map { path in
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return name.isEmpty ? "file" : name
+    }
+}
+
+func summarizedNames(_ names: [String]) -> String {
+    guard !names.isEmpty else {
+        return "files"
+    }
+
+    let visible = names.prefix(2).joined(separator: ", ")
+    let remaining = names.count - min(names.count, 2)
+    if remaining > 0 {
+        return "\(visible), +\(remaining) more"
+    }
+    return visible
+}
+
+func formattedByteCount(_ value: String?) -> String {
+    let bytes = UInt64(value ?? "") ?? 0
+    let capped = min(bytes, UInt64(Int64.max))
+    return ByteCountFormatter.string(fromByteCount: Int64(capped), countStyle: .file)
+}
+
+func receivedFileDetail(_ imported: [String: String]) -> String {
+    let rawCount = Int(imported["files"] ?? "") ?? 0
+    let itemText = rawCount == 1 ? "1 item" : "\(max(rawCount, 1)) items"
+    let sizeText = formattedByteCount(imported["bytes"])
+    let namesText = summarizedNames(importedFileNames(imported))
+    return "\(itemText) (\(sizeText)): \(namesText)"
+}
+
 func revealReceivedFiles(_ imported: [String: String]) {
     let paths = importedFilePaths(imported)
     if !paths.isEmpty {
@@ -312,15 +346,13 @@ func notifyWindowsFilesReceived(_ imported: [String: String]) {
         return
     }
 
-    let rawCount = Int(imported["files"] ?? "") ?? 0
-    let itemText = rawCount == 1 ? "1 item" : "\(max(rawCount, 1)) items"
-
+    let detail = receivedFileDetail(imported)
     let revealEnabled = boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: true)
 
     if boolEnv("MOONLIGHT_TRANSFER_NOTIFY", defaultValue: true) {
         let body = revealEnabled
-            ? "Received \(itemText) from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
-            : "Received \(itemText) from Windows. Paste in Finder or open the Mac receive folder."
+            ? "Received \(detail) from Windows. Finder will reveal the new file(s). They are also on the Mac clipboard."
+            : "Received \(detail) from Windows. Paste in Finder or open the Mac receive folder."
         let script = """
         on run argv
             display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
@@ -395,7 +427,11 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
         "normalized_id": normalizedID,
         "windows_id": winID
     ])
-    log("Windows -> Mac TCP \(imported["kind"] ?? "payload") (\(imported["bytes"] ?? "0")B)", to: logPath)
+    if imported["kind"] == "files" {
+        log("Windows -> Mac TCP files \(receivedFileDetail(imported))", to: logPath)
+    } else {
+        log("Windows -> Mac TCP \(imported["kind"] ?? "payload") (\(imported["bytes"] ?? "0")B)", to: logPath)
+    }
 }
 
 func sendPayload(host: String, port: UInt16, zipPath: String) throws -> [String: String]? {
