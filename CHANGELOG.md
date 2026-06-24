@@ -34,6 +34,7 @@ No changes yet.
 - Finder reveal is now enabled by default for newly received Windows files, and file-arrival notifications say whether Finder will reveal the files or leave them ready to paste.
 - Mac-to-Windows file drop status and notifications now include the dropped item names and total source size.
 - Mac-to-Windows sends now look for a Windows-side import confirmation from the agent so the GUI can distinguish confirmed receive-folder imports from pending confirmation.
+- The GUI file transfer test now refreshes the Windows agent, starts the Mac transfer services, and fails if Mac-to-Windows import confirmation is missing.
 - Moonlight-focused `Command` shortcuts for letters, numbers, punctuation, tab, and delete are remapped to their Windows `Control` equivalents.
 - Moonlight Companion now stays open as a control panel instead of immediately launching and quitting.
 - Moonlight launch now waits longer for the stream window, logs display placement diagnostics, and attempts to place the window on the selected Mac display after startup.

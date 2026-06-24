@@ -26,6 +26,8 @@ helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
 tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
+deploy_agent="${script_dir}/deploy-windows-agent.sh"
+start_services="${script_dir}/start-moonlight-clipboard-sync.sh"
 
 ssh_opts=(
   -q
@@ -139,6 +141,10 @@ wait_for_mac_file() {
   return 1
 }
 
+mac_transfer_services_ready() {
+  /usr/bin/nc -z 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" >/dev/null 2>&1
+}
+
 meta_value() {
   local key="$1"
   local path="$2"
@@ -151,6 +157,26 @@ if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$MOONLIGHT_CLIPBOARD_TCP")" != "yes" ]];
 fi
 
 ensure_helpers
+
+if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
+  echo "Refreshing Windows agent..."
+  MOONLIGHT_COMPANION_CONFIG="$config" "$deploy_agent" >/dev/null
+  echo "Windows agent ready."
+fi
+
+if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_SERVICE_START:-no}" != "yes" ]]; then
+  if mac_transfer_services_ready; then
+    echo "Mac transfer services ready."
+  else
+    echo "Starting Mac transfer services..."
+    MOONLIGHT_COMPANION_CONFIG="$config" "$start_services" >/dev/null
+    if ! mac_transfer_services_ready; then
+      echo "Mac transfer TCP receiver did not become ready." >&2
+      exit 1
+    fi
+    echo "Mac transfer services ready."
+  fi
+fi
 
 transfer_mac_dir="$(expand_mac_path "$MOONLIGHT_TRANSFER_MAC_DIR")"
 mkdir -p "$transfer_mac_dir"
@@ -181,8 +207,14 @@ echo "Received file metadata ok."
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"
+m2w_out="${tmp_dir}/mac-to-windows-send.txt"
 printf 'Moonlight Companion Mac -> Windows test %s\n' "$stamp" > "$m2w_file"
-MOONLIGHT_COMPANION_CONFIG="$config" "${script_dir}/send-files-to-windows.sh" "$m2w_file" >/dev/null
+MOONLIGHT_COMPANION_CONFIG="$config" "${script_dir}/send-files-to-windows.sh" "$m2w_file" > "$m2w_out"
+if ! grep -q "Windows confirmed" "$m2w_out"; then
+  echo "Mac -> Windows transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_out" >&2
+  exit 1
+fi
 if ! wait_for_windows_file "$m2w_name"; then
   echo "Mac -> Windows transfer did not appear in the Windows receive folder." >&2
   exit 1

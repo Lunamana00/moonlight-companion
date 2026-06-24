@@ -84,7 +84,7 @@ For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent e
 
 The default setting enables Finder reveal so newly received Windows files appear immediately on the Mac side.
 
-Use `Test File Transfer` in the GUI to create small temporary test files, verify both directions, and clean up the test files without opening Terminal.
+Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, create small temporary test files, verify both directions, confirm the Mac-to-Windows receive-folder import, and clean up the test files without opening Terminal.
 
 ## Zero-Base Setup
 
