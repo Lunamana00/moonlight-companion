@@ -106,6 +106,17 @@ zip_payload() {
   )
 }
 
+write_test_png() {
+  local path="$1"
+  /usr/bin/base64 -D > "$path" <<'PNG'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=
+PNG
+}
+
+mac_file_sha256() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
 windows_path_exists() {
   local relative_path="$1"
   local path_type="${2:-Any}"
@@ -121,6 +132,17 @@ windows_path_exists() {
 
 windows_file_exists() {
   windows_path_exists "$1" "Leaf"
+}
+
+windows_file_sha256() {
+  local relative_path="$1"
+  local script encoded transfer_dir_literal relative_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  relative_literal="$(ps_single_quoted "$relative_path")"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); \$relative = ${relative_literal} -replace '/', [System.IO.Path]::DirectorySeparatorChar; \$path = Join-Path \$dir \$relative; if (-not (Test-Path -LiteralPath \$path -PathType Leaf)) { exit 1 }; (Get-FileHash -LiteralPath \$path -Algorithm SHA256).Hash.ToLowerInvariant()"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
 }
 
 cleanup_windows_self_test_files() {
@@ -446,6 +468,28 @@ fi
 remove_windows_file "$m2w_korean_name"
 echo "Mac -> Windows Korean filename ok."
 
+echo "Testing Mac -> Windows image file transfer..."
+m2w_image_name="moonlight-companion-transfer-test-image-mac-${stamp}.png"
+m2w_image_file="${tmp_dir}/${m2w_image_name}"
+m2w_image_out="${tmp_dir}/mac-to-windows-image-send.txt"
+m2w_image_hash="$(write_test_png "$m2w_image_file"; mac_file_sha256 "$m2w_image_file")"
+env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_image_file" > "$m2w_image_out"
+if ! grep -q "Windows confirmed" "$m2w_image_out"; then
+  echo "Mac -> Windows image file transfer did not receive Windows import confirmation." >&2
+  cat "$m2w_image_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$m2w_image_name"; then
+  echo "Mac -> Windows image file transfer did not create the image file." >&2
+  exit 1
+fi
+if [[ "$(windows_file_sha256 "$m2w_image_name")" != "$m2w_image_hash" ]]; then
+  echo "Mac -> Windows image file transfer changed the file bytes." >&2
+  exit 1
+fi
+remove_windows_file "$m2w_image_name"
+echo "Mac -> Windows image file ok."
+
 echo "Testing Mac -> Windows multi-item transfer..."
 m2w_multi_file="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-file-${stamp}.txt"
 m2w_multi_file_name="$(basename "$m2w_multi_file")"
@@ -577,6 +621,29 @@ sleep 3
 assert_windows_path_absent "$w2m_korean_name" "Leaf"
 rm -f "${transfer_mac_dir}/${w2m_korean_name}"
 echo "Windows -> Mac Korean filename ok."
+
+echo "Testing Windows -> Mac image file transfer..."
+w2m_image_name="moonlight-companion-transfer-test-image-windows-${stamp}.png"
+w2m_image_file="${tmp_dir}/${w2m_image_name}"
+w2m_image_payload="${tmp_dir}/w2m-image-payload"
+w2m_image_zip="${tmp_dir}/windows-to-mac-image.zip"
+w2m_image_hash="$(write_test_png "$w2m_image_file"; mac_file_sha256 "$w2m_image_file")"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_image_payload" "$w2m_image_file" >/dev/null
+zip_payload "$w2m_image_payload" "$w2m_image_zip"
+MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_image_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_image_name"; then
+  echo "Windows -> Mac image file transfer did not create the image file." >&2
+  exit 1
+fi
+if [[ "$(mac_file_sha256 "${transfer_mac_dir}/${w2m_image_name}")" != "$w2m_image_hash" ]]; then
+  echo "Windows -> Mac image file transfer changed the file bytes." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_image_name" "Leaf"
+rm -f "${transfer_mac_dir}/${w2m_image_name}"
+echo "Windows -> Mac image file ok."
 
 echo "Testing Windows -> Mac multi-item transfer..."
 w2m_multi_file="${tmp_dir}/moonlight-companion-transfer-test-windows-multi-file-${stamp}.txt"
