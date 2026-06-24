@@ -155,9 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dropOverlayMouseDownFrontmostName = ""
     private var dropOverlayMouseDownAt = Date.distantPast
     private var dropOverlayDragCaptured = false
+    private var dropOverlayRayHitUntil = Date.distantPast
     private var dropOverlayLastFileDragAt = Date.distantPast
     private let dropOverlayActivationMargin: CGFloat = 128
     private let dropOverlayRefreshInterval: TimeInterval = 0.04
+    private let dropOverlayRayHitLatchInterval: TimeInterval = 0.35
     private let dropOverlayFileDragGraceInterval: TimeInterval = 0.45
     private var settings = CompanionSettings(values: [:])
     private var resourceURL: URL!
@@ -763,19 +765,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let mouseLocation = NSEvent.mouseLocation
         let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         let hasFileDrag = !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+        let now = Date()
 
         if dropOverlayDragCaptured {
             if hasFileDrag {
-                dropOverlayLastFileDragAt = Date()
+                dropOverlayLastFileDragAt = now
             }
-            return hasFileDrag || Date().timeIntervalSince(dropOverlayLastFileDragAt) <= dropOverlayFileDragGraceInterval
+            return hasFileDrag || now.timeIntervalSince(dropOverlayLastFileDragAt) <= dropOverlayFileDragGraceInterval
         }
 
         if dropOverlayMouseDownLocation == nil {
             dropOverlayMouseDownLocation = mouseLocation
             dropOverlayLastDragLocation = mouseLocation
             dropOverlayMouseDownFrontmostName = frontmostName
-            dropOverlayMouseDownAt = Date()
+            dropOverlayMouseDownAt = now
             return false
         }
 
@@ -786,7 +789,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
-        guard Date().timeIntervalSince(dropOverlayMouseDownAt) >= 0.10,
+        guard now.timeIntervalSince(dropOverlayMouseDownAt) >= 0.10,
               let mouseDownLocation = dropOverlayMouseDownLocation,
               distance(from: mouseDownLocation, to: mouseLocation) >= 18 else {
             return false
@@ -796,17 +799,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             dx: -dropOverlayActivationMargin,
             dy: -dropOverlayActivationMargin
         )
-        guard dragPathHitsDropActivationFrame(
+        if dragPathHitsDropActivationFrame(
             from: previousMouseLocation,
             to: mouseLocation,
             activationFrame: activationFrame
-        ) else {
+        ) {
+            dropOverlayRayHitUntil = now.addingTimeInterval(dropOverlayRayHitLatchInterval)
+        }
+
+        guard now <= dropOverlayRayHitUntil else {
             return false
         }
 
         if hasFileDrag {
             dropOverlayDragCaptured = true
-            dropOverlayLastFileDragAt = Date()
+            dropOverlayLastFileDragAt = now
             return true
         }
         return false
@@ -818,6 +825,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dropOverlayMouseDownFrontmostName = ""
         dropOverlayMouseDownAt = .distantPast
         dropOverlayDragCaptured = false
+        dropOverlayRayHitUntil = .distantPast
         dropOverlayLastFileDragAt = .distantPast
     }
 

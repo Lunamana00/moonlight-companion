@@ -1067,13 +1067,28 @@ function Write-MacImportTcpAck($stream, $manifest) {
     if ($null -ne $manifest.importedPaths) {
         $paths = @($manifest.importedPaths)
     }
+    $names = @()
+    foreach ($path in $paths) {
+        $name = Split-Path -Leaf $path
+        if (-not [string]::IsNullOrWhiteSpace($name)) {
+            $names += $name
+        }
+    }
 
     $fileCount = 0
     if ($null -ne $manifest.files) {
         $fileCount = @($manifest.files).Count
     }
 
-    if (Write-TcpLine $stream ("MOONCLIPACK 1 id={0} kind={1} bytes={2} files={3} imported_paths={4}" -f $manifest.id, $manifest.kind, $manifest.bytes, $fileCount, $paths.Count)) {
+    $ackLine = "MOONCLIPACK 1 id={0} kind={1} bytes={2} files={3} imported_paths={4}" -f $manifest.id, $manifest.kind, $manifest.bytes, $fileCount, $paths.Count
+    $namesForAck = @($names | Select-Object -First 12)
+    if ($namesForAck.Count -gt 0) {
+        $namesText = [string]::Join([string][char]31, $namesForAck)
+        $namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($namesText))
+        $ackLine = "$ackLine imported_names_b64=$namesB64"
+    }
+
+    if (Write-TcpLine $stream $ackLine) {
         Write-AgentLog ("Mac -> Windows TCP ack {0} ({1} imported)" -f $manifest.id, $paths.Count)
     }
 }

@@ -481,6 +481,11 @@ if ! grep -q "Windows confirmed" "$m2w_windows_safe_out"; then
   cat "$m2w_windows_safe_out" >&2
   exit 1
 fi
+if ! grep -Fq "$m2w_windows_safe_expected_name" "$m2w_windows_safe_out"; then
+  echo "Mac -> Windows Windows-safe filename transfer did not report the sanitized receive-folder file name." >&2
+  cat "$m2w_windows_safe_out" >&2
+  exit 1
+fi
 if ! wait_for_windows_file "$m2w_windows_safe_expected_name"; then
   echo "Mac -> Windows Windows-safe filename transfer did not create the sanitized file name." >&2
   exit 1

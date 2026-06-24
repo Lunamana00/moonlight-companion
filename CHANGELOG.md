@@ -6,7 +6,8 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 
 ### Changed
 
-- The Moonlight file drop overlay now stays magnetically captured for the active file drag after it ray-hits the stream window, reducing flicker while dragging across or just past Moonlight.
+- The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
+- Mac-to-Windows send results now show the actual Windows receive-folder file names, including names sanitized for Windows.
 - Mac-to-Windows TCP file drops now receive the Windows import acknowledgement on the same TCP connection, avoiding the extra SSH confirmation round trip when both sides are current.
 - The file transfer self-test now requires the same-connection TCP acknowledgement when TCP clipboard transfer is enabled, while normal sends still keep the SSH state fallback.
 - Windows-to-Mac file arrival notifications and TCP logs now include received file names and total size.

@@ -177,7 +177,7 @@ func setReceiveTimeout(fd: Int32, milliseconds: Int) {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 }
 
-func readOptionalLine(fd: Int32, maxBytes: Int = 512) throws -> String? {
+func readOptionalLine(fd: Int32, maxBytes: Int = 16_384) throws -> String? {
     var bytes: [UInt8] = []
     while bytes.count < maxBytes {
         var byte: UInt8 = 0
@@ -497,7 +497,7 @@ do {
             host: CommandLine.arguments[2],
             port: try parsePort(CommandLine.arguments[3]),
             zipPath: CommandLine.arguments[4]) {
-            for key in ["id", "kind", "bytes", "files", "imported_paths"] {
+            for key in ["id", "kind", "bytes", "files", "imported_paths", "imported_names_b64"] {
                 if let value = ack[key] {
                     print("\(key)=\(value)")
                 }

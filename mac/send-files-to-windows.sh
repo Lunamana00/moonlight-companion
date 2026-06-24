@@ -72,6 +72,72 @@ state_value() {
   awk -F= -v key="$key" '$1 == key {value = substr($0, length(key) + 2); sub(/\r$/, "", value); print value; exit}'
 }
 
+decode_imported_names_b64() {
+  local encoded="$1"
+  [[ -n "$encoded" ]] || return 0
+  printf '%s' "$encoded" | /usr/bin/base64 -D 2>/dev/null | tr '\037' '\n' || true
+}
+
+imported_path_names_from_state() {
+  awk -F= '$1 ~ /^imported_path_[0-9]+$/ {
+    value = substr($0, length($1) + 2)
+    sub(/\r$/, "", value)
+    gsub(/\\/, "/", value)
+    count = split(value, parts, "/")
+    if (parts[count] != "") print parts[count]
+  }'
+}
+
+summarize_imported_names() {
+  local total_count="$1"
+  shift || true
+  local names=("$@")
+  ((${#names[@]} > 0)) || return 0
+
+  local visible_count=${#names[@]}
+  if (( visible_count > 2 )); then
+    visible_count=2
+  fi
+
+  local summary="${names[0]}"
+  if (( visible_count > 1 )); then
+    summary+=", ${names[1]}"
+  fi
+
+  local remaining=0
+  if [[ "$total_count" =~ ^[0-9]+$ ]]; then
+    remaining=$(( total_count - visible_count ))
+  else
+    remaining=$(( ${#names[@]} - visible_count ))
+  fi
+  if (( remaining > 0 )); then
+    summary+=", +${remaining} more"
+  fi
+
+  printf '%s\n' "$summary"
+}
+
+imported_names_summary() {
+  local state="$1"
+  local total_count="$2"
+  local names_b64 name
+  local names=()
+
+  names_b64="$(printf '%s\n' "$state" | state_value imported_names_b64)"
+  if [[ -n "$names_b64" ]]; then
+    while IFS= read -r name || [[ -n "$name" ]]; do
+      [[ -n "$name" ]] && names+=("$name")
+    done < <(decode_imported_names_b64 "$names_b64")
+  else
+    while IFS= read -r name || [[ -n "$name" ]]; do
+      [[ -n "$name" ]] && names+=("$name")
+    done < <(printf '%s\n' "$state" | imported_path_names_from_state)
+  fi
+
+  ((${#names[@]} > 0)) || return 0
+  summarize_imported_names "$total_count" "${names[@]}"
+}
+
 encode_powershell() {
   iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
 }
@@ -211,10 +277,15 @@ windows_import_confirmation=""
 if wait_for_windows_import "$payload_id"; then
   log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
+  imported_summary="$(imported_names_summary "$windows_import_state" "${imported_paths:-0}")"
+  imported_suffix=""
+  if [[ -n "$imported_summary" ]]; then
+    imported_suffix=": ${imported_summary}"
+  fi
   if [[ "${imported_paths:-0}" == "1" ]]; then
-    printf 'sent %s payload (%sB) via %s; Windows confirmed 1 item in the receive folder\n' "${kind:-files}" "$bytes" "$transport"
+    printf 'sent %s payload (%sB) via %s; Windows confirmed 1 item in the receive folder%s\n' "${kind:-files}" "$bytes" "$transport" "$imported_suffix"
   else
-    printf 'sent %s payload (%sB) via %s; Windows confirmed %s items in the receive folder\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}"
+    printf 'sent %s payload (%sB) via %s; Windows confirmed %s items in the receive folder%s\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}" "$imported_suffix"
   fi
 else
   printf 'sent %s payload (%sB) via %s; Windows import confirmation is pending\n' "${kind:-files}" "$bytes" "$transport"
