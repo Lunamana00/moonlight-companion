@@ -4,6 +4,10 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 
 ## Unreleased
 
+No changes yet.
+
+## v0.3.0 - 2026-06-24
+
 ### Added
 
 - Added a GUI file drop target for sending Mac files and folders to Windows over the existing clipboard TCP channel.

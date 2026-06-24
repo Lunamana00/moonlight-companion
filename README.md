@@ -6,7 +6,7 @@ The bridge is designed for remote GUI work where Moonlight provides excellent vi
 
 ## Version
 
-Current version: `v0.2.0`
+Current version: `v0.3.0`
 
 ## Features
 
@@ -220,8 +220,8 @@ scripts/package-release.sh
 This writes:
 
 ```text
-dist/release/Moonlight-Companion-v0.2.0.zip
-dist/release/Moonlight-Companion-v0.2.0.zip.sha256
+dist/release/Moonlight-Companion-v0.3.0.zip
+dist/release/Moonlight-Companion-v0.3.0.zip.sha256
 ```
 
 Release packages intentionally include only `config/moonlight-companion.conf.example`. The ignored local config file is skipped so private hostnames, Tailscale IPs, usernames, and stream settings stay out of public artifacts.
