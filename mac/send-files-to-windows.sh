@@ -37,6 +37,8 @@ remote_mac_tmp_cmd="${remote_dir}\\mac-to-windows.zip.tmp"
 remote_direct_zip="${remote_dir}/mac-to-windows-direct.zip"
 remote_direct_tmp="${remote_dir}/mac-to-windows-direct.zip.tmp"
 remote_direct_script="${remote_dir}/mac-to-windows-direct.ps1"
+remote_direct_zip_cmd="${remote_dir}\\mac-to-windows-direct.zip"
+remote_direct_tmp_cmd="${remote_dir}\\mac-to-windows-direct.zip.tmp"
 remote_direct_script_cmd="${remote_dir}\\mac-to-windows-direct.ps1"
 
 ssh_opts=(
@@ -454,7 +456,11 @@ send_direct_to_windows_receive_folder() {
 
   progress "Uploading oversized payload directly to the Windows receive folder."
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
-  scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_direct_tmp}" >/dev/null
+  cleanup_remote_direct_artifacts
+  if ! scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_direct_tmp}" >/dev/null; then
+    cleanup_remote_direct_artifacts
+    return 1
+  fi
 
   cat > "$script_path" <<POWERSHELL
 \$ErrorActionPreference = "Stop"
@@ -701,7 +707,10 @@ if (\$null -ne \$directTransferError) {
 }
 POWERSHELL
   cleanup_remote_direct_script
-  scp "${scp_opts[@]}" "$script_path" "${WINDOWS_SSH}:${remote_direct_script}" >/dev/null
+  if ! scp "${scp_opts[@]}" "$script_path" "${WINDOWS_SSH}:${remote_direct_script}" >/dev/null; then
+    cleanup_remote_direct_artifacts
+    return 1
+  fi
 
   set +e
   state="$(
@@ -710,7 +719,7 @@ POWERSHELL
   )"
   ssh_status=$?
   set -e
-  cleanup_remote_direct_script
+  cleanup_remote_direct_artifacts
   if (( ssh_status != 0 )); then
     printf '%s\n' "$state" >&2
     return "$ssh_status"
@@ -721,6 +730,11 @@ POWERSHELL
 cleanup_remote_direct_script() {
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "cmd.exe /c del /Q \"${remote_direct_script_cmd}\" 2>nul" >/dev/null 2>&1 || true
+}
+
+cleanup_remote_direct_artifacts() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_direct_zip_cmd}\" \"${remote_direct_tmp_cmd}\" \"${remote_direct_script_cmd}\" 2>nul & rmdir /S /Q \"${remote_dir}\\direct-mac-payload\" 2>nul" >/dev/null 2>&1 || true
 }
 
 if [[ $# -lt 1 ]]; then

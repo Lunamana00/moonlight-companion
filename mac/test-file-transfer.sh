@@ -530,6 +530,14 @@ windows_direct_temp_count() {
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
 }
 
+write_stale_windows_direct_temp_artifacts() {
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; New-Item -ItemType Directory -Force -Path (Join-Path \$dir 'direct-mac-payload') | Out-Null; Set-Content -LiteralPath (Join-Path \$dir 'direct-mac-payload\\partial.txt') -Value 'stale direct payload' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Value 'stale direct zip' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Value 'stale direct tmp' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Value 'stale direct script' -Encoding UTF8"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
 remove_windows_direct_temp_artifacts() {
   local script encoded
   script="\$ErrorActionPreference = 'SilentlyContinue'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force"
@@ -1325,6 +1333,31 @@ fi
 remove_windows_file "$limit_multi_file_name"
 remove_windows_path "$limit_multi_dir_name"
 echo "Mac -> Windows oversized direct multi-item ok."
+
+echo "Testing Mac -> Windows oversized direct upload failure cleanup..."
+limit_upload_fail_out="${tmp_dir}/mac-to-windows-limit-upload-fail-send.txt"
+limit_upload_fail_fake_bin="${tmp_dir}/fake-scp-bin"
+mkdir -p "$limit_upload_fail_fake_bin"
+cat > "${limit_upload_fail_fake_bin}/scp" <<'FAKESCP'
+#!/usr/bin/env bash
+exit 23
+FAKESCP
+chmod 700 "${limit_upload_fail_fake_bin}/scp"
+write_stale_windows_direct_temp_artifacts
+if PATH="${limit_upload_fail_fake_bin}:$PATH" MOONLIGHT_COMPANION_CONFIG="$limit_config" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_upload_fail_out" 2>&1; then
+  echo "Mac -> Windows oversized direct transfer unexpectedly succeeded with failing scp." >&2
+  cat "$limit_upload_fail_out" >&2
+  exit 1
+fi
+direct_temp_count="$(windows_direct_temp_count)"
+if [[ "$direct_temp_count" != "0" ]]; then
+  remove_windows_direct_temp_artifacts
+  echo "Mac -> Windows oversized direct upload failure left direct temp artifacts on Windows." >&2
+  echo "direct temp artifact count: ${direct_temp_count}" >&2
+  cat "$limit_upload_fail_out" >&2
+  exit 1
+fi
+echo "Mac -> Windows oversized direct upload failure cleanup ok."
 
 echo "Testing Mac -> Windows oversized direct transfer failure cleanup..."
 limit_cleanup_out="${tmp_dir}/mac-to-windows-limit-cleanup-send.txt"
