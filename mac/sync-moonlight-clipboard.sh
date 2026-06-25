@@ -209,7 +209,7 @@ write_windows_receive_state() {
     printf 'kind=%s\n' "$(payload_kind "$meta_path")"
     printf 'normalized_id=%s\n' "$normalized_id"
     printf 'windows_id=%s\n' "$(payload_id "$meta_path")"
-    awk -F= '$1 == "files" || $1 == "file_paths" || $1 ~ /^file_path_[0-9]+$/ || $1 ~ /^file_name_[0-9]+$/ { print }' "$meta_path"
+    awk -F= '$1 == "files" || $1 == "file_paths" || $1 ~ /^file_path_[0-9]+(_b64)?$/ || $1 ~ /^file_name_[0-9]+(_b64)?$/ { print }' "$meta_path"
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$tcp_state" 2>/dev/null || rm -f "$tmp_path"
 }
 

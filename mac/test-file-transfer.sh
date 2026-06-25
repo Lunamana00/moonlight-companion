@@ -1766,6 +1766,12 @@ if ! grep -Fqx "file_path_1=${transfer_mac_dir}/${w2m_fallback_name}" "$tcp_stat
   [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
   exit 1
 fi
+w2m_fallback_state_path_b64="$(meta_value file_path_1_b64 "$tcp_state")"
+if [[ -z "$w2m_fallback_state_path_b64" || "$(decode_b64_value "$w2m_fallback_state_path_b64")" != "${transfer_mac_dir}/${w2m_fallback_name}" ]]; then
+  echo "Windows -> Mac SSH fallback transfer did not record a decodable latest received Mac file path." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
 if ! wait_for_windows_fallback_zip_absent 80; then
   echo "Windows -> Mac SSH fallback transfer did not consume the remote fallback ZIP." >&2
   exit 1
