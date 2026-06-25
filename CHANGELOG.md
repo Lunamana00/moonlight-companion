@@ -12,6 +12,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Moonlight window, strip, and Companion drop targets now accept macOS file promises, materializing promised files into a temporary staging folder before sending them through the normal Mac-to-Windows transfer pipeline.
 - Promised file drops can now be cancelled while the source app is still materializing files, and their temporary staging folders are cleaned up with other queued transfer work.
 - Promised file drops now fail as a whole if the source app cannot provide every promised item, avoiding surprising partial Mac-to-Windows transfers.
+- Companion now removes stale promised-file drop staging folders on launch, cleaning up leftovers from interrupted drags or app exits.
 - Queued file drops now preserve the current operation status while adding a queue note to the detail text, so active sends, reveals, and tests stay understandable.
 - Queued promised-file drop failures no longer overwrite the status of the transfer, reveal, or test that is already running.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.

@@ -236,6 +236,7 @@ exit "${status}"
     private var dropOverlayDragCaptured = false
     private var dropOverlayRayHitUntil = Date.distantPast
     private var dropOverlayLastFileDragAt = Date.distantPast
+    private let stalePromisedDropAge: TimeInterval = 6 * 60 * 60
     private let dropOverlayActivationMargin: CGFloat = 128
     private let dropOverlayRefreshInterval: TimeInterval = 0.04
     private let dropOverlayRayHitLatchInterval: TimeInterval = 0.35
@@ -274,6 +275,7 @@ exit "${status}"
         }
         self.resourceURL = resourceURL
         settings = SettingsFile.load(resourceURL: resourceURL)
+        cleanupStalePromisedDropDirectories()
         buildWindow()
         loadLatestWindowsReceiveState()
         updateDropOverlayMonitor()
@@ -2283,6 +2285,31 @@ exit "${status}"
     private func cleanupTemporaryDropURLs(_ urls: [URL]) {
         for url in urls {
             try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func cleanupStalePromisedDropDirectories(now: Date = Date()) {
+        let fm = FileManager.default
+        let tempURL = fm.temporaryDirectory
+        guard let items = try? fm.contentsOfDirectory(
+            at: tempURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for item in items where item.lastPathComponent.hasPrefix("moonlight-promised-drop-") {
+            guard let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey, .creationDateKey]),
+                  values.isDirectory == true else {
+                continue
+            }
+            let referenceDate = values.contentModificationDate ?? values.creationDate
+            guard let referenceDate,
+                  now.timeIntervalSince(referenceDate) >= stalePromisedDropAge else {
+                continue
+            }
+            try? fm.removeItem(at: item)
         }
     }
 
