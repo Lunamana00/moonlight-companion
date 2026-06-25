@@ -58,6 +58,21 @@ private func moonlightWindowsImportConfirmed(id: String, confirmation: String, i
         !importedPaths.isEmpty
 }
 
+private func moonlightMacReceiveAvailabilityDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
+    if totalCount > availableCount {
+        return "\(availableCount) of \(totalCount) received items still available: \(summary)"
+    }
+    return summary
+}
+
+private func moonlightMacReceiveCopyDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
+    if totalCount > availableCount {
+        let verb = availableCount == 1 ? "is" : "are"
+        return "\(availableCount) of \(totalCount) received items \(verb) ready to paste; some received items were unavailable."
+    }
+    return "\(summary) is ready to paste."
+}
+
 struct CompanionSettings {
     static let orderedKeys = [
         "WINDOWS_SSH",
@@ -272,7 +287,9 @@ exit "${status}"
     private var queuedFileDrops: [QueuedFileDrop] = []
     private var promisedFileDropSessions: [PromisedFileDropSession] = []
     private var latestMacReceiveURLs: [URL] = []
+    private var latestMacReceiveTotalCount = 0
     private var pendingLatestMacReceiveURLs: [URL] = []
+    private var pendingLatestMacReceiveTotalCount = 0
     private var latestWindowsReceiveID = ""
     private var latestWindowsReceiveSummary = ""
     private var latestWindowsReceivePaths: [String] = []
@@ -941,6 +958,9 @@ exit "${status}"
               let modifiedAt = attributes[.modificationDate] as? Date else {
             latestMacReceiveStateSignature = ""
             latestMacReceiveURLs = []
+            latestMacReceiveTotalCount = 0
+            pendingLatestMacReceiveURLs = []
+            pendingLatestMacReceiveTotalCount = 0
             updateLatestMacReceiveButtonState()
             return
         }
@@ -957,12 +977,18 @@ exit "${status}"
         let urls = latestMacReceiveFileURLs(from: state)
         guard !urls.isEmpty else {
             latestMacReceiveURLs = []
+            latestMacReceiveTotalCount = 0
+            pendingLatestMacReceiveURLs = []
+            pendingLatestMacReceiveTotalCount = 0
             updateLatestMacReceiveButtonState()
             return
         }
         let existingURLs = existingFileURLs(from: urls)
         guard !existingURLs.isEmpty else {
             latestMacReceiveURLs = []
+            latestMacReceiveTotalCount = urls.count
+            pendingLatestMacReceiveURLs = []
+            pendingLatestMacReceiveTotalCount = 0
             updateLatestMacReceiveButtonState()
             if !initial {
                 statusLabel.stringValue = "Mac Files Missing"
@@ -972,11 +998,13 @@ exit "${status}"
         }
 
         latestMacReceiveURLs = existingURLs
+        latestMacReceiveTotalCount = urls.count
         updateLatestMacReceiveButtonState()
 
         if !initial {
             if isBusy {
                 pendingLatestMacReceiveURLs = existingURLs
+                pendingLatestMacReceiveTotalCount = urls.count
             } else {
                 showLatestMacReceiveStatus(existingURLs, totalCount: urls.count)
             }
@@ -988,18 +1016,35 @@ exit "${status}"
             return
         }
 
-        let existingURLs = existingFileURLs(from: latestMacReceiveURLs)
-        guard existingURLs.count != latestMacReceiveURLs.count else {
+        let state = SettingsFile.parse(url: latestMacReceiveStateURL())
+        let urls = latestMacReceiveFileURLs(from: state)
+        let totalCount = urls.isEmpty ? latestMacReceiveTotalCount : urls.count
+        let existingURLs = existingFileURLs(from: urls.isEmpty ? latestMacReceiveURLs : urls)
+        guard existingURLs.count != latestMacReceiveURLs.count ||
+                totalCount != latestMacReceiveTotalCount else {
             return
         }
 
         latestMacReceiveURLs = existingURLs
+        latestMacReceiveTotalCount = totalCount
         pendingLatestMacReceiveURLs = existingFileURLs(from: pendingLatestMacReceiveURLs)
+        if pendingLatestMacReceiveURLs.isEmpty {
+            pendingLatestMacReceiveTotalCount = 0
+        } else if pendingLatestMacReceiveTotalCount == 0 {
+            pendingLatestMacReceiveTotalCount = pendingLatestMacReceiveURLs.count
+        }
         updateLatestMacReceiveButtonState()
 
         if existingURLs.isEmpty && !initial {
             statusLabel.stringValue = "Mac Files Missing"
             detailLabel.stringValue = "The latest received files are no longer in the Mac receive folder."
+        } else if totalCount > existingURLs.count && !initial {
+            if isBusy || transferProcess != nil {
+                pendingLatestMacReceiveURLs = existingURLs
+                pendingLatestMacReceiveTotalCount = totalCount
+            } else {
+                showLatestMacReceiveStatus(existingURLs, totalCount: totalCount)
+            }
         }
     }
 
@@ -1011,19 +1056,23 @@ exit "${status}"
             return false
         }
 
-        showLatestMacReceiveStatus(pendingLatestMacReceiveURLs)
+        showLatestMacReceiveStatus(
+            pendingLatestMacReceiveURLs,
+            totalCount: pendingLatestMacReceiveTotalCount
+        )
         return true
     }
 
     private func showLatestMacReceiveStatus(_ urls: [URL], totalCount: Int? = nil) {
         pendingLatestMacReceiveURLs = []
+        pendingLatestMacReceiveTotalCount = 0
         statusLabel.stringValue = "Files Received"
         let summary = FileDropReader.dropSummary(for: urls)
-        if let totalCount, totalCount > urls.count {
-            detailLabel.stringValue = "\(urls.count) of \(totalCount) received items still available: \(summary)"
-        } else {
-            detailLabel.stringValue = summary
-        }
+        detailLabel.stringValue = moonlightMacReceiveAvailabilityDetail(
+            availableCount: urls.count,
+            totalCount: totalCount ?? urls.count,
+            summary: summary
+        )
     }
 
     private func updateLatestMacReceiveButtonState() {
@@ -1690,6 +1739,7 @@ exit "${status}"
         let existingURLs = existingFileURLs(from: urls)
         guard !existingURLs.isEmpty else {
             latestMacReceiveURLs = []
+            latestMacReceiveTotalCount = urls.count
             updateLatestMacReceiveButtonState()
             openMacReceiveFolderWithStatusUpdate(false)
             statusLabel.stringValue = "Mac Folder Opened"
@@ -1700,10 +1750,15 @@ exit "${status}"
         }
 
         latestMacReceiveURLs = existingURLs
+        latestMacReceiveTotalCount = urls.count
         updateLatestMacReceiveButtonState()
         NSWorkspace.shared.activateFileViewerSelecting(existingURLs)
         statusLabel.stringValue = "Mac Files Revealed"
-        detailLabel.stringValue = FileDropReader.dropSummary(for: existingURLs)
+        detailLabel.stringValue = moonlightMacReceiveAvailabilityDetail(
+            availableCount: existingURLs.count,
+            totalCount: urls.count,
+            summary: FileDropReader.dropSummary(for: existingURLs)
+        )
     }
 
     @objc private func copyLatestMacReceive() {
@@ -1712,6 +1767,7 @@ exit "${status}"
         let existingURLs = existingFileURLs(from: urls)
         guard !existingURLs.isEmpty else {
             latestMacReceiveURLs = []
+            latestMacReceiveTotalCount = urls.count
             updateLatestMacReceiveButtonState()
             statusLabel.stringValue = "Copy Failed"
             detailLabel.stringValue = urls.isEmpty
@@ -1726,9 +1782,14 @@ exit "${status}"
 
         if result == .copied {
             latestMacReceiveURLs = existingURLs
+            latestMacReceiveTotalCount = urls.count
             updateLatestMacReceiveButtonState()
             statusLabel.stringValue = "Mac Files Copied"
-            detailLabel.stringValue = "\(FileDropReader.dropSummary(for: existingURLs)) is ready to paste."
+            detailLabel.stringValue = moonlightMacReceiveCopyDetail(
+                availableCount: existingURLs.count,
+                totalCount: urls.count,
+                summary: FileDropReader.dropSummary(for: existingURLs)
+            )
         } else if result == .missingID {
             statusLabel.stringValue = "Copy Failed"
             detailLabel.stringValue = "Could not prepare the latest received files for clipboard restore."
@@ -3785,6 +3846,68 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
 
 if CommandLine.arguments.contains("--self-test-windows-receive-summary") {
     exit(runWindowsReceiveSummarySelfTest())
+}
+
+private func runMacReceiveAvailabilitySelfTest() -> Int32 {
+    func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+        if !condition() {
+            throw NSError(domain: "MoonlightMacReceiveAvailabilitySelfTest", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: message
+            ])
+        }
+    }
+
+    do {
+        try expect(
+            moonlightMacReceiveAvailabilityDetail(
+                availableCount: 2,
+                totalCount: 2,
+                summary: "alpha.txt, beta folder"
+            ) == "alpha.txt, beta folder",
+            "complete receive availability summary was changed"
+        )
+        try expect(
+            moonlightMacReceiveAvailabilityDetail(
+                availableCount: 1,
+                totalCount: 2,
+                summary: "alpha.txt"
+            ) == "1 of 2 received items still available: alpha.txt",
+            "partial receive availability summary was not explicit"
+        )
+        try expect(
+            moonlightMacReceiveCopyDetail(
+                availableCount: 2,
+                totalCount: 2,
+                summary: "alpha.txt, beta folder"
+            ) == "alpha.txt, beta folder is ready to paste.",
+            "complete receive copy summary was changed"
+        )
+        try expect(
+            moonlightMacReceiveCopyDetail(
+                availableCount: 1,
+                totalCount: 2,
+                summary: "alpha.txt"
+            ) == "1 of 2 received items is ready to paste; some received items were unavailable.",
+            "singular partial receive copy summary was not explicit"
+        )
+        try expect(
+            moonlightMacReceiveCopyDetail(
+                availableCount: 2,
+                totalCount: 3,
+                summary: "alpha.txt, beta folder"
+            ) == "2 of 3 received items are ready to paste; some received items were unavailable.",
+            "plural partial receive copy summary was not explicit"
+        )
+        print("mac-receive-availability self-test ok")
+        return 0
+    } catch {
+        fputs("mac-receive-availability self-test failed: \(error.localizedDescription)\n", stderr)
+        return 1
+    }
+}
+
+if CommandLine.arguments.contains("--self-test-mac-receive-availability") {
+    exit(runMacReceiveAvailabilitySelfTest())
 }
 
 let app = NSApplication.shared

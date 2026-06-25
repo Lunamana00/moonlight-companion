@@ -26,5 +26,6 @@ swiftc "${repo_dir}/mac/mooncapsync.swift" -o "${repo_dir}/build/mooncapsync-che
 swiftc "${repo_dir}/mac/MoonlightCompanionApp.swift" -o "${repo_dir}/build/MoonlightCompanionApp-check" -framework AppKit
 "${repo_dir}/build/MoonlightCompanionApp-check" --self-test-file-drop-reader
 "${repo_dir}/build/MoonlightCompanionApp-check" --self-test-windows-receive-summary
+"${repo_dir}/build/MoonlightCompanionApp-check" --self-test-mac-receive-availability
 
 echo "ok"
