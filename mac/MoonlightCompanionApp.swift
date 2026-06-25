@@ -1149,6 +1149,8 @@ exit "${status}"
     }
 
     private func markLatestMacReceiveRestoredToClipboard(restoredID: String) {
+        markMacClipboardRestoreIgnored(restoredID: restoredID)
+
         var state = SettingsFile.parse(url: latestMacReceiveStateURL())
         guard !state.isEmpty else {
             return
@@ -1159,6 +1161,14 @@ exit "${status}"
             state["windows_id"] = restoredID
         }
         writeSimpleState(state, to: latestMacReceiveStateURL())
+    }
+
+    private func markMacClipboardRestoreIgnored(restoredID: String) {
+        let values = [
+            "id": restoredID,
+            "reason": "gui-latest-mac-receive-restore"
+        ]
+        writeSimpleState(values, to: macClipboardIgnoreStateURL())
     }
 
     private func withLatestMacReceiveClipboardLock<T>(_ body: () -> T) -> T {
@@ -1233,6 +1243,10 @@ exit "${status}"
 
     private func latestMacReceiveStateURL() -> URL {
         clipboardRuntimeDirectory().appendingPathComponent("clipboard-tcp-windows-state.txt")
+    }
+
+    private func macClipboardIgnoreStateURL() -> URL {
+        clipboardRuntimeDirectory().appendingPathComponent("clipboard-mac-ignore-state.txt")
     }
 
     private func latestMacReceiveFileURLs(from state: [String: String]) -> [URL] {
