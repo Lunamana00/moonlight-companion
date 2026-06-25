@@ -1334,7 +1334,16 @@ exit "${status}"
                     self?.clearLatestWindowsReceiveState()
                 }
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
-                self?.setBusy(false, status: status, detail: detail)
+                let summary = self?.latestWindowsReceiveSummary ?? ""
+                let resultDetail: String
+                if summary.isEmpty {
+                    resultDetail = detail
+                } else if detail.contains("select") {
+                    resultDetail = "Selected \(summary) in Windows."
+                } else {
+                    resultDetail = "Opened the Windows receive folder for \(summary)."
+                }
+                self?.setBusy(false, status: status, detail: resultDetail)
             } else {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Reveal Failed", detail: detail, startQueuedDropsWhenIdle: false)
