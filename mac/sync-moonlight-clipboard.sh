@@ -235,6 +235,17 @@ download_from_windows() {
   scp "${scp_opts[@]}" "${remote}:${remote_windows_zip}" "$zip_path" >/dev/null
 }
 
+remove_downloaded_windows_zip() {
+  local expected_hash="$1"
+  [[ "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]] || return 0
+
+  local script encoded
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$path = Join-Path (Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync') 'windows-to-mac.zip'; if (Test-Path -LiteralPath \$path) { \$hash = (Get-FileHash -LiteralPath \$path -Algorithm SHA256).Hash.ToLowerInvariant(); if (\$hash -eq '${expected_hash}') { Remove-Item -LiteralPath \$path -Force } }"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$remote" \
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
+}
+
 require_ready() {
   if [[ ! -x "$helper" ]]; then
     log "missing helper: $helper"
@@ -458,10 +469,13 @@ while true; do
           else
             log "Windows -> Mac ${win_kind} (${win_bytes}B)"
           fi
+          remove_downloaded_windows_zip "$archive_hash"
         else
           last_windows_fallback_archive_hash="$archive_hash"
           log "Windows -> Mac import failed"
         fi
+      elif [[ "$archive_hash" == "$last_windows_archive_hash" ]]; then
+        remove_downloaded_windows_zip "$archive_hash"
       fi
     fi
   fi

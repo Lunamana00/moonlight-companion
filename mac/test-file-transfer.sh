@@ -171,6 +171,23 @@ remove_windows_fallback_zip() {
     "cmd.exe /c del /Q \"${remote_windows_zip_cmd}\" \"${remote_windows_tmp_cmd}\" 2>nul" >/dev/null 2>&1 || true
 }
 
+windows_fallback_zip_exists() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c if exist \"${remote_windows_zip_cmd}\" (exit 0) else (exit 1)" >/dev/null 2>&1
+}
+
+wait_for_windows_fallback_zip_absent() {
+  local attempts="${1:-80}"
+  local index
+  for ((index = 0; index < attempts; index++)); do
+    if ! windows_fallback_zip_exists; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 upload_windows_fallback_zip() {
   local zip_path="$1"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
@@ -1054,6 +1071,10 @@ fi
 if ! grep -Fqx "file_path_1=${transfer_mac_dir}/${w2m_fallback_name}" "$tcp_state"; then
   echo "Windows -> Mac SSH fallback transfer did not record the latest received Mac file path." >&2
   [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! wait_for_windows_fallback_zip_absent 80; then
+  echo "Windows -> Mac SSH fallback transfer did not consume the remote fallback ZIP." >&2
   exit 1
 fi
 sleep 3
