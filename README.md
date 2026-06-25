@@ -44,7 +44,7 @@ scripts/build-mac-app.sh
 Run it from the build output:
 
 ```bash
-open "dist/Moonlight Companion.app"
+open -g "dist/Moonlight Companion.app"
 ```
 
 Or install it into `/Applications`:
@@ -52,17 +52,17 @@ Or install it into `/Applications`:
 ```bash
 rm -rf "/Applications/Moonlight Companion.app"
 ditto "dist/Moonlight Companion.app" "/Applications/Moonlight Companion.app"
-open "/Applications/Moonlight Companion.app"
+open -g "/Applications/Moonlight Companion.app"
 ```
 
-When the app opens, adjust the settings and click `Start Moonlight`. The app then:
+Click the Dock icon when you want to open the control window, adjust the settings, and click `Start Moonlight`. The app then:
 
 1. Verifies SSH access to the Windows host.
 2. Deploys or updates the Windows clipboard agent.
 3. Starts the macOS clipboard sync and Moonlight keyboard agents.
 4. Launches Moonlight with the configured stream settings.
 
-The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. Existing user settings migrate to hide the Companion control window on launch so background work does not interrupt the current Mac workspace; click the Dock icon or enable `Show Companion window on launch` when you want the panel to appear automatically. By default neither the Companion window nor the Moonlight launch/placement helper forces itself to the foreground; enable `Bring Companion window forward on launch` or `Bring Moonlight forward after launch` if you prefer the old foreground behavior.
+The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. Existing user settings migrate to hide the Companion control window on launch so background work does not interrupt the current Mac workspace; click the Dock icon or enable `Show Companion window on launch` when you want the panel to appear automatically. By default neither the Companion window nor the Moonlight launch/placement helper forces itself to the foreground; enable `Bring Companion window forward on launch`, `Bring Moonlight forward after launch`, or `Bring Moonlight forward before auto-paste` only when you prefer the foreground behavior.
 
 Inside the Moonlight session, use Windows shortcuts:
 
@@ -78,7 +78,7 @@ The same helper remaps Mac-style Command shortcuts to Windows-style Control shor
 
 Clipboard sync uses the same shape of transport: Moonlight Companion keeps separate TCP channels open for Mac-to-Windows and Windows-to-Mac clipboard payloads. Payloads are still encoded as ZIP archives for text, images, and file drops, and the older shared ZIP polling path remains available as a fallback.
 
-For direct file transfer from Mac to Windows, drag files or folders from Finder toward the Moonlight window. Companion detects the file drag near Moonlight, including fast pointer paths that cross the Moonlight frame, then briefly latches that hit and magnetically keeps the whole Moonlight window as a drop target for that drag. The drop target accepts modern file URL drag items plus Finder filename pasteboard entries. The Companion window also keeps a fallback drop target and a small floating drop strip. While sending, Companion shows the dropped item names, total source size, and live phases for metadata collection, packaging, TCP/SSH send, and Windows receive confirmation. If another transfer, reveal, or transfer test is already running, new file drops are queued and sent after the current operation finishes successfully; cancelling or failing the busy operation clears those queued drops. Files within the clipboard payload limit are sent over the existing Mac-to-Windows clipboard TCP channel, imported into the Windows clipboard as file drops, and copied into the configured Windows receive folder. Oversized drops can instead be copied directly into the Windows receive folder over SSH, so large files still arrive even though they are not placed on the Windows clipboard and cannot be auto-pasted. Current Windows agents acknowledge clipboard imports on the same TCP connection, so Companion can quickly show that the receive-folder import was confirmed, including the actual Windows receive-folder names; otherwise it falls back to the older SSH state check and clearly marks confirmation as pending if no confirmation arrives. Moonlight window and strip drops wait longer for fallback confirmation when automatic paste or reveal is enabled, then send `Ctrl+V` only after Windows confirms the import and the Windows clipboard is ready so the files land in the focused Windows app; if confirmation is still pending or the transfer used direct receive-folder copy, Companion leaves the files for manual use instead of risking a stale paste, then notifies macOS with the result. The GUI can also ask Windows to reveal the latest confirmed received item again if Explorer was hidden or automatic reveal is disabled.
+For direct file transfer from Mac to Windows, drag files or folders from Finder toward the Moonlight window. Companion detects the file drag near Moonlight, including fast pointer paths that cross the Moonlight frame, then briefly latches that hit and magnetically keeps the whole Moonlight window as a drop target for that drag. The drop target accepts modern file URL drag items plus Finder filename pasteboard entries. The Companion window also keeps a fallback drop target and a small floating drop strip. While sending, Companion shows the dropped item names, total source size, and live phases for metadata collection, packaging, TCP/SSH send, and Windows receive confirmation. If another transfer, reveal, or transfer test is already running, new file drops are queued and sent after the current operation finishes successfully; cancelling or failing the busy operation clears those queued drops. Files within the clipboard payload limit are sent over the existing Mac-to-Windows clipboard TCP channel, imported into the Windows clipboard as file drops, and copied into the configured Windows receive folder. Oversized drops can instead be copied directly into the Windows receive folder over SSH, so large files still arrive even though they are not placed on the Windows clipboard and cannot be auto-pasted. Current Windows agents acknowledge clipboard imports on the same TCP connection, so Companion can quickly show that the receive-folder import was confirmed, including the actual Windows receive-folder names; otherwise it falls back to the older SSH state check and clearly marks confirmation as pending if no confirmation arrives. Moonlight window and strip drops wait longer for fallback confirmation when automatic paste or reveal is enabled, then send `Ctrl+V` only after Windows confirms the import, the Windows clipboard is ready, and Moonlight is already focused; if Moonlight is not focused, Companion does not bring it forward by default and leaves the files ready on the Windows clipboard. Enable `Bring Moonlight forward before auto-paste` when you want the old focus-changing paste behavior. The GUI can also ask Windows to reveal the latest confirmed received item again if Explorer was hidden or automatic reveal is disabled.
 
 For Windows to Mac transfer, copy files in Windows Explorer. The Windows agent exports that file clipboard payload over the Windows-to-Mac TCP channel when it fits the clipboard payload limit, and current Mac receivers acknowledge the import before the Windows agent treats TCP delivery as complete. Oversized file copies can still be exposed as the existing SSH fallback ZIP, and failed or unacknowledged TCP sends keep that fallback available, so the Mac sync agent pulls files into the configured Mac receive folder even when they are too large for the live TCP clipboard channel or TCP confirmation is unavailable. The Mac receiver places received files on the macOS clipboard, records the latest received Mac file paths, and notifies macOS with the received file names and total size so you can paste into Finder. When `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` is enabled, Finder reveals the newly received files directly instead of only opening the receive folder. If Companion is open, its status line also updates when new Mac files arrive; receives that arrive while another GUI operation is busy are shown after that operation finishes. The GUI can reveal the last received Mac files again if the notification was missed or Finder moved behind other windows, or copy the latest received files back onto the Mac clipboard if another clipboard action replaced them before you pasted. That clipboard restore also refreshes the local sync state so it does not get mirrored back to Windows as a new send.
 
@@ -193,7 +193,7 @@ MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="180"
 MOONLIGHT_VIDEO_CODEC="HEVC"
 MOONLIGHT_ABSOLUTE_MOUSE="yes"
 MOONLIGHT_QUIT_EXISTING="yes"
-MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH="yes"
+MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH="no"
 MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH="no"
 MOONLIGHT_ACTIVATE_ON_LAUNCH="no"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
@@ -204,6 +204,7 @@ MOONLIGHT_TRANSFER_WINDOWS_DIR="%USERPROFILE%\\Downloads\\Moonlight Companion"
 MOONLIGHT_TRANSFER_DROP_OVERLAY="yes"
 MOONLIGHT_TRANSFER_OVERSIZE_DIRECT="yes"
 MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE="yes"
+MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE="no"
 MOONLIGHT_TRANSFER_AUTO_PASTE="no"
 MOONLIGHT_TRANSFER_NOTIFY="yes"
 MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="no"
@@ -309,7 +310,7 @@ Transferred file payloads are copied into durable receive folders:
 - macOS default: `~/Downloads/Moonlight Companion`
 - Windows default: `%USERPROFILE%\Downloads\Moonlight Companion`
 
-Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can ask Windows to open the configured receive folder in Explorer or reveal the latest confirmed received item again, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` can open the latest receive result automatically after Windows confirms a Mac-to-Windows send, selecting the received item for single-item sends and opening the folder for multi-item sends. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder on demand, keep a latest-receive state for the GUI reveal action, and leave the received files ready to paste in Finder. The default clipboard payload limit is 50 MiB. When `MOONLIGHT_TRANSFER_OVERSIZE_DIRECT` is enabled, larger Mac-to-Windows drops bypass the clipboard and are copied directly into the Windows receive folder, while larger Windows-to-Mac file clipboards are made available through the SSH fallback pull path.
+Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can ask Windows to open the configured receive folder in Explorer or reveal the latest confirmed received item again, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` can open the latest receive result automatically after Windows confirms a Mac-to-Windows send, selecting the single received item when possible and opening the folder for multi-item sends. Automatic paste after Moonlight window or strip drops avoids stealing focus by default; `MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE=yes` restores the older behavior that brings Moonlight forward before sending `Ctrl+V`. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder on demand, keep a latest-receive state for the GUI reveal action, and leave the received files ready to paste in Finder. The default clipboard payload limit is 50 MiB. When `MOONLIGHT_TRANSFER_OVERSIZE_DIRECT` is enabled, larger Mac-to-Windows drops bypass the clipboard and are copied directly into the Windows receive folder, while larger Windows-to-Mac file clipboards are made available through the SSH fallback pull path.
 
 If Caps Lock Han/Eng switching does not respond, check:
 

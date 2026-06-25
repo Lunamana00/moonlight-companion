@@ -12,6 +12,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
 - Existing user settings now keep the Companion control window hidden on launch unless `MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH` is enabled, and background failures no longer raise modal alerts over the current workspace.
 - Automatic Moonlight drop overlays now avoid forced frontmost ordering, while manually shown overlays can still be brought above the stream when requested.
+- Automatic paste after Moonlight window or strip drops no longer brings Moonlight forward by default; `MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE` can opt back into the old focus-changing paste behavior.
 - The GUI now revalidates the latest Windows-to-Mac received file paths while it is open, disabling reveal/copy actions when those files have been moved or deleted.
 - Oversized Mac-to-Windows drops can now bypass the clipboard and copy directly into the Windows receive folder over SSH, with GUI state marking that auto-paste is unavailable for that direct path.
 - Oversized Windows-to-Mac file clipboards now prepare an SSH fallback ZIP instead of being silently skipped, so the Mac sync agent can still pull large received files into the Mac receive folder.

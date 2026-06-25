@@ -36,6 +36,7 @@ struct CompanionSettings {
         "MOONLIGHT_TRANSFER_DROP_OVERLAY",
         "MOONLIGHT_TRANSFER_OVERSIZE_DIRECT",
         "MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE",
+        "MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE",
         "MOONLIGHT_TRANSFER_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_NOTIFY",
         "MOONLIGHT_TRANSFER_REVEAL_MAC_DIR",
@@ -346,6 +347,7 @@ exit "${status}"
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_OVERSIZE_DIRECT", title: "Send oversized drops directly to Windows receive folder"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE", title: "Paste after Moonlight window or strip drops"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE", title: "Bring Moonlight forward before auto-paste"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste after Companion fallback drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify on file transfers"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", title: "Reveal received Mac files in Finder"))
@@ -2069,9 +2071,18 @@ exit "${status}"
                         ? (clipboardReady ? "Ready on the Windows clipboard." : "Copied to the Windows receive folder.")
                         : "Windows import confirmation is pending."
                     if pasteAfterSend && importConfirmed && clipboardReady {
-                        let pasted = self?.pasteIntoMoonlight() == true
-                        pasteSummary = pasted ? "Pasted into the focused Moonlight app." : "Ready on the Windows clipboard; paste shortcut failed."
-                        detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
+                        let allowActivation = self?.settings.bool("MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE") == true
+                        switch self?.pasteIntoMoonlight(allowActivation: allowActivation) ?? .failed {
+                        case .pasted:
+                            pasteSummary = "Pasted into Moonlight."
+                            detail += " Sent Ctrl+V to Moonlight."
+                        case .skippedNotFocused:
+                            pasteSummary = "Ready on the Windows clipboard; Moonlight was not focused, so Companion did not bring it forward."
+                            detail += " Skipped Ctrl+V because Moonlight was not focused."
+                        case .failed:
+                            pasteSummary = "Ready on the Windows clipboard; paste shortcut failed."
+                            detail += " Could not send Ctrl+V to Moonlight."
+                        }
                     } else if pasteAfterSend && importConfirmed {
                         pasteSummary = "Copied to the Windows receive folder; paste is unavailable for direct oversized transfers."
                         detail += " Skipped Ctrl+V because this transfer went directly to the Windows receive folder."
@@ -2217,14 +2228,34 @@ exit "${status}"
         }
     }
 
-    private func pasteIntoMoonlight() -> Bool {
-        let script = """
-        tell application "Moonlight" to activate
-        delay 0.15
-        tell application "System Events"
-            keystroke "v" using control down
-        end tell
-        """
+    private enum MoonlightPasteResult {
+        case pasted
+        case skippedNotFocused
+        case failed
+    }
+
+    private func pasteIntoMoonlight(allowActivation: Bool) -> MoonlightPasteResult {
+        if !allowActivation && !moonlightIsFrontmost() {
+            return .skippedNotFocused
+        }
+
+        let script: String
+        if allowActivation {
+            script = """
+            tell application "Moonlight" to activate
+            delay 0.15
+            tell application "System Events"
+                keystroke "v" using control down
+            end tell
+            """
+        } else {
+            script = """
+            tell application "System Events"
+                keystroke "v" using control down
+            end tell
+            """
+        }
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         task.arguments = ["-e", script]
@@ -2234,10 +2265,20 @@ exit "${status}"
         do {
             try task.run()
             task.waitUntilExit()
-            return task.terminationStatus == 0
+            return task.terminationStatus == 0 ? .pasted : .failed
         } catch {
+            return .failed
+        }
+    }
+
+    private func moonlightIsFrontmost() -> Bool {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
             return false
         }
+        if app.localizedName == "Moonlight" {
+            return true
+        }
+        return app.bundleURL?.lastPathComponent == "Moonlight.app"
     }
 
     private func notifyMoonlightDropIfNeeded(source: FileDropSource, title: String, body: String) {
@@ -2275,7 +2316,7 @@ exit "${status}"
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["--request-permissions"]
-        configuration.activates = true
+        configuration.activates = false
         NSWorkspace.shared.openApplication(at: helperURL, configuration: configuration) { [weak self] _, error in
             guard let error else { return }
             DispatchQueue.main.async {
