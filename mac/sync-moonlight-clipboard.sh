@@ -351,7 +351,7 @@ while true; do
 
     if [[ -n "$mac_id" && "$mac_id" != "$last_mac_id" ]]; then
       read_tcp_state
-      if [[ "$mac_id" == "$last_windows_id" ]]; then
+      if [[ "$mac_id" == "$last_windows_id" || "$mac_id" == "$last_mac_id" ]]; then
         last_mac_id="$mac_id"
       elif (( mac_bytes > max_bytes )); then
         log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"

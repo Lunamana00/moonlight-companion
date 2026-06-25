@@ -181,7 +181,10 @@ exit "${status}"
         }
     }
     private var cancelledTransferProcessIDs = Set<Int32>()
+    private var isBusy = false
     private var dropOverlayTimer: Timer?
+    private var latestMacReceiveTimer: Timer?
+    private var latestMacReceiveStateSignature = ""
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
     private var dropOverlayLastDragLocation: NSPoint?
@@ -213,6 +216,7 @@ exit "${status}"
         settings = SettingsFile.load(resourceURL: resourceURL)
         buildWindow()
         updateDropOverlayMonitor()
+        startLatestMacReceiveMonitor()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -576,6 +580,7 @@ exit "${status}"
     }
 
     private func setBusy(_ busy: Bool, status: String, detail: String) {
+        isBusy = busy
         progressIndicator.isHidden = !busy
         if busy {
             progressIndicator.startAnimation(nil)
@@ -595,6 +600,42 @@ exit "${status}"
         cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
+    }
+
+    private func startLatestMacReceiveMonitor() {
+        updateLatestMacReceiveStatus(initial: true)
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateLatestMacReceiveStatus(initial: false)
+        }
+        latestMacReceiveTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func updateLatestMacReceiveStatus(initial: Bool) {
+        let stateURL = latestMacReceiveStateURL()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            latestMacReceiveStateSignature = ""
+            return
+        }
+
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let signature = "\(modifiedAt.timeIntervalSince1970):\(size)"
+        guard signature != latestMacReceiveStateSignature else {
+            return
+        }
+        latestMacReceiveStateSignature = signature
+
+        let state = SettingsFile.parse(url: stateURL)
+        let urls = latestMacReceiveFileURLs(from: state)
+        guard !urls.isEmpty else {
+            return
+        }
+
+        if !initial && !isBusy {
+            statusLabel.stringValue = "Files Received"
+            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+        }
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
@@ -1634,6 +1675,7 @@ exit "${status}"
     @objc private func quit() {
         process?.terminate()
         transferProcess?.terminate()
+        latestMacReceiveTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()
         dropStripWindow?.close()
