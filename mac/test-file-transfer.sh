@@ -1767,6 +1767,28 @@ if ! grep -Fq "asked Windows to put the latest received items on the clipboard" 
   printf '%s\n' "$limit_multi_copy_out" >&2
   exit 1
 fi
+remove_windows_path "$limit_multi_dir_name"
+limit_multi_partial_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --select-path "$limit_multi_path_1" --select-path "$limit_multi_path_2"
+)"
+if ! grep -Fq "asked Windows to open the receive folder; some received items were unavailable" <<<"$limit_multi_partial_reveal_out"; then
+  echo "Windows receive reveal did not report partially missing explicit imported paths." >&2
+  printf '%s\n' "$limit_multi_partial_reveal_out" >&2
+  exit 1
+fi
+limit_multi_partial_copy_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" \
+    "${script_dir}/copy-windows-receive-to-clipboard.sh" \
+      --expected-id "$(meta_value id "$limit_multi_state")" \
+      --select-path "$limit_multi_path_1" \
+      --select-path "$limit_multi_path_2"
+)"
+if ! grep -Fq "asked Windows to copy the latest received items; received items were unavailable" <<<"$limit_multi_partial_copy_out"; then
+  echo "Windows receive clipboard restore did not report partially missing explicit imported paths." >&2
+  printf '%s\n' "$limit_multi_partial_copy_out" >&2
+  exit 1
+fi
 if ! assert_windows_receive_staging_absent; then
   echo "Mac -> Windows oversized multi-item direct transfer left a staging folder in the Windows receive folder." >&2
   exit 1
@@ -1782,7 +1804,6 @@ fi
 assert_mac_path_absent "$transfer_mac_dir" "$limit_multi_file_name" "File" 16
 assert_mac_path_absent "$transfer_mac_dir" "$limit_multi_dir_name" "Directory" 4
 remove_windows_file "$limit_multi_file_name"
-remove_windows_path "$limit_multi_dir_name"
 echo "Mac -> Windows oversized direct multi-item ok."
 
 echo "Testing Mac -> Windows oversized direct upload failure cleanup..."

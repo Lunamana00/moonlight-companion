@@ -2065,7 +2065,8 @@ exit "${status}"
     private func windowsReceiveRevealStateExpired(_ detail: String) -> Bool {
         detail.contains("did not match") ||
             detail.contains("state was unavailable") ||
-            detail.contains("item was unavailable")
+            detail.contains("item was unavailable") ||
+            detail.contains("items were unavailable")
     }
 
     private func requestWindowsReceiveClipboardRestore(

@@ -139,7 +139,10 @@ if (\$explicitPaths.Count -gt 0) {
     }
   }
 
-  if (\$validPaths.Count -eq 1) {
+  if (\$validPaths.Count -gt 0 -and \$validPaths.Count -lt \$explicitPaths.Count) {
+    \$targetPath = \$dir
+    \$openResult = "folder-explicit-partial-missing"
+  } elseif (\$validPaths.Count -eq 1) {
     \$targetPath = \$validPaths[0]
     \$selectedLatestImport = \$true
     \$openResult = "selected-explicit"
@@ -252,6 +255,9 @@ case "$open_result" in
     ;;
   folder-explicit-missing-item)
     printf 'asked Windows to open the receive folder; received item was unavailable\n'
+    ;;
+  folder-explicit-partial-missing)
+    printf 'asked Windows to open the receive folder; some received items were unavailable\n'
     ;;
   folder-id-mismatch)
     printf 'asked Windows to open the receive folder; latest item did not match this transfer\n'
