@@ -228,6 +228,7 @@ exit "${status}"
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
     private var dropOverlayLastDragLocation: NSPoint?
+    private let suppressWindowOnLaunch = AppDelegate.shouldSuppressWindowOnLaunch()
     private var dropOverlayMouseDownFrontmostName = ""
     private var dropOverlayMouseDownAt = Date.distantPast
     private var dropOverlayDragCaptured = false
@@ -283,9 +284,19 @@ exit "${status}"
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
+            if suppressWindowOnLaunch {
+                if isCurrentProcessFrontmost() {
+                    showMainWindow(activate: false)
+                }
+                return true
+            }
             showMainWindow(activate: true)
         }
         return true
+    }
+
+    private func isCurrentProcessFrontmost() -> Bool {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
     }
 
     private func buildWindow() {
@@ -495,9 +506,29 @@ exit "${status}"
         ])
 
         self.window = window
-        if settings.bool("MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH") ||
-            settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH") {
+        let shouldShowWindowOnLaunch = settings.bool("MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH") ||
+            settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH")
+        if !suppressWindowOnLaunch && shouldShowWindowOnLaunch {
             showMainWindow(activate: settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH"))
+        }
+    }
+
+    private static func shouldSuppressWindowOnLaunch() -> Bool {
+        let launchArguments = Set(CommandLine.arguments.dropFirst())
+        if launchArguments.contains("--background") ||
+            launchArguments.contains("--quiet-launch") ||
+            launchArguments.contains("--no-window") {
+            return true
+        }
+        return boolEnvironment("MOONLIGHT_COMPANION_SUPPRESS_WINDOW_ON_LAUNCH")
+    }
+
+    private static func boolEnvironment(_ key: String) -> Bool {
+        switch ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "y", "yes", "true", "on":
+            return true
+        default:
+            return false
         }
     }
 

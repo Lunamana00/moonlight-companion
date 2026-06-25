@@ -41,10 +41,10 @@ Build the wrapper app:
 scripts/build-mac-app.sh
 ```
 
-Run it from the build output:
+Run it from the build output without surfacing the control window:
 
 ```bash
-open -g "dist/Moonlight Companion.app"
+scripts/open-mac-app-background.sh "dist/Moonlight Companion.app"
 ```
 
 Or install it into `/Applications`:
@@ -52,7 +52,7 @@ Or install it into `/Applications`:
 ```bash
 rm -rf "/Applications/Moonlight Companion.app"
 ditto "dist/Moonlight Companion.app" "/Applications/Moonlight Companion.app"
-open -g "/Applications/Moonlight Companion.app"
+scripts/open-mac-app-background.sh "/Applications/Moonlight Companion.app"
 ```
 
 Click the Dock icon when you want to open the control window, adjust the settings, and click `Start Moonlight`. The app then:
@@ -62,7 +62,7 @@ Click the Dock icon when you want to open the control window, adjust the setting
 3. Starts the macOS clipboard sync and Moonlight keyboard agents.
 4. Launches Moonlight with the configured stream settings.
 
-The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. Existing user settings migrate to hide the Companion control window on launch so background work does not interrupt the current Mac workspace; click the Dock icon or enable `Show Companion window on launch` when you want the panel to appear automatically. By default neither the Companion window nor the Moonlight launch/placement helper forces itself to the foreground; enable `Bring Companion window forward on launch`, `Bring Moonlight forward after launch`, or `Bring Moonlight forward before auto-paste` only when you prefer the foreground behavior.
+The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. Existing user settings migrate to hide the Companion control window on launch so background work does not interrupt the current Mac workspace; click the Dock icon or enable `Show Companion window on launch` when you want the panel to appear automatically. `scripts/open-mac-app-background.sh` starts the app with `--background` only when it is not already running, avoiding macOS reopen events during rebuilds and automated restarts. By default neither the Companion window nor the Moonlight launch/placement helper forces itself to the foreground; enable `Bring Companion window forward on launch`, `Bring Moonlight forward after launch`, or `Bring Moonlight forward before auto-paste` only when you prefer the foreground behavior.
 
 Inside the Moonlight session, use Windows shortcuts:
 
@@ -217,10 +217,10 @@ Build the wrapper app:
 scripts/build-mac-app.sh
 ```
 
-Open it:
+Open it quietly:
 
 ```bash
-open "dist/Moonlight Companion.app"
+scripts/open-mac-app-background.sh "dist/Moonlight Companion.app"
 ```
 
 The app bundle includes the Mac scripts, Windows agent scripts, and config files needed by the launcher. If `config/moonlight-companion.conf` exists when the app is built, it is copied into the local `dist/` app bundle.

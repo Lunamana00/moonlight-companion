@@ -7,6 +7,7 @@ mkdir -p "${repo_dir}/build"
 
 bash -n \
   "${repo_dir}/scripts/build-mac-app.sh" \
+  "${repo_dir}/scripts/open-mac-app-background.sh" \
   "${repo_dir}/scripts/package-release.sh" \
   "${repo_dir}/mac/moonlight-companion-launch.sh" \
   "${repo_dir}/mac/deploy-windows-agent.sh" \
