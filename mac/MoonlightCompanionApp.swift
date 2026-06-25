@@ -51,6 +51,13 @@ private func moonlightWindowsImportSummary(importedNamesB64: String, importedPat
     return moonlightSummarizedNames(fallbackNames, emptySummary: "")
 }
 
+private func moonlightWindowsImportConfirmed(id: String, confirmation: String, importedPaths: [String]) -> Bool {
+    !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !confirmation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        confirmation.trimmingCharacters(in: .whitespacesAndNewlines) != "pending" &&
+        !importedPaths.isEmpty
+}
+
 struct CompanionSettings {
     static let orderedKeys = [
         "WINDOWS_SSH",
@@ -1080,17 +1087,18 @@ exit "${status}"
     private func loadLatestWindowsReceiveState() {
         let state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        latestWindowsReceiveID = windowsImportConfirmed(state) ? id : ""
+        let importedPaths = latestWindowsImportedPaths(from: state)
+        latestWindowsReceiveID = windowsImportConfirmed(state, importedPaths: importedPaths) ? id : ""
         latestWindowsReceiveSummary = windowsImportSummary(state)
-        latestWindowsReceivePaths = latestWindowsImportedPaths(from: state)
+        latestWindowsReceivePaths = importedPaths
         updateLatestWindowsReceiveButtonState()
     }
 
-    private func windowsImportConfirmed(_ state: [String: String]) -> Bool {
+    private func windowsImportConfirmed(_ state: [String: String], importedPaths: [String]? = nil) -> Bool {
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
-        return !id.isEmpty && !confirmation.isEmpty && confirmation != "pending" && importedPaths > 0
+        let paths = importedPaths ?? latestWindowsImportedPaths(from: state)
+        return moonlightWindowsImportConfirmed(id: id, confirmation: confirmation, importedPaths: paths)
     }
 
     private func windowsClipboardReady(_ state: [String: String]) -> Bool {
@@ -1101,22 +1109,22 @@ exit "${status}"
     private func recordLatestWindowsReceiveState(_ state: [String: String]) {
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
-        guard windowsImportConfirmed(state) else {
+        let importedPaths = latestWindowsImportedPaths(from: state)
+        guard windowsImportConfirmed(state, importedPaths: importedPaths) else {
             clearLatestWindowsReceiveState()
             return
         }
 
         latestWindowsReceiveID = id
         latestWindowsReceiveSummary = windowsImportSummary(state)
-        latestWindowsReceivePaths = latestWindowsImportedPaths(from: state)
+        latestWindowsReceivePaths = importedPaths
         var values: [String: String] = [
             "bytes": state["bytes"] ?? "",
             "confirmation": confirmation,
             "clipboard_ready": state["clipboard_ready"] ?? "",
             "id": id,
             "imported_names_b64": state["imported_names_b64"] ?? "",
-            "imported_paths": "\(importedPaths)",
+            "imported_paths": "\(importedPaths.count)",
             "kind": state["kind"] ?? ""
         ]
         for (index, path) in latestWindowsReceivePaths.enumerated() {
@@ -3741,6 +3749,30 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             moonlightWindowsImportSummary(importedNamesB64: "", importedPaths: []) == "",
             "empty import state should not produce a summary"
+        )
+        try expect(
+            moonlightWindowsImportConfirmed(
+                id: "files:confirmed",
+                confirmation: "tcp-ack",
+                importedPaths: ["C:\\Receive\\file.txt"]
+            ),
+            "confirmed import with decoded paths was not accepted"
+        )
+        try expect(
+            !moonlightWindowsImportConfirmed(
+                id: "files:missing-paths",
+                confirmation: "tcp-ack",
+                importedPaths: []
+            ),
+            "confirmed import without decoded paths was accepted"
+        )
+        try expect(
+            !moonlightWindowsImportConfirmed(
+                id: "files:pending",
+                confirmation: "pending",
+                importedPaths: ["C:\\Receive\\file.txt"]
+            ),
+            "pending import was accepted"
         )
         print("windows-receive-summary self-test ok")
         return 0
