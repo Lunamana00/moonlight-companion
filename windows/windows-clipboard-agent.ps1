@@ -23,6 +23,7 @@ $MoonlightCapsLockHangulTcpPort = "47321"
 $MoonlightClipboardTcp = "yes"
 $MoonlightClipboardMacToWindowsTcpPort = "47331"
 $MoonlightClipboardWindowsToMacTcpPort = "47332"
+$MoonlightClipboardTcpIoTimeoutMs = "8000"
 $MoonlightTransferOversizeDirect = "yes"
 $MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
 $MoonlightMacFallbackMaxFailures = "3"
@@ -1304,7 +1305,11 @@ function Receive-TcpPayloadToFile($stream, $path, [long]$byteCount) {
 
 function Receive-ClipboardTcpPayload($client) {
     $client.NoDelay = $true
+    $client.ReceiveTimeout = $script:clipboardTcpIoTimeoutMs
+    $client.SendTimeout = $script:clipboardTcpIoTimeoutMs
     $stream = $client.GetStream()
+    $stream.ReadTimeout = $script:clipboardTcpIoTimeoutMs
+    $stream.WriteTimeout = $script:clipboardTcpIoTimeoutMs
     $tmpZip = "$macZip.tcp.tmp"
 
     try {
@@ -1369,6 +1374,45 @@ function Receive-ClipboardTcpClients($listener) {
         if ($handled -ge 8) {
             break
         }
+    }
+}
+
+function Test-ClipboardTcpReceiveTimeout([int]$timeoutMs = 300) {
+    $previousTimeout = $script:clipboardTcpIoTimeoutMs
+    $script:clipboardTcpIoTimeoutMs = $timeoutMs
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $client = $null
+    $serverClient = $null
+    try {
+        $listener.Start(1)
+        $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        $client = [System.Net.Sockets.TcpClient]::new()
+        $client.Connect([System.Net.IPAddress]::Loopback, $port)
+        $serverClient = $listener.AcceptTcpClient()
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $failed = $false
+        try {
+            Receive-ClipboardTcpPayload $serverClient
+        } catch {
+            $failed = $true
+        }
+        $sw.Stop()
+
+        if (-not $failed) {
+            throw "TCP receive timeout guard did not fail an idle client"
+        }
+        if ($sw.ElapsedMilliseconds -gt 4000) {
+            throw "TCP receive timeout guard was too slow: $($sw.ElapsedMilliseconds)ms"
+        }
+
+        Write-Output "tcp_receive_timeout=ok"
+    } finally {
+        $script:clipboardTcpIoTimeoutMs = $previousTimeout
+        if ($null -ne $serverClient) { try { $serverClient.Dispose() } catch {} }
+        if ($null -ne $client) { try { $client.Dispose() } catch {} }
+        try { $listener.Stop() } catch {}
     }
 }
 
@@ -1474,6 +1518,7 @@ $capsLockHangulHookInstalled = $false
 $enableClipboardTcp = Test-SettingEnabled $MoonlightClipboardTcp $true
 $clipboardMacToWindowsTcpPort = Get-IntSetting $MoonlightClipboardMacToWindowsTcpPort 47331
 $clipboardWindowsToMacTcpPort = Get-IntSetting $MoonlightClipboardWindowsToMacTcpPort 47332
+$clipboardTcpIoTimeoutMs = Get-PositiveIntSetting $MoonlightClipboardTcpIoTimeoutMs 8000
 $enableTransferOversizeDirect = Test-SettingEnabled $MoonlightTransferOversizeDirect $true
 $transferWindowsDir = Get-ExpandedPathSetting $MoonlightTransferWindowsDir "%USERPROFILE%\Downloads\Moonlight Companion"
 $clipboardTcpListener = $null

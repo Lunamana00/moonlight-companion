@@ -16,6 +16,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Queued file drops now preserve the current operation status while adding a queue note to the detail text, so active sends, reveals, and tests stay understandable.
 - Queued promised-file drop failures no longer overwrite the status of the transfer, reveal, or test that is already running.
 - Mac clipboard helper import/export calls now have a bounded timeout in both the polling sync loop and TCP receiver, so a stuck clipboard or file operation cannot wedge later transfers.
+- Windows clipboard TCP receive sockets now use bounded read/write timeouts, preventing half-open Mac-to-Windows TCP sends from blocking later transfers.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.
 - Windows-to-Mac Mac receive-folder imports now stage received files before moving them into place, so a broken payload cannot leave only some files in the receive folder.
 - Windows-to-Mac Mac receive-folder imports now remove stale hidden staging folders left by interrupted older receives when the next Mac receive-folder import begins.

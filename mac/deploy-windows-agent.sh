@@ -57,6 +57,7 @@ write_windows_agent_settings() {
     printf '$MoonlightClipboardTcp = "%s"\n' "$clipboard_tcp"
     printf '$MoonlightClipboardMacToWindowsTcpPort = "%s"\n' "$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT"
     printf '$MoonlightClipboardWindowsToMacTcpPort = "%s"\n' "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT"
+    printf '$MoonlightClipboardTcpIoTimeoutMs = "%s"\n' "${MOONLIGHT_CLIPBOARD_TCP_IO_TIMEOUT_MS:-8000}"
     printf '$MoonlightTransferOversizeDirect = "%s"\n' "$(normalize_yes_no "$MOONLIGHT_TRANSFER_OVERSIZE_DIRECT")"
     printf '$MoonlightTransferWindowsDir = "%s"\n' "$MOONLIGHT_TRANSFER_WINDOWS_DIR"
   } > "$settings_tmp"

@@ -242,10 +242,11 @@ upload_windows_fallback_zip() {
 }
 
 verify_windows_agent_settings() {
-  local expected_max expected_oversize script encoded output
+  local expected_max expected_oversize expected_tcp_timeout script encoded output
   expected_max="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
   expected_oversize="$(normalize_yes_no "${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}")"
-  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$settings = Join-Path \$dir 'windows-agent-settings.ps1'; . \$settings; Write-Output ('max=' + [string]\$MoonlightClipboardMaxBytes); Write-Output ('oversize=' + [string]\$MoonlightTransferOversizeDirect); \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$tokens = \$null; \$parseErrors = \$null; [System.Management.Automation.Language.Parser]::ParseFile(\$agent, [ref]\$tokens, [ref]\$parseErrors) | Out-Null; if (\$parseErrors.Count -gt 0) { foreach (\$parseError in \$parseErrors) { Write-Output ('parse_error=' + \$parseError.Message) }; exit 1 }; Write-Output 'agent_parse=ok'"
+  expected_tcp_timeout="${MOONLIGHT_CLIPBOARD_TCP_IO_TIMEOUT_MS:-8000}"
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$settings = Join-Path \$dir 'windows-agent-settings.ps1'; . \$settings; Write-Output ('max=' + [string]\$MoonlightClipboardMaxBytes); Write-Output ('oversize=' + [string]\$MoonlightTransferOversizeDirect); Write-Output ('tcp_timeout=' + [string]\$MoonlightClipboardTcpIoTimeoutMs); \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$tokens = \$null; \$parseErrors = \$null; [System.Management.Automation.Language.Parser]::ParseFile(\$agent, [ref]\$tokens, [ref]\$parseErrors) | Out-Null; if (\$parseErrors.Count -gt 0) { foreach (\$parseError in \$parseErrors) { Write-Output ('parse_error=' + \$parseError.Message) }; exit 1 }; Write-Output 'agent_parse=ok'"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   if ! output="$(
     ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
@@ -257,6 +258,7 @@ verify_windows_agent_settings() {
   fi
   if [[ "$output" != *"max=${expected_max}"* ||
         "$output" != *"oversize=${expected_oversize}"* ||
+        "$output" != *"tcp_timeout=${expected_tcp_timeout}"* ||
         "$output" != *"agent_parse=ok"* ]]; then
     echo "Windows agent settings or script parse output was incomplete." >&2
     printf '%s\n' "$output" >&2
@@ -362,6 +364,25 @@ POWERSHELL
   fi
   if [[ "$output" != *"receive_staging_cleanup=ok"* ]]; then
     echo "Windows agent receive staging cleanup guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
+verify_windows_agent_tcp_receive_timeout() {
+  local script encoded output
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'; . \$agent; Test-ClipboardTcpReceiveTimeout 300; Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent TCP receive timeout guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"tcp_receive_timeout=ok"* ]]; then
+    echo "Windows agent TCP receive timeout guard output was incomplete." >&2
     printf '%s\n' "$output" >&2
     return 1
   fi
@@ -890,6 +911,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   verify_windows_agent_file_drop_export_guard
   verify_windows_agent_file_import_guard
   verify_windows_agent_receive_staging_cleanup
+  verify_windows_agent_tcp_receive_timeout
   verify_windows_agent_compress_cleanup
   echo "Windows agent ready."
 fi

@@ -32,6 +32,7 @@ struct CompanionSettings {
         "MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT",
         "MOONLIGHT_CLIPBOARD_MAX_BYTES",
         "MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS",
+        "MOONLIGHT_CLIPBOARD_TCP_IO_TIMEOUT_MS",
         "MOONLIGHT_TRANSFER_MAC_DIR",
         "MOONLIGHT_TRANSFER_WINDOWS_DIR",
         "MOONLIGHT_TRANSFER_DROP_OVERLAY",
@@ -370,6 +371,7 @@ exit "${status}"
         form.addArrangedSubview(check("MOONLIGHT_SHORTCUT_REMAP", title: "Map Command shortcuts to Windows Control shortcuts"))
         form.addArrangedSubview(check("MOONLIGHT_CLIPBOARD_TCP", title: "Use TCP clipboard channels"))
         form.addArrangedSubview(row("Helper Timeout", text("MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS", width: 96)))
+        form.addArrangedSubview(row("TCP I/O Timeout", text("MOONLIGHT_CLIPBOARD_TCP_IO_TIMEOUT_MS", width: 96)))
 
         form.addArrangedSubview(sectionTitle("Transfer"))
         form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
