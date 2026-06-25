@@ -43,6 +43,7 @@ mac_suspend_state="${MOONLIGHT_CLIPBOARD_MAC_SUSPEND_STATE:-${runtime_dir}/clipb
 transfer_quiet_state="${MOONLIGHT_TRANSFER_QUIET_STATE:-${runtime_dir}/transfer-quiet-state.txt}"
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
+transfer_notification_log="${MOONLIGHT_TRANSFER_NOTIFICATION_LOG:-}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
 transfer_oversize_direct="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
@@ -666,9 +667,33 @@ tcp_receive_in_progress() {
   (( now - lock_mtime < 15 ))
 }
 
+display_macos_notification() {
+  local subtitle="$1"
+  local body="$2"
+
+  [[ "$(normalize_yes_no "$transfer_notify")" == "yes" ]] || return 0
+
+  if [[ -n "$transfer_notification_log" ]]; then
+    mkdir -p "$(dirname "$transfer_notification_log")"
+    {
+      printf 'subtitle_b64=%s\n' "$(printf '%s' "$subtitle" | base64_state_value)"
+      printf 'body_b64=%s\n' "$(printf '%s' "$body" | base64_state_value)"
+      printf '\n'
+    } >> "$transfer_notification_log"
+    return 0
+  fi
+
+  /usr/bin/osascript -e '
+on run argv
+  display notification (item 2 of argv) with title "Moonlight Companion" subtitle (item 1 of argv)
+end run
+' "$subtitle" "$body" >/dev/null 2>&1 || true
+}
+
 notify_windows_files_received() {
   local meta_path="$1"
-  local kind detail
+  local kind detail reveal_enabled notification_body
+  local -a reveal_paths
 
   kind="$(payload_kind "$meta_path")"
   [[ "$kind" == "files" ]] || return 0
@@ -682,13 +707,7 @@ notify_windows_files_received() {
     notification_body="Received ${detail} from Windows. Paste in Finder or open the Mac receive folder."
   fi
 
-  if [[ "$(normalize_yes_no "$transfer_notify")" == "yes" ]]; then
-    /usr/bin/osascript -e '
-on run argv
-  display notification (item 1 of argv) with title "Moonlight Companion" subtitle "Files received from Windows"
-end run
-' "$notification_body" >/dev/null 2>&1 || true
-  fi
+  display_macos_notification "Files received from Windows" "$notification_body"
 
   if [[ "$reveal_enabled" == "yes" ]]; then
     reveal_paths=()
@@ -703,6 +722,12 @@ end run
       /usr/bin/open "$transfer_mac_dir" >/dev/null 2>&1 || true
     fi
   fi
+}
+
+notify_mac_file_clipboard_failure() {
+  local message="$1"
+  transfer_ui_quiet && return 0
+  display_macos_notification "Mac file clipboard was not sent" "$message"
 }
 
 run_helper() {
@@ -785,6 +810,7 @@ log_mac_export_failure_if_needed() {
     if [[ "$mac_export_error" != "$last_mac_export_failure" ]]; then
       log "skip Mac -> Windows file clipboard; $message"
       write_mac_file_clipboard_failure_state "$message"
+      notify_mac_file_clipboard_failure "$message"
     fi
     last_mac_export_failure="$mac_export_error"
     return 0
@@ -834,8 +860,18 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SEL
   test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-mac-export-failure-log.XXXXXX")"
   trap 'rm -rf "$test_dir"' EXIT
   log_path="${test_dir}/sync.log"
+  transfer_notify="yes"
+  transfer_notification_log="${test_dir}/notifications.txt"
   mac_file_clipboard_failure_state="${test_dir}/failure-state.txt"
   last_mac_export_failure=""
+  transfer_notify="no"
+  notify_mac_file_clipboard_failure "disabled notification should stay quiet"
+  if [[ -e "$transfer_notification_log" ]]; then
+    echo "Mac export failure log self-test recorded a notification while notifications were disabled." >&2
+    cat "$transfer_notification_log" >&2
+    exit 1
+  fi
+  transfer_notify="yes"
   printf 'file-drop-unavailable: source path is missing: /tmp/missing-file\n' > "${test_dir}/mac-meta.txt.err"
   log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt" || {
     echo "Mac export failure log self-test did not recognize file-drop-unavailable." >&2
@@ -854,6 +890,13 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SEL
         "$(decode_state_b64 "$(payload_value message_b64 "$mac_file_clipboard_failure_state")")" != "source path is missing: /tmp/missing-file" ]]; then
     echo "Mac export failure log self-test did not write a decodable failure state." >&2
     cat "$mac_file_clipboard_failure_state" >&2
+    exit 1
+  fi
+  if [[ "$(grep -Fc 'subtitle_b64=' "$transfer_notification_log")" != "1" ||
+        "$(decode_state_b64 "$(payload_value subtitle_b64 "$transfer_notification_log")")" != "Mac file clipboard was not sent" ||
+        "$(decode_state_b64 "$(payload_value body_b64 "$transfer_notification_log")")" != "source path is missing: /tmp/missing-file" ]]; then
+    echo "Mac export failure log self-test did not record one decodable stale-file notification." >&2
+    cat "$transfer_notification_log" >&2
     exit 1
   fi
   printf 'unsupported-or-empty-clipboard\n' > "${test_dir}/mac-meta.txt.err"

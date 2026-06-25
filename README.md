@@ -90,7 +90,7 @@ Files received from Windows are marked as the current Mac clipboard state, so th
 
 Mac-to-Windows file clipboard exports validate all source file paths before packaging and discard partial payloads after copy failures, so stale Finder file clipboards do not turn into broken partial transfers.
 
-When a background Mac file clipboard points at a missing or unreadable local path, the sync log records the stale source once per distinct failure instead of silently doing nothing or flooding repeated errors. If Companion is open, the same stale Mac file clipboard failure is shown in the status line once the current operation is idle.
+When a background Mac file clipboard points at a missing or unreadable local path, the sync log records the stale source once per distinct failure instead of silently doing nothing or flooding repeated errors. The sync agent also posts a macOS notification for that distinct failure when transfer notifications are enabled. If Companion is open, the same stale Mac file clipboard failure is shown in the status line once the current operation is idle.
 
 If the TCP channel is unavailable, the fallback polling path keeps the same receive-folder import and file-detail notifications.
 
