@@ -51,6 +51,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Latest Windows receive state now keeps a short received-name summary so later reveal actions show what will be selected.
 - Latest Windows receive state now keeps the confirmed Windows receive paths too, so later reveal actions can select the exact received item without depending on the current remote import state.
 - `Reveal Last Windows Receive` now keeps that received-name summary visible after the reveal/open action completes.
+- Windows receive-folder reveal now clears stale remote opener scripts from interrupted previous reveal attempts.
 - Automatic Windows receive-result reveal now waits for Windows import confirmation instead of opening Explorer while a fallback transfer is still pending.
 - GUI sends that need automatic paste or reveal now wait longer for fallback Windows import confirmation before declaring the result pending.
 - The GUI now watches the latest Windows-to-Mac receive state and updates its status line when new Mac files arrive while Companion is open.

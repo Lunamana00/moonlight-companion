@@ -15,6 +15,7 @@ fi
 
 WINDOWS_SSH="${WINDOWS_SSH:-moonlight-windows}"
 MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}"
+remote_dir=".moonlight-clipboard-sync"
 select_latest_import="no"
 expected_id=""
 select_paths=()
@@ -82,6 +83,18 @@ ps_array_literal() {
     ps_single_quoted "$value"
   done
   printf ')'
+}
+
+encode_powershell() {
+  iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
+}
+
+cleanup_stale_remote_scripts() {
+  local cleanup_script encoded
+  cleanup_script='$ErrorActionPreference = "SilentlyContinue"; $dir = Join-Path $env:USERPROFILE ".moonlight-clipboard-sync"; if (Test-Path -LiteralPath $dir) { $cutoff = (Get-Date).AddHours(-6); Get-ChildItem -LiteralPath $dir -File -Filter "moonlight-open-windows-receive-*.ps1" | Where-Object { $_.LastWriteTime -lt $cutoff } | Remove-Item -Force }'
+  encoded="$(printf '%s' "$cleanup_script" | encode_powershell)"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
 transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
@@ -175,7 +188,7 @@ Write-Output ("MOONLIGHT_OPEN_RESULT={0}" -f \$openResult)
 POWERSHELL
 
 script_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-open-windows-receive.XXXXXX.ps1")"
-remote_script="${remote_dir:-.moonlight-clipboard-sync}/moonlight-open-windows-receive-$$-$RANDOM.ps1"
+remote_script="${remote_dir}/moonlight-open-windows-receive-$$-$RANDOM.ps1"
 remote_script_cmd="${remote_script//\//\\}"
 cleanup_remote_script() {
   rm -f "$script_tmp"
@@ -186,7 +199,8 @@ trap cleanup_remote_script EXIT
 
 printf '\xef\xbb\xbf%s' "$script" > "$script_tmp"
 ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-  "cmd.exe /c if not exist .moonlight-clipboard-sync mkdir .moonlight-clipboard-sync" >/dev/null
+  "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
+cleanup_stale_remote_scripts
 scp "${scp_opts[@]}" "$script_tmp" "${WINDOWS_SSH}:${remote_script}" >/dev/null
 remote_output="$(
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \

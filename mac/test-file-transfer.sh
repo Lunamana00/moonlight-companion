@@ -438,6 +438,24 @@ remove_windows_mac_upload_artifacts() {
     "cmd.exe /c del /Q \"${remote_dir}\\mac-to-windows.zip\" \"${remote_dir}\\mac-to-windows.zip.tmp\" 2>nul" >/dev/null 2>&1 || true
 }
 
+write_stale_windows_receive_opener_script() {
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; \$path = Join-Path \$dir 'moonlight-open-windows-receive-stale-test.ps1'; Set-Content -LiteralPath \$path -Value 'stale opener script' -Encoding UTF8; (Get-Item -LiteralPath \$path).LastWriteTime = (Get-Date).AddHours(-12)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
+windows_receive_opener_test_script_exists() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c if exist \"${remote_dir}\\moonlight-open-windows-receive-stale-test.ps1\" (exit 0) else (exit 1)" >/dev/null 2>&1
+}
+
+remove_windows_receive_opener_test_script() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_dir}\\moonlight-open-windows-receive-stale-test.ps1\" 2>nul" >/dev/null 2>&1 || true
+}
+
 create_windows_blocking_transfer_dir() {
   local script encoded
   script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$path = Join-Path \$env:TEMP ('moonlight-direct-blocker-' + [guid]::NewGuid().ToString('N')); Set-Content -LiteralPath \$path -Value 'moonlight direct transfer blocker' -Encoding UTF8; Write-Output \$path"
@@ -721,6 +739,7 @@ cleanup_self_test_artifacts() {
   cleanup_mac_self_test_files "$transfer_mac_dir"
   remove_windows_fallback_zip
   remove_windows_mac_upload_artifacts
+  remove_windows_receive_opener_test_script
   cleanup_windows_self_test_files
 }
 
@@ -1148,6 +1167,8 @@ if ! wait_for_windows_file "$m2w_collision_name"; then
   echo "Mac -> Windows transfer did not create a collision-safe file in the Windows receive folder." >&2
   exit 1
 fi
+remove_windows_receive_opener_test_script
+write_stale_windows_receive_opener_script
 windows_reveal_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
     "${script_dir}/open-windows-receive-folder.sh" --select-path "$m2w_state_path"
@@ -1155,6 +1176,11 @@ windows_reveal_out="$(
 if ! grep -Fq "asked Windows to select the received item" <<<"$windows_reveal_out"; then
   echo "Windows receive reveal did not select the explicit imported path." >&2
   printf '%s\n' "$windows_reveal_out" >&2
+  exit 1
+fi
+if windows_receive_opener_test_script_exists; then
+  remove_windows_receive_opener_test_script
+  echo "Windows receive reveal left a stale remote opener script behind." >&2
   exit 1
 fi
 remove_windows_file "$m2w_name"
