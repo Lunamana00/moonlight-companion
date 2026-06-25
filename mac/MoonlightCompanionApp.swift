@@ -2941,6 +2941,9 @@ enum FileDropReader {
                 }
                 continue
             }
+            if requireEveryLineToBeFile && !FileManager.default.fileExists(atPath: url.standardizedFileURL.path) {
+                return []
+            }
             urls.append(url)
         }
         return urls
@@ -3343,6 +3346,12 @@ private func runFileDropReaderSelfTest() -> Int32 {
         }
         try expect(!FileDropReader.hasFileDropContent(from: mixedTextPasteboard), "mixed plain text was treated as a file drop")
         mixedTextPasteboard.releaseGlobally()
+
+        let missingTextPasteboard = withPasteboard { pasteboard in
+            pasteboard.setString("\(first.absoluteString)\n\(root.appendingPathComponent("missing.txt").path)", forType: .string)
+        }
+        try expect(!FileDropReader.hasFileDropContent(from: missingTextPasteboard), "missing plain-text path was treated as a file drop")
+        missingTextPasteboard.releaseGlobally()
 
         print("file-drop-reader self-test ok")
         return 0

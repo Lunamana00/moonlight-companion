@@ -9,6 +9,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
 - Moonlight window, strip, Companion drops, and the macOS clipboard helper now accept broader file URL pasteboard variants such as `public.url`, making file drags and file clipboards from more macOS sources arrive as transfers.
 - Moonlight window, strip, and Companion drops now accept plain-text file URL or absolute-path lists when every non-comment line is a file reference, making file drags from more Mac apps behave like ordinary file drops without changing text clipboard sync.
+- Plain-text file-reference drops now require every referenced local path to exist before the GUI accepts the drag, avoiding misleading file transfer attempts from stale path text.
 - File URL pasteboard strings can now contain multiple newline-separated file URLs or paths, so multi-file drags and file clipboards from more macOS apps are preserved as multi-item transfers.
 - Moonlight window, strip, and Companion drop targets now accept macOS file promises, materializing promised files into a temporary staging folder before sending them through the normal Mac-to-Windows transfer pipeline.
 - Promised file drops can now be cancelled while the source app is still materializing files, and their temporary staging folders are cleaned up with other queued transfer work.
