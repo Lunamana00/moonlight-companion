@@ -28,6 +28,7 @@ tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows
 mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
 mac_suspend_state="${MOONLIGHT_CLIPBOARD_MAC_SUSPEND_STATE:-${runtime_dir}/clipboard-mac-suspend-state.txt}"
 transfer_quiet_state="${MOONLIGHT_TRANSFER_QUIET_STATE:-${runtime_dir}/transfer-quiet-state.txt}"
+latest_windows_receive_state="${MOONLIGHT_LATEST_WINDOWS_RECEIVE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt}"
 source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
@@ -605,7 +606,9 @@ remove_windows_file() {
 
 wait_for_windows_file() {
   local file_name="$1"
-  for _ in {1..20}; do
+  local attempts="${2:-20}"
+  local index
+  for ((index = 0; index < attempts; index++)); do
     if windows_file_exists "$file_name"; then
       return 0
     fi
@@ -855,6 +858,22 @@ wait_for_mac_receive_state_id() {
   return 1
 }
 
+wait_for_latest_windows_receive_state_id() {
+  local expected_id="$1"
+  local attempts="${2:-80}"
+  local index latest_id
+  for ((index = 0; index < attempts; index++)); do
+    if [[ -f "$latest_windows_receive_state" ]]; then
+      latest_id="$(meta_value "id" "$latest_windows_receive_state")"
+      if [[ "$latest_id" == "$expected_id" ]]; then
+        return 0
+      fi
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 mac_transfer_services_ready() {
   /usr/bin/nc -z 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" >/dev/null 2>&1
 }
@@ -1006,6 +1025,26 @@ save_clipboard_snapshot() {
   fi
 }
 
+save_latest_windows_receive_snapshot() {
+  latest_windows_receive_snapshot_saved="no"
+  latest_windows_receive_snapshot="${tmp_dir}/latest-windows-receive-state.snapshot"
+  if [[ -f "$latest_windows_receive_state" ]]; then
+    cp "$latest_windows_receive_state" "$latest_windows_receive_snapshot"
+    latest_windows_receive_snapshot_saved="yes"
+  fi
+}
+
+restore_latest_windows_receive_snapshot() {
+  local state_dir
+  state_dir="$(dirname "$latest_windows_receive_state")"
+  if [[ "${latest_windows_receive_snapshot_saved:-no}" == "yes" && -f "${latest_windows_receive_snapshot:-}" ]]; then
+    mkdir -p "$state_dir"
+    cp "$latest_windows_receive_snapshot" "$latest_windows_receive_state"
+  else
+    rm -f "$latest_windows_receive_state" "${latest_windows_receive_state}.tmp"
+  fi
+}
+
 restore_clipboard_snapshot() {
   [[ "${clipboard_snapshot_saved:-no}" == "yes" ]] || return 0
   [[ -f "$clipboard_snapshot_meta" ]] || return 0
@@ -1058,6 +1097,7 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
 
 cleanup_self_test_artifacts() {
   restore_clipboard_snapshot
+  restore_latest_windows_receive_snapshot
   rm -f "$mac_suspend_state"
   rm -f "$transfer_quiet_state"
   rm -rf "$tmp_dir"
@@ -1078,6 +1118,7 @@ verify_tcp_ack_path_output_self_test
 verify_send_files_ack_path_state_self_test
 verify_sync_latest_windows_ack_state_self_test
 save_clipboard_snapshot
+save_latest_windows_receive_snapshot
 write_mac_clipboard_suspend_state
 write_transfer_quiet_state
 
@@ -1630,6 +1671,61 @@ if ! wait_for_windows_mac_zip_absent 80; then
   exit 1
 fi
 echo "Mac -> Windows stale fallback cleanup ok."
+
+echo "Testing Mac -> Windows background file clipboard sync..."
+m2w_clipboard_file="${tmp_dir}/moonlight-companion-transfer-test-mac-clipboard-${stamp}.txt"
+m2w_clipboard_name="$(basename "$m2w_clipboard_file")"
+m2w_clipboard_payload="${tmp_dir}/mac-to-windows-clipboard-payload"
+m2w_clipboard_meta="${tmp_dir}/mac-to-windows-clipboard-meta.txt"
+printf 'Moonlight Companion Mac clipboard sync test %s\n' "$stamp" > "$m2w_clipboard_file"
+m2w_clipboard_hash="$(mac_file_sha256 "$m2w_clipboard_file")"
+rm -f "$latest_windows_receive_state" "${latest_windows_receive_state}.tmp"
+rm -f "$mac_suspend_state"
+rm -f "$mac_ignore_state"
+"$helper" set-files "$m2w_clipboard_payload" "$m2w_clipboard_file" > "$m2w_clipboard_meta"
+m2w_clipboard_id="$(meta_value id "$m2w_clipboard_meta")"
+if ! wait_for_windows_file "$m2w_clipboard_name" 80; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync did not create the file in the Windows receive folder." >&2
+  [[ -f "$m2w_clipboard_meta" ]] && cat "$m2w_clipboard_meta" >&2
+  exit 1
+fi
+if [[ "$(windows_file_sha256 "$m2w_clipboard_name")" != "$m2w_clipboard_hash" ]]; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync changed the file bytes." >&2
+  exit 1
+fi
+if ! wait_for_latest_windows_receive_state_id "$m2w_clipboard_id"; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync did not record the latest Windows receive state." >&2
+  [[ -f "$latest_windows_receive_state" ]] && cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if [[ "$(meta_value kind "$latest_windows_receive_state")" != "files" ||
+      "$(meta_value confirmation "$latest_windows_receive_state")" != "tcp-ack" ||
+      "$(meta_value imported_paths "$latest_windows_receive_state")" != "1" ]]; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync recorded incomplete latest Windows receive state." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+m2w_clipboard_state_path="$(meta_value imported_path_1 "$latest_windows_receive_state")"
+m2w_clipboard_state_path_b64="$(meta_value imported_path_1_b64 "$latest_windows_receive_state")"
+if [[ "$m2w_clipboard_state_path" != *"$m2w_clipboard_name" ]]; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync did not record the imported Windows receive path." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if [[ -z "$m2w_clipboard_state_path_b64" || "$(decode_b64_value "$m2w_clipboard_state_path_b64")" != "$m2w_clipboard_state_path" ]]; then
+  write_mac_clipboard_suspend_state
+  echo "Mac -> Windows background file clipboard sync did not record a decodable imported Windows receive path." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+write_mac_clipboard_suspend_state
+remove_windows_file "$m2w_clipboard_name"
+echo "Mac -> Windows background file clipboard sync ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
