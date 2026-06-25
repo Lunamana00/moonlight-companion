@@ -88,6 +88,14 @@ normalize_positive_int() {
   fi
 }
 
+cleanup_stale_sync_tmp_dirs() {
+  local root
+  root="${TMPDIR:-/tmp}"
+  [[ -d "$root" ]] || return 0
+
+  find "$root" -maxdepth 1 -type d -name 'moonlight-clipboard-sync.*' -mmin +360 -exec rm -rf {} + 2>/dev/null || true
+}
+
 payload_id() {
   awk -F= '/^id=/{print $2; exit}' "$1"
 }
@@ -406,7 +414,13 @@ end run
 tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
 windows_fallback_max_failures="$(normalize_positive_int "$windows_fallback_max_failures" 3)"
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-clipboard-sync.XXXXXX")"
+cleanup_stale_sync_tmp_dirs
+if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_CLEANUP_ONLY:-no}")" == "yes" ]]; then
+  exit 0
+fi
+
+tmp_root="${TMPDIR:-/tmp}"
+tmp_dir="$(mktemp -d "${tmp_root%/}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 mac_payload="${tmp_dir}/mac-payload"

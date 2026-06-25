@@ -75,6 +75,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Clipboard snapshots used by the file transfer self-test now avoid copying Windows-safe file clipboards into temporary payload directories, making tests lighter when the current Mac clipboard already contains large files.
 - Empty Mac clipboards are now snapshotted and restored as empty during file transfer self-tests instead of leaving a test file clipboard behind.
 - GUI `Copy Last Mac Receive` restores now also write a one-shot Mac clipboard ignore marker, matching the self-test restore path and further reducing accidental resend windows.
+- The Mac clipboard sync service now removes stale local `moonlight-clipboard-sync.*` work folders on startup, cleaning up leftovers from interrupted sync runs.
 - Moonlight launch and display placement no longer force Moonlight to the foreground by default; `MOONLIGHT_ACTIVATE_ON_LAUNCH` can opt back into the old behavior.
 - The file transfer self-test now writes a temporary quiet-state marker so Windows-to-Mac receive notifications and Finder reveal actions do not interrupt the current Mac workspace while tests run.
 - The Mac clipboard sync loop now rechecks for in-flight TCP receives after exporting the local clipboard, closing a race that could echo a just-received Windows file back to Windows.

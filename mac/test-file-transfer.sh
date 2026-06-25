@@ -108,6 +108,33 @@ ensure_helpers() {
   chmod 700 "$tcp_helper"
 }
 
+verify_mac_sync_temp_cleanup() {
+  local temp_root stale_dir fresh_dir
+  temp_root="${TMPDIR:-/tmp}"
+  stale_dir="${temp_root%/}/moonlight-clipboard-sync.stale-self-test"
+  fresh_dir="${temp_root%/}/moonlight-clipboard-sync.fresh-self-test"
+
+  rm -rf "$stale_dir" "$fresh_dir"
+  mkdir -p "$stale_dir" "$fresh_dir"
+  touch -t 202401010101 "$stale_dir"
+  if ! MOONLIGHT_CLIPBOARD_SYNC_CLEANUP_ONLY=yes "${script_dir}/sync-moonlight-clipboard.sh"; then
+    rm -rf "$stale_dir" "$fresh_dir"
+    echo "Mac clipboard sync temp cleanup helper failed." >&2
+    return 1
+  fi
+  if [[ -e "$stale_dir" ]]; then
+    rm -rf "$stale_dir" "$fresh_dir"
+    echo "Mac clipboard sync did not remove a stale temp directory." >&2
+    return 1
+  fi
+  if [[ ! -d "$fresh_dir" ]]; then
+    rm -rf "$fresh_dir"
+    echo "Mac clipboard sync removed a fresh temp directory unexpectedly." >&2
+    return 1
+  fi
+  rm -rf "$fresh_dir"
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -727,6 +754,7 @@ if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$MOONLIGHT_CLIPBOARD_TCP")" != "yes" ]];
 fi
 
 ensure_helpers
+verify_mac_sync_temp_cleanup
 
 transfer_mac_dir="$(expand_mac_path "$MOONLIGHT_TRANSFER_MAC_DIR")"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
