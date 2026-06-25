@@ -410,6 +410,31 @@ fi
 rm -f "$metadata_path" "${transfer_mac_dir}/${metadata_name}"
 echo "Received file metadata ok."
 
+echo "Testing helper set-files metadata id..."
+helper_id_file_a="${tmp_dir}/helper-id-a/same-name-${stamp}.txt"
+helper_id_file_b="${tmp_dir}/helper-id-b/same-name-${stamp}.txt"
+helper_id_dir="${tmp_dir}/helper-id-folder-${stamp}"
+mkdir -p "$(dirname "$helper_id_file_a")" "$(dirname "$helper_id_file_b")" "${helper_id_dir}/nested"
+printf 'Moonlight Companion helper id A %s\n' "$stamp" > "$helper_id_file_a"
+printf 'Moonlight Companion helper id B %s\n' "$stamp" > "$helper_id_file_b"
+printf 'Moonlight Companion helper id folder %s\n' "$stamp" > "${helper_id_dir}/nested/from-folder.txt"
+helper_export_meta="${tmp_dir}/helper-id-export-meta.txt"
+helper_set_meta="${tmp_dir}/helper-id-set-meta.txt"
+helper_set_payload="${tmp_dir}/helper-id-set-payload"
+"$helper" export-paths "${tmp_dir}/helper-id-export-payload" "$helper_id_file_a" "$helper_id_file_b" "$helper_id_dir" > "$helper_export_meta"
+"$helper" set-files "$helper_set_payload" "$helper_id_file_a" "$helper_id_file_b" "$helper_id_dir" > "$helper_set_meta"
+if [[ "$(meta_value id "$helper_set_meta")" != "$(meta_value id "$helper_export_meta")" ]]; then
+  echo "Helper set-files metadata-only id did not match export-paths id." >&2
+  cat "$helper_export_meta" >&2
+  cat "$helper_set_meta" >&2
+  exit 1
+fi
+if [[ -e "${helper_set_payload}/files" ]]; then
+  echo "Helper set-files copied a Windows-safe test payload instead of using metadata-only id calculation." >&2
+  exit 1
+fi
+echo "Helper set-files metadata id ok."
+
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"

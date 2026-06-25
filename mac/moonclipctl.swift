@@ -219,10 +219,17 @@ func hashDirectory(_ url: URL) throws -> String {
         return sha256Hex("")
     }
 
-    let basePath = url.path
+    let basePath = url.resolvingSymlinksInPath().path
     for case let item as URL in enumerator {
         let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
-        let rel = String(item.path.dropFirst(basePath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let itemPath = item.resolvingSymlinksInPath().path
+        guard itemPath.hasPrefix(basePath) else {
+            continue
+        }
+        let rel = String(itemPath.dropFirst(basePath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !rel.isEmpty else {
+            continue
+        }
         if values.isDirectory == true {
             lines.append("d:\(rel)")
         } else if values.isRegularFile == true {
