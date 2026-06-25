@@ -1094,6 +1094,12 @@ if ! wait_for_windows_mac_zip_absent 80; then
   echo "Mac -> Windows stale fallback ZIP was not removed after repeated import failures." >&2
   exit 1
 fi
+upload_windows_mac_zip "$bad_mac_fallback_zip"
+if ! wait_for_windows_mac_zip_absent 80; then
+  remove_windows_mac_upload_artifacts
+  echo "Mac -> Windows reappeared stale fallback ZIP with the same hash was not removed." >&2
+  exit 1
+fi
 echo "Mac -> Windows stale fallback cleanup ok."
 
 echo "Testing Mac -> Windows file transfer..."

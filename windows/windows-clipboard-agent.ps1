@@ -1540,7 +1540,11 @@ try {
                         Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
                         Write-AgentLog ("Mac -> Windows {0} ({1}B)" -f $imported.kind, $imported.bytes)
                     }
+                } else {
+                    Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
                 }
+            } else {
+                $lastMacArchiveHash = ""
             }
 
             if (($now - $lastWindowsExportAt).TotalMilliseconds -ge $intervalMs) {
