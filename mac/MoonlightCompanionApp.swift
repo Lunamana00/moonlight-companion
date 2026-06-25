@@ -2070,9 +2070,12 @@ exit "${status}"
                 }
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
                 let summary = self?.latestWindowsReceiveSummary ?? ""
+                let partial = self?.windowsReceiveRevealStatePartiallyMissing(detail) == true
                 let resultDetail: String
                 if summary.isEmpty {
                     resultDetail = detail
+                } else if partial {
+                    resultDetail = "Opened the Windows receive folder for \(summary); some received items were unavailable."
                 } else if detail.contains("select") {
                     resultDetail = "Selected \(summary) in Windows."
                 } else {
@@ -2125,9 +2128,14 @@ exit "${status}"
                     return
                 }
                 let summary = self?.latestWindowsReceiveSummary ?? ""
-                let resultDetail = summary.isEmpty
-                    ? detail
-                    : "\(summary) is ready on the Windows clipboard."
+                let resultDetail: String
+                if self?.windowsReceiveRevealStatePartiallyMissing(detail) == true {
+                    resultDetail = detail
+                } else if summary.isEmpty {
+                    resultDetail = detail
+                } else {
+                    resultDetail = "\(summary) is ready on the Windows clipboard."
+                }
                 self?.setBusy(false, status: "Windows Files Copied", detail: resultDetail)
             } else {
                 self?.setBusy(false, status: "Copy Failed", detail: detail, startQueuedDropsWhenIdle: false)
@@ -2136,10 +2144,15 @@ exit "${status}"
     }
 
     private func windowsReceiveRevealStateExpired(_ detail: String) -> Bool {
-        detail.contains("did not match") ||
+        !windowsReceiveRevealStatePartiallyMissing(detail) &&
+            (detail.contains("did not match") ||
             detail.contains("state was unavailable") ||
             detail.contains("item was unavailable") ||
-            detail.contains("items were unavailable")
+            detail.contains("items were unavailable"))
+    }
+
+    private func windowsReceiveRevealStatePartiallyMissing(_ detail: String) -> Bool {
+        detail.contains("some received items were unavailable")
     }
 
     private func requestWindowsReceiveClipboardRestore(

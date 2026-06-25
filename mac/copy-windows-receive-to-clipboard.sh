@@ -89,6 +89,7 @@ expected_id_literal="$(ps_single_quoted "$expected_id")"
 paths_literal="$(ps_array_literal "${select_paths[@]}")"
 timeout_literal="$(ps_single_quoted "$timeout_ms")"
 selected_count="${#select_paths[@]}"
+copy_paths_count=0
 
 received_item_text() {
   if (( selected_count == 1 )); then
@@ -166,12 +167,9 @@ foreach (\$path in \$paths) {
   }
 }
 
-if (\$validPaths.Count -ne \$paths.Count) {
-  if (\$validPaths.Count -gt 0) {
-    Write-Output "MOONLIGHT_COPY_RESULT=partial-missing"
-  } else {
-    Write-Output "MOONLIGHT_COPY_RESULT=missing"
-  }
+\$partialMissing = \$validPaths.Count -ne \$paths.Count
+if (\$validPaths.Count -le 0) {
+  Write-Output "MOONLIGHT_COPY_RESULT=missing"
   exit 0
 }
 
@@ -193,7 +191,11 @@ while ((Get-Date) -lt \$deadline) {
     \$response = Read-KeyValueState \$responsePath
     if ([string]\$response["id"] -eq \$requestId) {
       if ([string]\$response["clipboard_ready"] -eq "yes") {
-        Write-Output "MOONLIGHT_COPY_RESULT=ready"
+        if (\$partialMissing) {
+          Write-Output "MOONLIGHT_COPY_RESULT=partial-ready"
+        } else {
+          Write-Output "MOONLIGHT_COPY_RESULT=ready"
+        }
         Write-Output ("MOONLIGHT_COPY_PATHS={0}" -f [string]\$response["imported_paths"])
         exit 0
       }
@@ -230,10 +232,17 @@ remote_output="$(
     "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${remote_script_cmd}\""
 )" || remote_status=$?
 copy_result="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_COPY_RESULT" {sub(/\r$/, "", $2); print $2; exit}')"
+copy_paths_count="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_COPY_PATHS" {sub(/\r$/, "", $2); print $2; exit}')"
+if [[ ! "$copy_paths_count" =~ ^[0-9]+$ ]]; then
+  copy_paths_count=0
+fi
 
 case "$copy_result" in
   ready)
     printf 'asked Windows to put the %s on the clipboard\n' "$(latest_received_text)"
+    ;;
+  partial-ready)
+    printf 'asked Windows to put %s of %s latest received items on the clipboard; some received items were unavailable\n' "$copy_paths_count" "$selected_count"
     ;;
   missing)
     printf 'asked Windows to copy the %s; %s %s unavailable\n' "$(latest_received_text)" "$(received_item_text)" "$(received_item_unavailable_verb)"

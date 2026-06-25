@@ -1784,8 +1784,8 @@ limit_multi_partial_copy_out="$(
       --select-path "$limit_multi_path_1" \
       --select-path "$limit_multi_path_2"
 )"
-if ! grep -Fq "asked Windows to copy the latest received items; some received items were unavailable" <<<"$limit_multi_partial_copy_out"; then
-  echo "Windows receive clipboard restore did not report partially missing explicit imported paths." >&2
+if ! grep -Fq "asked Windows to put 1 of 2 latest received items on the clipboard; some received items were unavailable" <<<"$limit_multi_partial_copy_out"; then
+  echo "Windows receive clipboard restore did not copy remaining explicit imported paths while reporting partially missing items." >&2
   printf '%s\n' "$limit_multi_partial_copy_out" >&2
   exit 1
 fi

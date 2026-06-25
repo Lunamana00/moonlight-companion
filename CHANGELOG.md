@@ -87,6 +87,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - `Reveal Last Windows Receive` now opens the common containing folder for multi-item Windows receives when exact single-item selection is not available.
 - `Reveal Last Windows Receive` now clearly reports when the remembered Windows item is no longer available and clears the stale reveal state instead of presenting it as a normal folder open.
 - The GUI can now copy the latest Mac-to-Windows received files back onto the Windows clipboard, making overwritten or missed Windows file clipboards recoverable without resending the files.
+- `Copy Last Windows Receive` now restores the remaining available paths to the Windows clipboard when only some remembered receive items are missing, and reports the partial availability instead of failing the whole action.
 - Windows receive-folder reveal now clears stale remote opener scripts from interrupted previous reveal attempts.
 - Automatic Windows receive-result reveal now waits for Windows import confirmation instead of opening Explorer while a fallback transfer is still pending.
 - GUI sends that need automatic paste or reveal now wait longer for fallback Windows import confirmation before declaring the result pending.
