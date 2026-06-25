@@ -2098,11 +2098,54 @@ if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_multi_dir_name}/${w2m_multi_ne
   echo "Windows -> Mac multi-item transfer did not preserve the folder item." >&2
   exit 1
 fi
+echo "Testing latest Mac receive multi-item clipboard restore..."
+w2m_multi_restore_meta="${tmp_dir}/w2m-multi-restore-meta.txt"
+w2m_multi_restore_payload="${tmp_dir}/w2m-multi-restore-set-payload"
+w2m_multi_restore_export_payload="${tmp_dir}/w2m-multi-restored-clipboard-payload"
+w2m_multi_restore_export_meta="${tmp_dir}/w2m-multi-restored-clipboard-meta.txt"
+w2m_multi_restore_lock="${tcp_state}.lock"
+printf 'restoring\n' > "$w2m_multi_restore_lock"
+if ! "$helper" set-files "$w2m_multi_restore_payload" "${transfer_mac_dir}/${w2m_multi_file_name}" "${transfer_mac_dir}/${w2m_multi_dir_name}" > "$w2m_multi_restore_meta"; then
+  rm -f "$w2m_multi_restore_lock"
+  echo "Latest Mac receive multi-item clipboard restore failed to set the file clipboard." >&2
+  exit 1
+fi
+if [[ -e "${w2m_multi_restore_payload}/files/${w2m_multi_file_name}" || -e "${w2m_multi_restore_payload}/files/${w2m_multi_dir_name}" ]]; then
+  rm -f "$w2m_multi_restore_lock"
+  echo "Latest Mac receive multi-item clipboard restore copied received items instead of using metadata-only restore." >&2
+  exit 1
+fi
+w2m_multi_restore_id="$(meta_value id "$w2m_multi_restore_meta")"
+if [[ -z "$w2m_multi_restore_id" ]]; then
+  rm -f "$w2m_multi_restore_lock"
+  echo "Latest Mac receive multi-item clipboard restore did not calculate a payload id." >&2
+  exit 1
+fi
+write_mac_clipboard_ignore_id "$w2m_multi_restore_id"
+if ! update_receive_state_normalized_id "$w2m_multi_restore_id"; then
+  rm -f "$w2m_multi_restore_lock"
+  echo "Latest Mac receive multi-item clipboard restore did not update the receive state." >&2
+  exit 1
+fi
+rm -f "$w2m_multi_restore_lock"
+if ! "$helper" export "$w2m_multi_restore_export_payload" > "$w2m_multi_restore_export_meta" 2>/dev/null; then
+  echo "Latest Mac receive multi-item clipboard restore did not leave a readable file clipboard." >&2
+  exit 1
+fi
+if [[ "$(meta_value id "$w2m_multi_restore_export_meta")" != "$w2m_multi_restore_id" ||
+      "$(meta_value file_paths "$w2m_multi_restore_export_meta")" != "2" ||
+      "$(meta_value file_name_1 "$w2m_multi_restore_export_meta")" != "$w2m_multi_file_name" ||
+      "$(meta_value file_name_2 "$w2m_multi_restore_export_meta")" != "$w2m_multi_dir_name" ]]; then
+  echo "Latest Mac receive multi-item clipboard restore produced an unexpected clipboard payload." >&2
+  cat "$w2m_multi_restore_export_meta" >&2
+  exit 1
+fi
 sleep 3
 assert_windows_path_absent "$w2m_multi_file_name" "Leaf"
 assert_windows_path_absent "$w2m_multi_dir_name" "Container"
 rm -f "${transfer_mac_dir}/${w2m_multi_file_name}"
 rm -rf "${transfer_mac_dir:?}/${w2m_multi_dir_name}"
+echo "Latest Mac receive multi-item clipboard restore ok."
 echo "Windows -> Mac multi-item ok."
 
 echo "Testing Windows -> Mac folder transfer..."

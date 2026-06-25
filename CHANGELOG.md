@@ -21,6 +21,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
 - The file transfer self-test now verifies Windows-to-Mac SSH fallback multi-item pulls, including folder contents, empty nested folders, latest receive state, and loop-prevention.
 - Oversized direct Mac-to-Windows sends now clean stale direct-transfer artifacts before upload and after upload/setup failures, making immediate retry safer after an interrupted SSH/SCP step.
+- The file transfer self-test now verifies that multi-item Windows-to-Mac receives can be restored to the Mac clipboard without copying received files into temporary payloads or echoing them back to Windows.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.
 - Windows-to-Mac Mac receive-folder imports now stage received files before moving them into place, so a broken payload cannot leave only some files in the receive folder.
 - Windows-to-Mac Mac receive-folder imports now remove stale hidden staging folders left by interrupted older receives when the next Mac receive-folder import begins.
