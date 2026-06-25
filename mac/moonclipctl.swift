@@ -412,23 +412,23 @@ func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
     }
 
     if let items = pasteboard.pasteboardItems {
-        fileURLs.append(contentsOf: items.compactMap { item -> URL? in
+        fileURLs.append(contentsOf: items.flatMap { item -> [URL] in
             for type in urlPasteboardTypes {
                 guard let value = item.string(forType: type),
-                      let url = fileURL(fromPasteboardString: value) else {
+                      !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continue
                 }
-                return url
+                return pasteboardFileURLs(fromString: value)
             }
-            return nil
+            return []
         })
     }
 
-    fileURLs.append(contentsOf: urlPasteboardTypes.compactMap { type in
+    fileURLs.append(contentsOf: urlPasteboardTypes.flatMap { type -> [URL] in
         guard let value = pasteboard.string(forType: type) else {
-            return nil
+            return []
         }
-        return fileURL(fromPasteboardString: value)
+        return pasteboardFileURLs(fromString: value)
     })
 
     if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
@@ -446,7 +446,13 @@ func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
     }
 }
 
-func fileURL(fromPasteboardString value: String) -> URL? {
+func pasteboardFileURLs(fromString value: String) -> [URL] {
+    value.split(whereSeparator: \.isNewline).compactMap { part in
+        fileURL(fromSinglePasteboardString: String(part))
+    }
+}
+
+func fileURL(fromSinglePasteboardString value: String) -> URL? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if let url = URL(string: trimmed), url.isFileURL {
         return url

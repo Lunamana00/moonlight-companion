@@ -645,24 +645,41 @@ echo "Helper empty clipboard snapshot ok."
 
 echo "Testing helper URL pasteboard variants..."
 url_variant_file="${tmp_dir}/moonlight-companion-transfer-test-url-pasteboard-${stamp}.txt"
+url_variant_file_two="${tmp_dir}/moonlight-companion-transfer-test-url-pasteboard-two-${stamp}.txt"
 url_variant_writer="${tmp_dir}/write-url-pasteboard.swift"
 printf 'Moonlight Companion URL pasteboard variant test %s\n' "$stamp" > "$url_variant_file"
+printf 'Moonlight Companion URL pasteboard variant second file %s\n' "$stamp" > "$url_variant_file_two"
 cat > "$url_variant_writer" <<'SWIFT'
 import AppKit
 import Foundation
 
-guard CommandLine.arguments.count == 3 else {
+guard CommandLine.arguments.count >= 3 else {
     exit(2)
 }
 
-let fileURL = URL(fileURLWithPath: CommandLine.arguments[1]).absoluteString
-let pasteboardType = NSPasteboard.PasteboardType(CommandLine.arguments[2])
-let item = NSPasteboardItem()
-item.setString(fileURL, forType: pasteboardType)
+let rawArguments = Array(CommandLine.arguments.dropFirst())
+let itemMode = rawArguments.first == "--items"
+let pasteboardType = NSPasteboard.PasteboardType(rawArguments.last!)
+let paths = itemMode ? rawArguments.dropFirst().dropLast() : rawArguments.dropLast()
+let fileURLs = paths.map {
+    URL(fileURLWithPath: $0).absoluteString
+}
+let items: [NSPasteboardItem]
+if itemMode {
+    items = fileURLs.map { fileURL in
+        let item = NSPasteboardItem()
+        item.setString(fileURL, forType: pasteboardType)
+        return item
+    }
+} else {
+    let item = NSPasteboardItem()
+    item.setString(fileURLs.joined(separator: "\n"), forType: pasteboardType)
+    items = [item]
+}
 
 let pasteboard = NSPasteboard.general
 pasteboard.clearContents()
-if !pasteboard.writeObjects([item]) {
+if !pasteboard.writeObjects(items) {
     exit(1)
 }
 SWIFT
@@ -678,6 +695,25 @@ for pasteboard_type in "public.url" "public.file-url"; do
         "$(meta_value file_name_1 "$url_variant_meta")" != "$(basename "$url_variant_file")" ]]; then
     echo "Helper did not recognize ${pasteboard_type} as a file URL clipboard." >&2
     cat "$url_variant_meta" >&2
+    exit 1
+  fi
+  url_variant_multi_payload="${tmp_dir}/url-pasteboard-${pasteboard_type}-multi-payload"
+  url_variant_multi_meta="${tmp_dir}/url-pasteboard-${pasteboard_type}-multi-meta.txt"
+  if [[ "$pasteboard_type" == "public.file-url" ]]; then
+    swift "$url_variant_writer" --items "$url_variant_file" "$url_variant_file_two" "$pasteboard_type"
+  else
+    swift "$url_variant_writer" "$url_variant_file" "$url_variant_file_two" "$pasteboard_type"
+  fi
+  if ! "$helper" export "$url_variant_multi_payload" > "$url_variant_multi_meta"; then
+    echo "Helper did not export a multi-file clipboard from ${pasteboard_type}." >&2
+    exit 1
+  fi
+  if [[ "$(meta_value kind "$url_variant_multi_meta")" != "files" ||
+        "$(meta_value file_paths "$url_variant_multi_meta")" != "2" ||
+        "$(meta_value file_name_1 "$url_variant_multi_meta")" != "$(basename "$url_variant_file")" ||
+        "$(meta_value file_name_2 "$url_variant_multi_meta")" != "$(basename "$url_variant_file_two")" ]]; then
+    echo "Helper did not recognize newline-separated ${pasteboard_type} values as multiple file URLs." >&2
+    cat "$url_variant_multi_meta" >&2
     exit 1
   fi
 done

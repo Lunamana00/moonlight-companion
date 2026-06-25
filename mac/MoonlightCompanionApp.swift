@@ -2374,22 +2374,23 @@ enum FileDropReader {
         }
 
         if let items = pasteboard.pasteboardItems {
-            urls.append(contentsOf: items.compactMap { item in
-                urlPasteboardTypes.compactMap { type -> URL? in
+            urls.append(contentsOf: items.flatMap { item -> [URL] in
+                for type in urlPasteboardTypes {
                     guard let value = item.string(forType: type),
-                          let parsedURL = fileURL(fromPasteboardString: value) else {
-                        return nil
+                          !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        continue
                     }
-                    return parsedURL
-                }.first
+                    return fileURLs(fromPasteboardString: value)
+                }
+                return []
             })
         }
 
-        urls.append(contentsOf: urlPasteboardTypes.compactMap { type in
+        urls.append(contentsOf: urlPasteboardTypes.flatMap { type -> [URL] in
             guard let value = pasteboard.string(forType: type) else {
-                return nil
+                return []
             }
-            return fileURL(fromPasteboardString: value)
+            return fileURLs(fromPasteboardString: value)
         })
 
         if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
@@ -2411,7 +2412,13 @@ enum FileDropReader {
         }
     }
 
-    private static func fileURL(fromPasteboardString value: String) -> URL? {
+    private static func fileURLs(fromPasteboardString value: String) -> [URL] {
+        value.split(whereSeparator: \.isNewline).compactMap { part in
+            fileURL(fromSinglePasteboardString: String(part))
+        }
+    }
+
+    private static func fileURL(fromSinglePasteboardString value: String) -> URL? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if let parsedURL = URL(string: trimmed), parsedURL.isFileURL {
             return parsedURL
