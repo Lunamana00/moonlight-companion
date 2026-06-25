@@ -31,6 +31,7 @@ $MoonlightTransferOversizeDirect = "yes"
 $MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
 $MoonlightMacFallbackMaxFailures = "3"
 $agentLoadOnly = "$env:MOONLIGHT_AGENT_LOAD_ONLY".Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
+$lastMacImportedFileDropPaths = @()
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -770,6 +771,35 @@ function Clear-WindowsFileClipboardFailureState {
     Remove-Item -LiteralPath "$windowsFileClipboardFailureState.tmp" -Force -ErrorAction SilentlyContinue
 }
 
+function Get-NormalizedClipboardPathKey([string]$path) {
+    if ([string]::IsNullOrWhiteSpace($path)) { return "" }
+    try {
+        $path = [System.IO.Path]::GetFullPath($path)
+    } catch {}
+    return $path.TrimEnd("\").ToLowerInvariant()
+}
+
+function Set-LastMacImportedFileDropPaths($paths) {
+    $script:lastMacImportedFileDropPaths = @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Clear-LastMacImportedFileDropPaths {
+    $script:lastMacImportedFileDropPaths = @()
+}
+
+function Test-LastMacImportedFileDropPaths($paths) {
+    $current = @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $imported = @($script:lastMacImportedFileDropPaths)
+    if ($current.Count -eq 0 -or $current.Count -ne $imported.Count) { return $false }
+
+    $currentKeys = @($current | ForEach-Object { Get-NormalizedClipboardPathKey $_ } | Sort-Object)
+    $importedKeys = @($imported | ForEach-Object { Get-NormalizedClipboardPathKey $_ } | Sort-Object)
+    for ($i = 0; $i -lt $currentKeys.Count; $i++) {
+        if ($currentKeys[$i] -ne $importedKeys[$i]) { return $false }
+    }
+    return $true
+}
+
 function Write-WindowsFileClipboardFailureState([string]$message, [string]$sourcePath) {
     $message = if ($null -eq $message) { "" } else { $message.Trim() }
     if ([string]::IsNullOrWhiteSpace($message)) { return $false }
@@ -850,6 +880,7 @@ function Invoke-DirectClipboardRequest {
             if (-not [string]::IsNullOrWhiteSpace($normalizedId)) {
                 $script:lastMacId = $requestId
                 $script:lastWindowsId = $normalizedId
+                Set-LastMacImportedFileDropPaths @($paths)
                 $ready = "yes"
             } else {
                 $reason = "clipboard-id-unavailable"
@@ -859,6 +890,9 @@ function Invoke-DirectClipboardRequest {
         }
     } catch {
         $reason = $_.Exception.Message
+    }
+    if ($ready -ne "yes") {
+        Clear-LastMacImportedFileDropPaths
     }
 
     $lines = @(
@@ -1190,12 +1224,16 @@ function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
     } else {
         $failureMessage = "source unavailable '$failedFileDropPath': $failedFileDropReason"
     }
-    $newFailureState = Write-WindowsFileClipboardFailureState $failureMessage $failedFileDropPath
-    if ($newFailureState) {
-        if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
-            Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
-        } else {
-            Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
+    if (Test-LastMacImportedFileDropPaths @($fileDropPaths)) {
+        Clear-WindowsFileClipboardFailureState
+    } else {
+        $newFailureState = Write-WindowsFileClipboardFailureState $failureMessage $failedFileDropPath
+        if ($newFailureState) {
+            if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
+                Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
+            } else {
+                Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
+            }
         }
     }
     Remove-Item -LiteralPath $filesDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -1266,10 +1304,12 @@ function Import-ClipboardPayload($payloadDir) {
 
     switch ($manifest.kind) {
         "text" {
+            Clear-LastMacImportedFileDropPaths
             $text = [System.IO.File]::ReadAllText((Join-Path $payloadDir $manifest.textFile), [System.Text.UTF8Encoding]::new($false))
             [System.Windows.Forms.Clipboard]::SetText($text)
         }
         "image" {
+            Clear-LastMacImportedFileDropPaths
             $imagePath = Join-Path $payloadDir $manifest.imageFile
             $sourceImage = [System.Drawing.Image]::FromFile($imagePath)
             try {
@@ -1295,6 +1335,7 @@ function Import-ClipboardPayload($payloadDir) {
                 [void]$collection.Add($targetPath)
             }
             [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
+            Set-LastMacImportedFileDropPaths @($targetPaths)
             $manifest | Add-Member -NotePropertyName importedPaths -NotePropertyValue $targetPaths -Force
         }
         default {
@@ -1710,6 +1751,7 @@ $lastMacFailedArchiveHash = ""
 $lastMacFailedArchiveFailures = 0
 $lastCapsLockHangulRequestId = ""
 $lastWindowsExportAt = [DateTime]::MinValue
+$lastMacImportedFileDropPaths = @()
 $maxBytes = Get-PositiveIntSetting $MoonlightClipboardMaxBytes 52428800
 $macFallbackMaxFailures = Get-PositiveIntSetting $MoonlightMacFallbackMaxFailures 3
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true

@@ -416,6 +416,55 @@ try {
     if ($null -ne $thirdResult) { Write-Output 'third_broken_result_not_null'; exit 1 }
     $failureLogCount = @((Get-Content -LiteralPath $script:logFile -Encoding UTF8) | Where-Object { $_ -like '*skip Windows -> Mac file clipboard; source unavailable*' }).Count
     if ($failureLogCount -ne 2) { Write-Output "failure_log_reset_count=$failureLogCount"; exit 1 }
+    Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$statePath.tmp" -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $script:logFile -Force -ErrorAction SilentlyContinue
+    $script:lastWindowsExportFailure = ''
+    $script:lastMacImportedFileDropPaths = @()
+
+    $importPayload = Join-Path $root 'imported-mac-payload'
+    $importFiles = Join-Path $importPayload 'files'
+    $receive = Join-Path $root 'receive'
+    New-Item -ItemType Directory -Force -Path $importFiles, $receive | Out-Null
+    $importSource = Join-Path $importFiles 'mac-imported.txt'
+    Set-Content -LiteralPath $importSource -Value 'mac imported file clipboard item' -Encoding UTF8
+    $importManifest = [pscustomobject]@{
+        version = 2
+        origin = 'mac'
+        kind = 'files'
+        id = 'files:mac-imported-stale-test'
+        bytes = (Get-Item -LiteralPath $importSource).Length
+        textFile = $null
+        imageFile = $null
+        files = @([pscustomobject]@{
+            name = 'mac-imported.txt'
+            path = 'files/mac-imported.txt'
+            isDirectory = $false
+            bytes = (Get-Item -LiteralPath $importSource).Length
+        })
+    }
+    Write-JsonManifest $importManifest $importPayload
+    $script:transferWindowsDir = $receive
+    $imported = Import-ClipboardPayload $importPayload
+    $importedPaths = @($imported.importedPaths)
+    if ($importedPaths.Count -ne 1) { Write-Output 'imported_paths_missing'; exit 1 }
+    $importedPath = $importedPaths[0]
+    Remove-Item -LiteralPath $importedPath -Force
+    $quietPayload = Join-Path $root 'quiet-imported-export'
+    $quietResult = Export-FileDropPathsPayload $quietPayload @($importedPath)
+    if ($null -ne $quietResult) { Write-Output 'quiet_imported_result_not_null'; exit 1 }
+    if (Test-Path -LiteralPath $statePath) { Write-Output 'quiet_imported_state_written'; exit 1 }
+    if (Test-Path -LiteralPath $script:logFile -PathType Leaf) {
+        $quietLogCount = @((Get-Content -LiteralPath $script:logFile -Encoding UTF8) | Where-Object { $_ -like '*skip Windows -> Mac file clipboard; source unavailable*' }).Count
+        if ($quietLogCount -ne 0) { Write-Output "quiet_imported_log_count=$quietLogCount"; exit 1 }
+    }
+    $unrelatedMissing = Join-Path $root 'unrelated-missing.txt'
+    $unrelatedPayload = Join-Path $root 'unrelated-missing-payload'
+    $unrelatedResult = Export-FileDropPathsPayload $unrelatedPayload @($unrelatedMissing)
+    if ($null -ne $unrelatedResult) { Write-Output 'unrelated_result_not_null'; exit 1 }
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { Write-Output 'unrelated_failure_state_missing'; exit 1 }
+    $unrelatedLogCount = @((Get-Content -LiteralPath $script:logFile -Encoding UTF8) | Where-Object { $_ -like '*skip Windows -> Mac file clipboard; source unavailable*' }).Count
+    if ($unrelatedLogCount -ne 1) { Write-Output "unrelated_log_count=$unrelatedLogCount"; exit 1 }
     Write-Output 'file_drop_failure_state=ok'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
