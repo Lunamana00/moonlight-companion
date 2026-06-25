@@ -596,7 +596,13 @@ exit "${status}"
         }
     }
 
-    private func setBusy(_ busy: Bool, status: String, detail: String, startQueuedDropsWhenIdle: Bool = true) {
+    private func setBusy(
+        _ busy: Bool,
+        status: String,
+        detail: String,
+        startQueuedDropsWhenIdle: Bool = true,
+        showPendingMacReceiveWhenIdle: Bool = true
+    ) {
         isBusy = busy
         progressIndicator.isHidden = !busy
         if busy {
@@ -619,10 +625,13 @@ exit "${status}"
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
 
-        if !busy && startQueuedDropsWhenIdle {
+        if !busy && (startQueuedDropsWhenIdle || showPendingMacReceiveWhenIdle) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                if !self.startNextQueuedFileDropIfIdle() {
+                if self.startNextQueuedFileDropIfIdle(allowStart: startQueuedDropsWhenIdle) {
+                    return
+                }
+                if showPendingMacReceiveWhenIdle {
                     self.showPendingLatestMacReceiveIfIdle()
                 }
             }
@@ -649,8 +658,9 @@ exit "${status}"
     }
 
     @discardableResult
-    private func startNextQueuedFileDropIfIdle() -> Bool {
-        guard !isBusy,
+    private func startNextQueuedFileDropIfIdle(allowStart: Bool = true) -> Bool {
+        guard allowStart,
+              !isBusy,
               transferProcess == nil,
               !queuedFileDrops.isEmpty else {
             return false
