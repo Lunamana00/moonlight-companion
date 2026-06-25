@@ -896,7 +896,8 @@ function Copy-PayloadFilesAtomically($payloadDir, $items, $destDir) {
     $stagingDir = Join-Path $destDir (".moonlight-companion-import-" + [guid]::NewGuid().ToString("N"))
     $staged = @()
     $moved = @()
-    New-Item -ItemType Directory -Path $stagingDir -ErrorAction Stop | Out-Null
+    $stagingItem = New-Item -ItemType Directory -Path $stagingDir -ErrorAction Stop
+    $stagingItem.Attributes = $stagingItem.Attributes -bor [System.IO.FileAttributes]::Hidden
     try {
         foreach ($entry in $planned) {
             $stagedPath = Join-Path $stagingDir $entry.Name

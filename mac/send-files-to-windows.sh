@@ -457,23 +457,67 @@ function Normalize-PathTreeNames(\$path) {
   return \$dest
 }
 
-function Copy-ItemUniqueNamed(\$source, \$destDir, \$name) {
-  New-Item -ItemType Directory -Force -Path \$destDir -ErrorAction Stop | Out-Null
+function Get-UniqueDestinationPath(\$destDir, \$name, \$usedNames) {
   \$normalizedName = Get-NormalizedFileName \$name
   \$stem = [System.IO.Path]::GetFileNameWithoutExtension(\$normalizedName)
   \$ext = [System.IO.Path]::GetExtension(\$normalizedName)
   \$candidate = \$normalizedName
   \$index = 2
-  while (Test-Path -LiteralPath (Join-Path \$destDir \$candidate)) {
+  while ((Test-Path -LiteralPath (Join-Path \$destDir \$candidate)) -or \$usedNames.Contains(\$candidate.ToLowerInvariant())) {
     \$candidate = if ([string]::IsNullOrEmpty(\$ext)) { "\$stem-\$index" } else { "\$stem-\$index\$ext" }
     \$index++
   }
-  \$dest = Join-Path \$destDir \$candidate
-  Copy-Item -LiteralPath \$source -Destination \$dest -Recurse -Force -ErrorAction Stop
-  if (-not (Test-Path -LiteralPath \$dest)) {
-    throw "copy did not create destination: \$dest"
+  [void]\$usedNames.Add(\$candidate.ToLowerInvariant())
+  return Join-Path \$destDir \$candidate
+}
+
+function Copy-PayloadFilesAtomically(\$payloadDir, \$items, \$destDir) {
+  New-Item -ItemType Directory -Force -Path \$destDir -ErrorAction Stop | Out-Null
+  \$usedNames = New-Object 'System.Collections.Generic.HashSet[string]'
+  \$planned = @()
+  foreach (\$item in \$items) {
+    \$sourcePath = Join-Path \$payloadDir \$item.path
+    \$targetPath = Get-UniqueDestinationPath \$destDir \$item.name \$usedNames
+    \$planned += [pscustomobject]@{
+      Source = \$sourcePath
+      Target = \$targetPath
+      Name = Split-Path -Leaf \$targetPath
+    }
   }
-  return Normalize-PathTreeNames \$dest
+
+  \$stagingDir = Join-Path \$destDir (".moonlight-companion-import-" + [guid]::NewGuid().ToString("N"))
+  \$staged = @()
+  \$moved = @()
+  \$stagingItem = New-Item -ItemType Directory -Path \$stagingDir -ErrorAction Stop
+  \$stagingItem.Attributes = \$stagingItem.Attributes -bor [System.IO.FileAttributes]::Hidden
+  try {
+    foreach (\$entry in \$planned) {
+      \$stagedPath = Join-Path \$stagingDir \$entry.Name
+      Copy-Item -LiteralPath \$entry.Source -Destination \$stagedPath -Recurse -Force -ErrorAction Stop
+      if (-not (Test-Path -LiteralPath \$stagedPath)) {
+        throw "copy did not create staging destination: \$stagedPath"
+      }
+      \$stagedPath = Normalize-PathTreeNames \$stagedPath
+      \$staged += [pscustomobject]@{
+        Path = \$stagedPath
+        Target = \$entry.Target
+      }
+    }
+
+    foreach (\$entry in \$staged) {
+      Move-Item -LiteralPath \$entry.Path -Destination \$entry.Target -ErrorAction Stop
+      \$moved += \$entry.Target
+    }
+
+    Remove-Item -LiteralPath \$stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    return \$moved
+  } catch {
+    foreach (\$path in \$moved) {
+      Remove-Item -LiteralPath \$path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath \$stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    throw
+  }
 }
 
 function Write-KeyValueState(\$path, [string[]]\$lines) {
@@ -504,11 +548,7 @@ if (\$manifest.kind -ne "files" -or \$null -eq \$manifest.files) {
   throw "direct receive-folder transfer only supports file payloads"
 }
 
-\$targetPaths = @()
-foreach (\$item in @(\$manifest.files)) {
-  \$sourcePath = Join-Path \$payloadDir \$item.path
-  \$targetPaths += Copy-ItemUniqueNamed \$sourcePath \$transferDir \$item.name
-}
+\$targetPaths = @(Copy-PayloadFilesAtomically \$payloadDir @(\$manifest.files) \$transferDir)
 
 \$archiveHash = (Get-FileHash -LiteralPath \$zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 \$fileCount = @(\$manifest.files).Count

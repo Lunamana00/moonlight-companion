@@ -313,6 +313,24 @@ wait_for_windows_path() {
   return 1
 }
 
+windows_receive_staging_count() {
+  local script encoded transfer_dir_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  script="\$ErrorActionPreference = 'Stop'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); if (-not (Test-Path -LiteralPath \$dir)) { Write-Output '0'; exit 0 }; Write-Output ([string]@(Get-ChildItem -LiteralPath \$dir -Force -Directory -Filter '.moonlight-companion-import-*' -ErrorAction SilentlyContinue).Count)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+}
+
+assert_windows_receive_staging_absent() {
+  local count
+  count="$(windows_receive_staging_count)"
+  if [[ "$count" != "0" ]]; then
+    echo "Windows receive folder has leftover staging folders: ${count}" >&2
+    return 1
+  fi
+}
+
 assert_windows_path_absent() {
   local relative_path="$1"
   local path_type="${2:-Any}"
@@ -835,6 +853,10 @@ fi
 if ! wait_for_windows_file "$limit_name"; then
   echo "Mac -> Windows oversized payload did not arrive in the Windows receive folder." >&2
   cat "$limit_out" >&2
+  exit 1
+fi
+if ! assert_windows_receive_staging_absent; then
+  echo "Mac -> Windows oversized direct transfer left a staging folder in the Windows receive folder." >&2
   exit 1
 fi
 remove_windows_file "$limit_name"
