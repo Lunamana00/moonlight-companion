@@ -209,7 +209,7 @@ exit "${status}"
     private var transferProgressLineBuffer = ""
     private var testTransferLineBuffer = ""
     private var queuedFileDrops: [QueuedFileDrop] = []
-    private var promisedFileReceiveQueues: [OperationQueue] = []
+    private var promisedFileDropSessions: [PromisedFileDropSession] = []
     private var latestMacReceiveURLs: [URL] = []
     private var pendingLatestMacReceiveURLs: [URL] = []
     private var latestWindowsReceiveID = ""
@@ -217,7 +217,7 @@ exit "${status}"
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
-            cancelTransferButton?.isEnabled = transferProcess != nil
+            updateCancelTransferButtonState()
         }
     }
     private var cancelledTransferProcessIDs = Set<Int32>()
@@ -249,6 +249,17 @@ exit "${status}"
         let urls: [URL]
         let source: FileDropSource
         let cleanupURLs: [URL]
+    }
+
+    private final class PromisedFileDropSession {
+        let destination: URL
+        let operationQueue: OperationQueue
+        var cancelled = false
+
+        init(destination: URL, operationQueue: OperationQueue) {
+            self.destination = destination
+            self.operationQueue = operationQueue
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -689,7 +700,7 @@ exit "${status}"
         copyMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
         openWindowsReceiveButton?.isEnabled = !busy
         revealWindowsReceiveButton?.isEnabled = !busy && !latestWindowsReceiveID.isEmpty
-        cancelTransferButton?.isEnabled = transferProcess != nil
+        updateCancelTransferButtonState()
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
 
@@ -709,6 +720,22 @@ exit "${status}"
     private func clearQueuedFileDrops() {
         queuedFileDrops.forEach { cleanupTemporaryDropURLs($0.cleanupURLs) }
         queuedFileDrops.removeAll()
+    }
+
+    private func updateCancelTransferButtonState() {
+        cancelTransferButton?.isEnabled = transferProcess != nil || !promisedFileDropSessions.isEmpty
+    }
+
+    private func cancelPromisedFileDrops() -> Int {
+        let sessions = promisedFileDropSessions
+        promisedFileDropSessions.removeAll()
+        for session in sessions {
+            session.cancelled = true
+            session.operationQueue.cancelAllOperations()
+            cleanupTemporaryDropURLs([session.destination])
+        }
+        updateCancelTransferButtonState()
+        return sessions.count
     }
 
     private func queueFileDropIfBusy(_ urls: [URL], source: FileDropSource, cleanupURLs: [URL] = []) -> Bool {
@@ -1098,16 +1125,33 @@ exit "${status}"
     }
 
     @objc private func cancelTransferOperation() {
-        guard let task = transferProcess else { return }
+        guard let task = transferProcess else {
+            let promisedDropCount = cancelPromisedFileDrops()
+            guard promisedDropCount > 0 else { return }
+            let queuedDropCount = queuedFileDrops.count
+            clearQueuedFileDrops()
+            setBusy(false, status: "Cancelled", detail: queuedDropCount == 0
+                ? "Cancelled \(promisedDropCount) promised file drop(s)."
+                : "Cancelled \(promisedDropCount) promised file drop(s) and cleared \(queuedDropCount) queued drop(s).",
+                startQueuedDropsWhenIdle: false
+            )
+            return
+        }
         cancelledTransferProcessIDs.insert(task.processIdentifier)
         let queuedDropCount = queuedFileDrops.count
+        let promisedDropCount = cancelPromisedFileDrops()
         clearQueuedFileDrops()
         task.terminate()
         cancelTransferButton?.isEnabled = false
         statusLabel.stringValue = "Cancelling"
-        detailLabel.stringValue = queuedDropCount == 0
-            ? "Stopping the current transfer operation."
-            : "Stopping the current transfer operation and clearing \(queuedDropCount) queued drop(s)."
+        var detail = "Stopping the current transfer operation."
+        if queuedDropCount > 0 {
+            detail += " Clearing \(queuedDropCount) queued drop(s)."
+        }
+        if promisedDropCount > 0 {
+            detail += " Cancelling \(promisedDropCount) promised file drop(s)."
+        }
+        detailLabel.stringValue = detail
     }
 
     @objc private func openMacReceiveFolder() {
@@ -2187,7 +2231,9 @@ exit "${status}"
         let operationQueue = OperationQueue()
         operationQueue.name = "Moonlight Companion promised file receiver"
         operationQueue.maxConcurrentOperationCount = min(max(receivers.count, 1), 4)
-        promisedFileReceiveQueues.append(operationQueue)
+        let session = PromisedFileDropSession(destination: destination, operationQueue: operationQueue)
+        promisedFileDropSessions.append(session)
+        updateCancelTransferButtonState()
         let group = DispatchGroup()
         let lock = NSLock()
         var promisedURLs = Array<URL?>(repeating: nil, count: receivers.count)
@@ -2212,7 +2258,12 @@ exit "${status}"
 
         group.notify(queue: .main) { [weak self] in
             guard let self = self else { return }
-            self.promisedFileReceiveQueues.removeAll { $0 === operationQueue }
+            self.promisedFileDropSessions.removeAll { $0 === session }
+            self.updateCancelTransferButtonState()
+            if session.cancelled {
+                self.cleanupTemporaryDropURLs([destination])
+                return
+            }
             let urls = promisedURLs.compactMap { $0 }
             guard !urls.isEmpty else {
                 self.cleanupTemporaryDropURLs([destination])
@@ -2423,7 +2474,7 @@ exit "${status}"
     @objc private func quit() {
         process?.terminate()
         transferProcess?.terminate()
-        promisedFileReceiveQueues.forEach { $0.cancelAllOperations() }
+        _ = cancelPromisedFileDrops()
         latestMacReceiveTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()

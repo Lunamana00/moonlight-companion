@@ -10,6 +10,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Moonlight window, strip, Companion drops, and the macOS clipboard helper now accept broader file URL pasteboard variants such as `public.url`, making file drags and file clipboards from more macOS sources arrive as transfers.
 - File URL pasteboard strings can now contain multiple newline-separated file URLs or paths, so multi-file drags and file clipboards from more macOS apps are preserved as multi-item transfers.
 - Moonlight window, strip, and Companion drop targets now accept macOS file promises, materializing promised files into a temporary staging folder before sending them through the normal Mac-to-Windows transfer pipeline.
+- Promised file drops can now be cancelled while the source app is still materializing files, and their temporary staging folders are cleaned up with other queued transfer work.
 - The GUI now offers a Cancel action for in-progress file sends, transfer tests, and Windows receive-folder reveal requests.
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
 - Existing user settings now keep the Companion control window hidden on launch unless `MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH` is enabled, and background failures no longer raise modal alerts over the current workspace.
