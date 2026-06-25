@@ -220,6 +220,25 @@ verify_windows_agent_settings() {
   fi
 }
 
+verify_windows_agent_file_drop_export_guard() {
+  local script encoded output
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'; . \$agent; \$ErrorActionPreference = 'Stop'; \$root = Join-Path \$dir ('agent-export-guard-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force -Path \$root | Out-Null; try { \$valid = Join-Path \$root 'valid.txt'; \$missing = Join-Path \$root 'missing.txt'; \$payload = Join-Path \$root 'broken-payload'; \$validPayload = Join-Path \$root 'valid-payload'; Set-Content -LiteralPath \$valid -Value 'valid windows file drop item' -Encoding UTF8; New-Item -ItemType Directory -Force -Path \$payload, \$validPayload | Out-Null; \$brokenResult = Export-FileDropPathsPayload \$payload @(\$valid, \$missing); if (\$null -ne \$brokenResult) { Write-Output 'broken_result_not_null'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$payload 'manifest.json')) { Write-Output 'broken_manifest_written'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$payload 'files')) { Write-Output 'broken_partial_files_left'; exit 1 }; \$validResult = Export-FileDropPathsPayload \$validPayload @(\$valid); if (\$null -eq \$validResult -or \$validResult.kind -ne 'files' -or @(\$validResult.files).Count -ne 1) { Write-Output 'valid_result_missing'; exit 1 }; Write-Output 'file_drop_export_guard=ok' } finally { Remove-Item -LiteralPath \$root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue }"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent file-drop export guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"file_drop_export_guard=ok"* ]]; then
+    echo "Windows agent file-drop export guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 write_windows_file() {
   local file_name="$1"
   local content="$2"
@@ -539,6 +558,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   echo "Refreshing Windows agent..."
   MOONLIGHT_COMPANION_CONFIG="$config" "$deploy_agent" >/dev/null
   verify_windows_agent_settings
+  verify_windows_agent_file_drop_export_guard
   echo "Windows agent ready."
 fi
 

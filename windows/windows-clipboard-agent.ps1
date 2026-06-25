@@ -25,12 +25,16 @@ $MoonlightClipboardMacToWindowsTcpPort = "47331"
 $MoonlightClipboardWindowsToMacTcpPort = "47332"
 $MoonlightTransferOversizeDirect = "yes"
 $MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
+$agentLoadOnly = "$env:MOONLIGHT_AGENT_LOAD_ONLY".Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-$mutex = New-Object System.Threading.Mutex($false, "Global\MoonlightClipboardSyncAgent")
-if (-not $mutex.WaitOne(0)) {
-    exit 0
+$mutex = $null
+if (-not $agentLoadOnly) {
+    $mutex = New-Object System.Threading.Mutex($false, "Global\MoonlightClipboardSyncAgent")
+    if (-not $mutex.WaitOne(0)) {
+        exit 0
+    }
 }
 
 function Write-AgentLog($message) {
@@ -861,60 +865,79 @@ function Copy-ItemUnique($source, $destDir) {
     return Copy-ItemUniqueNamed $source $destDir (Split-Path -Leaf $source)
 }
 
+function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
+    $fileDropPaths = @($fileDropPaths)
+    $filesDir = Join-Path $payloadDir "files"
+    New-Item -ItemType Directory -Force -Path $filesDir | Out-Null
+    $items = @()
+    $hashLines = New-Object System.Collections.Generic.List[string]
+    $bytes = 0L
+    $completeFileDrop = $true
+    $failedFileDropPath = ""
+    $failedFileDropReason = ""
+
+    foreach ($path in $fileDropPaths) {
+        try {
+            if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) {
+                $completeFileDrop = $false
+                $failedFileDropPath = $path
+                $failedFileDropReason = "source path is missing"
+                break
+            }
+            $dest = Copy-ItemUnique $path $filesDir
+            $item = Get-Item -LiteralPath $dest -ErrorAction Stop
+            $isDirectory = [bool]$item.PSIsContainer
+            $itemBytes = if ($isDirectory) { Get-DirectoryBytes $dest } else { $item.Length }
+            $itemHash = Get-PathHash $dest
+            $bytes += $itemBytes
+            $relativePath = "files/" + (Split-Path -Leaf $dest)
+            $items += [pscustomobject]@{
+                name = Split-Path -Leaf $dest
+                path = $relativePath
+                isDirectory = $isDirectory
+                bytes = $itemBytes
+            }
+            $itemKind = if ($isDirectory) { "d" } else { "f" }
+            $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $dest), $itemHash))
+        } catch {
+            $completeFileDrop = $false
+            $failedFileDropPath = $path
+            $failedFileDropReason = $_.Exception.Message
+            break
+        }
+    }
+
+    if ($completeFileDrop -and $items.Count -eq $fileDropPaths.Count -and $items.Count -gt 0) {
+        $id = "files:" + (Get-StringHash (($hashLines | Sort-Object) -join "`n"))
+        $manifest = [pscustomobject]@{
+            version = 2
+            origin = "windows"
+            kind = "files"
+            id = $id
+            bytes = $bytes
+            textFile = $null
+            imageFile = $null
+            files = $items
+        }
+        Write-JsonManifest $manifest $payloadDir
+        return $manifest
+    }
+
+    if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
+        Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
+    } else {
+        Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
+    }
+    Remove-Item -LiteralPath $filesDir -Recurse -Force -ErrorAction SilentlyContinue
+    return $null
+}
+
 function Export-ClipboardPayload($payloadDir) {
     Clear-Directory $payloadDir
 
     if ([System.Windows.Forms.Clipboard]::ContainsFileDropList()) {
         $fileDropPaths = @([System.Windows.Forms.Clipboard]::GetFileDropList())
-        $filesDir = Join-Path $payloadDir "files"
-        New-Item -ItemType Directory -Force -Path $filesDir | Out-Null
-        $items = @()
-        $hashLines = New-Object System.Collections.Generic.List[string]
-        $bytes = 0L
-        $completeFileDrop = $true
-
-        foreach ($path in $fileDropPaths) {
-            try {
-                if (-not (Test-Path -LiteralPath $path)) {
-                    $completeFileDrop = $false
-                    break
-                }
-                $dest = Copy-ItemUnique $path $filesDir
-                $item = Get-Item -LiteralPath $dest -ErrorAction Stop
-                $isDirectory = [bool]$item.PSIsContainer
-                $itemBytes = if ($isDirectory) { Get-DirectoryBytes $dest } else { $item.Length }
-                $itemHash = Get-PathHash $dest
-                $bytes += $itemBytes
-                $relativePath = "files/" + (Split-Path -Leaf $dest)
-                $items += [pscustomobject]@{
-                    name = Split-Path -Leaf $dest
-                    path = $relativePath
-                    isDirectory = $isDirectory
-                    bytes = $itemBytes
-                }
-                $itemKind = if ($isDirectory) { "d" } else { "f" }
-                $hashLines.Add(("{0}:{1}:{2}" -f $itemKind, (Split-Path -Leaf $dest), $itemHash))
-            } catch {
-                $completeFileDrop = $false
-                break
-            }
-        }
-
-        if ($completeFileDrop -and $items.Count -eq $fileDropPaths.Count -and $items.Count -gt 0) {
-            $id = "files:" + (Get-StringHash (($hashLines | Sort-Object) -join "`n"))
-            $manifest = [pscustomobject]@{
-                version = 2
-                origin = "windows"
-                kind = "files"
-                id = $id
-                bytes = $bytes
-                textFile = $null
-                imageFile = $null
-                files = $items
-            }
-            Write-JsonManifest $manifest $payloadDir
-            return $manifest
-        }
+        return Export-FileDropPathsPayload $payloadDir $fileDropPaths
     }
 
     if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
@@ -1306,6 +1329,10 @@ function Invoke-CapsLockHangulRequest($requestId) {
     } catch {
         Write-AgentLog ("Caps Lock Hangul toggle request error: {0}" -f $_.Exception.Message)
     }
+}
+
+if ($agentLoadOnly) {
+    return
 }
 
 $lastMacArchiveHash = ""
