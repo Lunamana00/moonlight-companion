@@ -1918,6 +1918,9 @@ exit "${status}"
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
         environment["MOONLIGHT_TRANSFER_RESULT_STATE"] = transferResultStateURL.path
         environment["MOONLIGHT_TRANSFER_PROGRESS_EVENTS"] = "yes"
+        if pasteAfterSend || settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") {
+            environment["MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS"] = "8000"
+        }
         task.environment = environment
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in

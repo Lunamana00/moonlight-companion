@@ -18,6 +18,7 @@ MOONLIGHT_CLIPBOARD_TCP="${MOONLIGHT_CLIPBOARD_TCP:-yes}"
 MOONLIGHT_CLIPBOARD_MAX_BYTES="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT:-47331}"
 MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT:-$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT}"
+MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS="${MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS:-1800}"
 
 runtime_dir="${MOONLIGHT_CLIPBOARD_RUNTIME_DIR:-${HOME}/Library/Application Support/MoonlightClipboardSync}"
 helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
@@ -64,6 +65,16 @@ normalize_yes_no() {
       printf 'no\n'
       ;;
   esac
+}
+
+normalize_positive_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$fallback"
+  fi
 }
 
 payload_value() {
@@ -168,7 +179,7 @@ encode_powershell() {
 read_windows_import_state() {
   local expected_id="$1"
   local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$expected = '${expected_id}'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$path = Join-Path \$dir 'mac-to-windows-import-state.txt'; \$deadline = (Get-Date).AddMilliseconds(1800); do { if (Test-Path -LiteralPath \$path) { \$text = Get-Content -LiteralPath \$path -Raw -Encoding UTF8; if (\$text -match ('(?m)^id=' + [regex]::Escape(\$expected) + '\\r?\$')) { Write-Output \$text; exit 0 } }; Start-Sleep -Milliseconds 150 } while ((Get-Date) -lt \$deadline); exit 1"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$expected = '${expected_id}'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$path = Join-Path \$dir 'mac-to-windows-import-state.txt'; \$deadline = (Get-Date).AddMilliseconds(${MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS}); do { if (Test-Path -LiteralPath \$path) { \$text = Get-Content -LiteralPath \$path -Raw -Encoding UTF8; if (\$text -match ('(?m)^id=' + [regex]::Escape(\$expected) + '\\r?\$')) { Write-Output \$text; exit 0 } }; Start-Sleep -Milliseconds 150 } while ((Get-Date) -lt \$deadline); exit 1"
   encoded="$(printf '%s' "$script" | encode_powershell)"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}"
@@ -270,6 +281,8 @@ for path in "$@"; do
 done
 
 ensure_helpers
+
+MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS="$(normalize_positive_int "$MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS" 1800)"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-file-drop.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
