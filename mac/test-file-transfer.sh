@@ -158,6 +158,23 @@ cleanup_windows_self_test_files() {
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
+verify_windows_agent_settings() {
+  local expected_max expected_oversize script encoded output
+  expected_max="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
+  expected_oversize="$(normalize_yes_no "${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}")"
+  script="\$ErrorActionPreference = 'Stop'; \$settings = Join-Path (Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync') 'windows-agent-settings.ps1'; . \$settings; Write-Output ('max=' + [string]\$MoonlightClipboardMaxBytes); Write-Output ('oversize=' + [string]\$MoonlightTransferOversizeDirect)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"
+  if [[ "$output" != *"max=${expected_max}"* || "$output" != *"oversize=${expected_oversize}"* ]]; then
+    echo "Windows agent settings did not include clipboard max bytes or oversized direct transfer." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 write_windows_file() {
   local file_name="$1"
   local content="$2"
@@ -454,6 +471,7 @@ write_transfer_quiet_state
 if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   echo "Refreshing Windows agent..."
   MOONLIGHT_COMPANION_CONFIG="$config" "$deploy_agent" >/dev/null
+  verify_windows_agent_settings
   echo "Windows agent ready."
 fi
 

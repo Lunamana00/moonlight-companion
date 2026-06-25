@@ -17,11 +17,13 @@ $settingsPath = Join-Path $dir "windows-agent-settings.ps1"
 $capsLockHangulRequest = Join-Path $dir "capslock-hangul-toggle.request"
 $maxBytes = 52428800
 $intervalMs = 700
+$MoonlightClipboardMaxBytes = "52428800"
 $MoonlightCapsLockHangul = "yes"
 $MoonlightCapsLockHangulTcpPort = "47321"
 $MoonlightClipboardTcp = "yes"
 $MoonlightClipboardMacToWindowsTcpPort = "47331"
 $MoonlightClipboardWindowsToMacTcpPort = "47332"
+$MoonlightTransferOversizeDirect = "yes"
 $MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -1268,12 +1270,14 @@ $lastMacId = ""
 $lastWindowsId = ""
 $lastCapsLockHangulRequestId = ""
 $lastWindowsExportAt = [DateTime]::MinValue
+$maxBytes = Get-IntSetting $MoonlightClipboardMaxBytes 52428800
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
 $capsLockHangulTcpPort = Get-IntSetting $MoonlightCapsLockHangulTcpPort 47321
 $capsLockHangulHookInstalled = $false
 $enableClipboardTcp = Test-SettingEnabled $MoonlightClipboardTcp $true
 $clipboardMacToWindowsTcpPort = Get-IntSetting $MoonlightClipboardMacToWindowsTcpPort 47331
 $clipboardWindowsToMacTcpPort = Get-IntSetting $MoonlightClipboardWindowsToMacTcpPort 47332
+$enableTransferOversizeDirect = Test-SettingEnabled $MoonlightTransferOversizeDirect $true
 $transferWindowsDir = Get-ExpandedPathSetting $MoonlightTransferWindowsDir "%USERPROFILE%\Downloads\Moonlight Companion"
 $clipboardTcpListener = $null
 $loopSleepMs = if ($enableClipboardTcp) { 50 } else { $intervalMs }
@@ -1351,7 +1355,12 @@ try {
                             $lastWindowsId = $exported.id
                         } elseif ($exported.bytes -gt $maxBytes) {
                             $lastWindowsId = $exported.id
-                            Write-AgentLog ("skip Windows -> Mac {0} ({1}B); limit is {2}B" -f $exported.kind, $exported.bytes, $maxBytes)
+                            if ($enableTransferOversizeDirect -and $exported.kind -eq "files") {
+                                Compress-Payload $exportDir $windowsZip $windowsTmpZip
+                                Write-AgentLog ("Windows -> Mac oversized files ({0}B); SSH fallback ZIP ready beyond {1}B clipboard limit" -f $exported.bytes, $maxBytes)
+                            } else {
+                                Write-AgentLog ("skip Windows -> Mac {0} ({1}B); limit is {2}B" -f $exported.kind, $exported.bytes, $maxBytes)
+                            }
                         } else {
                             Compress-Payload $exportDir $windowsZip $windowsTmpZip
                             $lastWindowsId = $exported.id

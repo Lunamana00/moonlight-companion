@@ -17,8 +17,10 @@ WINDOWS_SSH="${WINDOWS_SSH:-moonlight-windows}"
 MOONLIGHT_CAPSLOCK_HANGUL="${MOONLIGHT_CAPSLOCK_HANGUL:-yes}"
 MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
 MOONLIGHT_CLIPBOARD_TCP="${MOONLIGHT_CLIPBOARD_TCP:-yes}"
+MOONLIGHT_CLIPBOARD_MAX_BYTES="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT:-47331}"
 MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT:-47332}"
+MOONLIGHT_TRANSFER_OVERSIZE_DIRECT="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
 MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}"
 
 ssh_opts=(
@@ -49,11 +51,13 @@ write_windows_agent_settings() {
   settings_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-companion-windows-settings.XXXXXX")"
 
   {
+    printf '$MoonlightClipboardMaxBytes = "%s"\n' "$MOONLIGHT_CLIPBOARD_MAX_BYTES"
     printf '$MoonlightCapsLockHangul = "%s"\n' "$capslock_hangul"
     printf '$MoonlightCapsLockHangulTcpPort = "%s"\n' "$MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT"
     printf '$MoonlightClipboardTcp = "%s"\n' "$clipboard_tcp"
     printf '$MoonlightClipboardMacToWindowsTcpPort = "%s"\n' "$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT"
     printf '$MoonlightClipboardWindowsToMacTcpPort = "%s"\n' "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT"
+    printf '$MoonlightTransferOversizeDirect = "%s"\n' "$(normalize_yes_no "$MOONLIGHT_TRANSFER_OVERSIZE_DIRECT")"
     printf '$MoonlightTransferWindowsDir = "%s"\n' "$MOONLIGHT_TRANSFER_WINDOWS_DIR"
   } > "$settings_tmp"
 
