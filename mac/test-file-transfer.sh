@@ -219,6 +219,15 @@ verify_sync_oversized_direct_retry_self_test() {
   fi
 }
 
+verify_sync_mac_export_failure_log_self_test() {
+  local output
+  if ! output="$(MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SELF_TEST=yes "${script_dir}/sync-moonlight-clipboard.sh" 2>&1)"; then
+    echo "Mac clipboard sync file export failure log self-test failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -1152,6 +1161,7 @@ verify_tcp_ack_path_output_self_test
 verify_send_files_ack_path_state_self_test
 verify_sync_latest_windows_ack_state_self_test
 verify_sync_oversized_direct_retry_self_test
+verify_sync_mac_export_failure_log_self_test
 save_clipboard_snapshot
 save_latest_windows_receive_snapshot
 write_mac_clipboard_suspend_state

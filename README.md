@@ -90,6 +90,8 @@ Files received from Windows are marked as the current Mac clipboard state, so th
 
 Mac-to-Windows file clipboard exports validate all source file paths before packaging and discard partial payloads after copy failures, so stale Finder file clipboards do not turn into broken partial transfers.
 
+When a background Mac file clipboard points at a missing or unreadable local path, the sync log records the stale source once per distinct failure instead of silently doing nothing or flooding repeated errors.
+
 If the TCP channel is unavailable, the fallback polling path keeps the same receive-folder import and file-detail notifications.
 
 The default setting keeps Finder reveal off so received Windows files do not interrupt your current Mac workspace. Use `Reveal Last Mac Receive` or enable `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` when you want Finder to jump to new files automatically.

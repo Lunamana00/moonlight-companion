@@ -743,6 +743,35 @@ run_helper() {
   return "$status"
 }
 
+helper_error_text() {
+  local output_path="$1"
+  local err_path="${output_path}.err"
+  [[ -f "$err_path" ]] || return 0
+  tr '\r' '\n' < "$err_path" |
+    awk 'NF {
+      sub(/^[[:space:]]+/, "")
+      sub(/[[:space:]]+$/, "")
+      print
+      exit
+    }'
+}
+
+log_mac_export_failure_if_needed() {
+  local output_path="$1"
+  local mac_export_error
+  mac_export_error="$(helper_error_text "$output_path")"
+  if [[ "$mac_export_error" == file-drop-unavailable:* ]]; then
+    if [[ "$mac_export_error" != "$last_mac_export_failure" ]]; then
+      log "skip Mac -> Windows file clipboard; ${mac_export_error#file-drop-unavailable: }"
+    fi
+    last_mac_export_failure="$mac_export_error"
+    return 0
+  fi
+
+  last_mac_export_failure=""
+  return 1
+}
+
 tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
 helper_timeout_seconds="$(normalize_positive_int "$helper_timeout_seconds" 20)"
 windows_fallback_max_failures="$(normalize_positive_int "$windows_fallback_max_failures" 3)"
@@ -778,6 +807,37 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_OVERSIZE_DIRECT_RETRY_SELF
   exit $?
 fi
 
+if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SELF_TEST:-no}")" == "yes" ]]; then
+  test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-mac-export-failure-log.XXXXXX")"
+  trap 'rm -rf "$test_dir"' EXIT
+  log_path="${test_dir}/sync.log"
+  last_mac_export_failure=""
+  printf 'file-drop-unavailable: source path is missing: /tmp/missing-file\n' > "${test_dir}/mac-meta.txt.err"
+  log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt" || {
+    echo "Mac export failure log self-test did not recognize file-drop-unavailable." >&2
+    exit 1
+  }
+  log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt" || {
+    echo "Mac export failure log self-test did not keep file-drop-unavailable state." >&2
+    exit 1
+  }
+  if [[ "$(grep -Fc 'skip Mac -> Windows file clipboard; source path is missing: /tmp/missing-file' "$log_path")" != "1" ]]; then
+    echo "Mac export failure log self-test did not log the stale file clipboard once." >&2
+    cat "$log_path" >&2
+    exit 1
+  fi
+  printf 'unsupported-or-empty-clipboard\n' > "${test_dir}/mac-meta.txt.err"
+  if log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt"; then
+    echo "Mac export failure log self-test treated unsupported clipboard as a file-drop failure." >&2
+    exit 1
+  fi
+  if [[ -n "$last_mac_export_failure" ]]; then
+    echo "Mac export failure log self-test did not clear the previous file-drop failure." >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "${tmp_root%/}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -797,6 +857,7 @@ last_windows_failed_archive_hash=""
 last_windows_failed_archive_failures=0
 last_windows_poll="0"
 last_tcp_state_hash=""
+last_mac_export_failure=""
 upload_transport="ssh"
 tcp_ack_state=""
 
@@ -809,6 +870,7 @@ while true; do
   if mac_clipboard_sync_suspended; then
     :
   elif ! tcp_receive_in_progress && run_helper "$mac_meta" export "$mac_payload"; then
+    last_mac_export_failure=""
     sleep 0.05
     if tcp_receive_in_progress; then
       read_tcp_state
@@ -857,6 +919,8 @@ while true; do
         fi
       fi
     fi
+  else
+    log_mac_export_failure_if_needed "$mac_meta" || true
   fi
 
   now="$(date +%s)"
