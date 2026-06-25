@@ -46,6 +46,14 @@ ssh_opts=(
   -o StrictHostKeyChecking=accept-new
 )
 
+scp_opts=("${ssh_opts[@]}")
+
+remote_dir=".moonlight-clipboard-sync"
+remote_windows_zip="${remote_dir}/windows-to-mac.zip"
+remote_windows_tmp="${remote_dir}/windows-to-mac.tmp.zip"
+remote_windows_zip_cmd="${remote_dir}\\windows-to-mac.zip"
+remote_windows_tmp_cmd="${remote_dir}\\windows-to-mac.tmp.zip"
+
 expand_mac_path() {
   local value="$1"
   value="${value//'${HOME}'/$HOME}"
@@ -158,6 +166,20 @@ cleanup_windows_self_test_files() {
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
+remove_windows_fallback_zip() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_windows_zip_cmd}\" \"${remote_windows_tmp_cmd}\" 2>nul" >/dev/null 2>&1 || true
+}
+
+upload_windows_fallback_zip() {
+  local zip_path="$1"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
+  scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_windows_tmp}" >/dev/null
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c move /Y \"${remote_windows_tmp_cmd}\" \"${remote_windows_zip_cmd}\" >nul"
+}
+
 verify_windows_agent_settings() {
   local expected_max expected_oversize script encoded output
   expected_max="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
@@ -245,7 +267,9 @@ cleanup_mac_self_test_files() {
 wait_for_mac_file() {
   local directory="$1"
   local file_name="$2"
-  for _ in {1..20}; do
+  local attempts="${3:-20}"
+  local index
+  for ((index = 0; index < attempts; index++)); do
     if [[ -f "${directory}/${file_name}" ]]; then
       return 0
     fi
@@ -258,8 +282,10 @@ wait_for_mac_path() {
   local directory="$1"
   local relative_path="$2"
   local path_type="${3:-Any}"
+  local attempts="${4:-20}"
   local full_path="${directory}/${relative_path}"
-  for _ in {1..20}; do
+  local index
+  for ((index = 0; index < attempts; index++)); do
     if [[ "$path_type" == "Directory" && -d "$full_path" ]]; then
       return 0
     fi
@@ -268,6 +294,23 @@ wait_for_mac_path() {
     fi
     if [[ "$path_type" == "Any" && -e "$full_path" ]]; then
       return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+wait_for_mac_receive_state_id() {
+  local expected_id="$1"
+  local attempts="${2:-80}"
+  local index windows_id normalized_id
+  for ((index = 0; index < attempts; index++)); do
+    if [[ -f "$tcp_state" ]]; then
+      windows_id="$(meta_value "windows_id" "$tcp_state")"
+      normalized_id="$(meta_value "normalized_id" "$tcp_state")"
+      if [[ "$windows_id" == "$expected_id" || "$normalized_id" == "$expected_id" ]]; then
+        return 0
+      fi
     fi
     sleep 0.25
   done
@@ -459,6 +502,7 @@ cleanup_self_test_artifacts() {
   rm -f "$transfer_quiet_state"
   rm -rf "$tmp_dir"
   cleanup_mac_self_test_files "$transfer_mac_dir"
+  remove_windows_fallback_zip
   cleanup_windows_self_test_files
 }
 
@@ -939,6 +983,44 @@ assert_windows_path_absent "$w2m_collision_name" "Leaf"
 echo "Latest Mac receive clipboard restore ok."
 rm -f "${transfer_mac_dir}/${w2m_name}" "${transfer_mac_dir}/${w2m_collision_name}"
 echo "Windows -> Mac ok."
+
+echo "Testing Windows -> Mac SSH fallback file transfer..."
+w2m_fallback_name="moonlight-companion-transfer-test-windows-fallback-${stamp}.txt"
+w2m_fallback_file="${tmp_dir}/${w2m_fallback_name}"
+w2m_fallback_payload="${tmp_dir}/w2m-fallback-payload"
+w2m_fallback_meta="${tmp_dir}/w2m-fallback-meta.txt"
+w2m_fallback_zip="${tmp_dir}/windows-to-mac-fallback.zip"
+printf 'Moonlight Companion Windows -> Mac SSH fallback test %s\n' "$stamp" > "$w2m_fallback_file"
+w2m_fallback_hash="$(mac_file_sha256 "$w2m_fallback_file")"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_fallback_payload" "$w2m_fallback_file" > "$w2m_fallback_meta"
+w2m_fallback_id="$(meta_value id "$w2m_fallback_meta")"
+zip_payload "$w2m_fallback_payload" "$w2m_fallback_zip"
+remove_windows_fallback_zip
+upload_windows_fallback_zip "$w2m_fallback_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_fallback_name" 80; then
+  echo "Windows -> Mac SSH fallback transfer did not create the file in the Mac receive folder." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if [[ "$(mac_file_sha256 "${transfer_mac_dir}/${w2m_fallback_name}")" != "$w2m_fallback_hash" ]]; then
+  echo "Windows -> Mac SSH fallback transfer changed the file bytes." >&2
+  exit 1
+fi
+if ! wait_for_mac_receive_state_id "$w2m_fallback_id" 80; then
+  echo "Windows -> Mac SSH fallback transfer did not update the latest receive state." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! grep -Fqx "file_path_1=${transfer_mac_dir}/${w2m_fallback_name}" "$tcp_state"; then
+  echo "Windows -> Mac SSH fallback transfer did not record the latest received Mac file path." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_fallback_name" "Leaf"
+remove_windows_fallback_zip
+rm -f "${transfer_mac_dir}/${w2m_fallback_name}"
+echo "Windows -> Mac SSH fallback file ok."
 
 echo "Testing Windows -> Mac spaced filename transfer..."
 w2m_spaced_name="moonlight-companion-transfer-test-spaced windows (${stamp}).txt"
