@@ -1679,7 +1679,7 @@ exit "${status}"
 
         let mouseLocation = NSEvent.mouseLocation
         let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-        let hasFileDrag = !FileDropReader.fileURLs(from: NSPasteboard(name: .drag)).isEmpty
+        let hasFileDrag = FileDropReader.hasFileDropContent(from: NSPasteboard(name: .drag))
         let now = Date()
 
         if dropOverlayDragCaptured {
@@ -2594,6 +2594,13 @@ enum FileDropReader {
             forClasses: [NSFilePromiseReceiver.self],
             options: nil
         ) as? [NSFilePromiseReceiver] ?? []
+    }
+
+    static func hasFileDropContent(from pasteboard: NSPasteboard) -> Bool {
+        if !fileURLs(from: pasteboard).isEmpty {
+            return true
+        }
+        return !filePromiseReceivers(from: pasteboard).isEmpty
     }
 
     static func filePromiseReceivers(from sender: NSDraggingInfo) -> [NSFilePromiseReceiver] {
