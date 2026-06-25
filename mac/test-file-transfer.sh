@@ -581,6 +581,13 @@ if [[ ! -f "$m2w_state" || "$(meta_value id "$m2w_state")" != files:* ]]; then
   [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
   exit 1
 fi
+m2w_state_names_b64="$(meta_value imported_names_b64 "$m2w_state")"
+m2w_state_names="$(printf '%s' "$m2w_state_names_b64" | /usr/bin/base64 -D 2>/dev/null | tr '\037' '\n' || true)"
+if [[ -z "$m2w_state_names_b64" || "$m2w_state_names" != *"$m2w_collision_name"* ]]; then
+  echo "Mac -> Windows transfer did not write the imported Windows receive name to the GUI result state." >&2
+  [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
+  exit 1
+fi
 if ! wait_for_windows_file "$m2w_collision_name"; then
   echo "Mac -> Windows transfer did not create a collision-safe file in the Windows receive folder." >&2
   exit 1

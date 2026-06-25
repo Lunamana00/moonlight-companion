@@ -731,6 +731,19 @@ function Write-MacImportState($manifest, $archiveHash) {
     for ($i = 0; $i -lt $paths.Count; $i++) {
         $lines += "imported_path_$($i + 1)=$($paths[$i])"
     }
+    $names = @()
+    foreach ($path in $paths) {
+        $name = Split-Path -Leaf $path
+        if (-not [string]::IsNullOrWhiteSpace($name)) {
+            $names += $name
+        }
+    }
+    $namesForState = @($names | Select-Object -First 12)
+    if ($namesForState.Count -gt 0) {
+        $namesText = [string]::Join([string][char]31, $namesForState)
+        $namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($namesText))
+        $lines += "imported_names_b64=$namesB64"
+    }
 
     Write-KeyValueState $macImportState $lines
 }

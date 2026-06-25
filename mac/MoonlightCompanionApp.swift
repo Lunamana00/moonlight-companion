@@ -202,6 +202,7 @@ exit "${status}"
     private var latestMacReceiveURLs: [URL] = []
     private var pendingLatestMacReceiveURLs: [URL] = []
     private var latestWindowsReceiveID = ""
+    private var latestWindowsReceiveSummary = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -783,6 +784,7 @@ exit "${status}"
         let state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         latestWindowsReceiveID = windowsImportConfirmed(state) ? id : ""
+        latestWindowsReceiveSummary = windowsImportSummary(state)
         updateLatestWindowsReceiveButtonState()
     }
 
@@ -803,10 +805,12 @@ exit "${status}"
         }
 
         latestWindowsReceiveID = id
+        latestWindowsReceiveSummary = windowsImportSummary(state)
         let values = [
             "bytes": state["bytes"] ?? "",
             "confirmation": confirmation,
             "id": id,
+            "imported_names_b64": state["imported_names_b64"] ?? "",
             "imported_paths": "\(importedPaths)",
             "kind": state["kind"] ?? ""
         ]
@@ -816,8 +820,22 @@ exit "${status}"
 
     private func clearLatestWindowsReceiveState() {
         latestWindowsReceiveID = ""
+        latestWindowsReceiveSummary = ""
         try? FileManager.default.removeItem(at: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
+    }
+
+    private func windowsImportSummary(_ state: [String: String]) -> String {
+        let encoded = state["imported_names_b64"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !encoded.isEmpty,
+              let data = Data(base64Encoded: encoded),
+              let text = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        let names = text
+            .split(separator: "\u{1f}", omittingEmptySubsequences: true)
+            .map(String.init)
+        return summarizedNames(names)
     }
 
     private func writeSimpleState(_ values: [String: String], to url: URL) {
@@ -1301,7 +1319,10 @@ exit "${status}"
             return
         }
 
-        setBusy(true, status: "Revealing Windows Files", detail: "Asking Windows to select the latest received item.")
+        let revealDetail = latestWindowsReceiveSummary.isEmpty
+            ? "Asking Windows to select the latest received item."
+            : "Asking Windows to select \(latestWindowsReceiveSummary)."
+        setBusy(true, status: "Revealing Windows Files", detail: revealDetail)
         requestWindowsReceiveFolderOpen(selectLatestImport: true, expectedImportID: expectedImportID) { [weak self] succeeded, detail in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()

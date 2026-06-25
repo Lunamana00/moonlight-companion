@@ -154,6 +154,26 @@ imported_names_summary() {
   summarize_imported_names "$total_count" "${names[@]}"
 }
 
+imported_names_b64_from_state() {
+  local state="$1"
+  local names_b64 name
+  local names=()
+
+  names_b64="$(printf '%s\n' "$state" | state_value imported_names_b64)"
+  if [[ -n "$names_b64" ]]; then
+    printf '%s\n' "$names_b64"
+    return 0
+  fi
+
+  while IFS= read -r name || [[ -n "$name" ]]; do
+    [[ -n "$name" ]] && names+=("$name")
+  done < <(printf '%s\n' "$state" | imported_path_names_from_state)
+
+  ((${#names[@]} > 0)) || return 0
+  (IFS=$'\037'; printf '%s' "${names[*]}") | /usr/bin/base64 | tr -d '\n'
+  printf '\n'
+}
+
 write_transfer_result_state() {
   local state_path="${MOONLIGHT_TRANSFER_RESULT_STATE:-}"
   [[ -n "$state_path" ]] || return 0
@@ -169,6 +189,7 @@ write_transfer_result_state() {
     printf 'transport=%s\n' "${transport:-}"
     printf 'confirmation=%s\n' "${windows_import_confirmation:-pending}"
     printf 'imported_paths=%s\n' "${imported_paths:-0}"
+    printf 'imported_names_b64=%s\n' "${imported_names_b64:-}"
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$state_path" 2>/dev/null || rm -f "$tmp_path"
 }
 
@@ -317,10 +338,12 @@ log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
 windows_import_state=""
 windows_import_confirmation=""
 imported_paths="0"
+imported_names_b64=""
 progress "Waiting for Windows receive confirmation."
 if wait_for_windows_import "$payload_id"; then
   log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
+  imported_names_b64="$(imported_names_b64_from_state "$windows_import_state")"
   imported_summary="$(imported_names_summary "$windows_import_state" "${imported_paths:-0}")"
   imported_suffix=""
   if [[ -n "$imported_summary" ]]; then
