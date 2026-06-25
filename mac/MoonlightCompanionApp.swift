@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
 
 struct CompanionSettings {
@@ -2855,10 +2856,14 @@ enum FileDropReader {
         .fileURL,
         .URL
     ]
+    static let fileReferenceTextPasteboardTypes: [NSPasteboard.PasteboardType] = [
+        .string,
+        NSPasteboard.PasteboardType("public.text")
+    ]
     static let filePromisePasteboardTypes = NSFilePromiseReceiver.readableDraggedTypes.map {
         NSPasteboard.PasteboardType($0)
     }
-    static let readablePasteboardTypes = urlPasteboardTypes + [filenamesPasteboardType] + filePromisePasteboardTypes
+    static let readablePasteboardTypes = urlPasteboardTypes + fileReferenceTextPasteboardTypes + [filenamesPasteboardType] + filePromisePasteboardTypes
 
     static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
         var urls: [URL] = []
@@ -2877,7 +2882,14 @@ enum FileDropReader {
                           !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         continue
                     }
-                    return fileURLs(fromPasteboardString: value)
+                    return fileURLs(fromPasteboardString: value, requireEveryLineToBeFile: false)
+                }
+                for type in fileReferenceTextPasteboardTypes {
+                    guard let value = item.string(forType: type),
+                          !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        continue
+                    }
+                    return fileURLs(fromPasteboardString: value, requireEveryLineToBeFile: true)
                 }
                 return []
             })
@@ -2887,7 +2899,14 @@ enum FileDropReader {
             guard let value = pasteboard.string(forType: type) else {
                 return []
             }
-            return fileURLs(fromPasteboardString: value)
+            return fileURLs(fromPasteboardString: value, requireEveryLineToBeFile: false)
+        })
+
+        urls.append(contentsOf: fileReferenceTextPasteboardTypes.flatMap { type -> [URL] in
+            guard let value = pasteboard.string(forType: type) else {
+                return []
+            }
+            return fileURLs(fromPasteboardString: value, requireEveryLineToBeFile: true)
         })
 
         if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
@@ -2909,10 +2928,22 @@ enum FileDropReader {
         }
     }
 
-    private static func fileURLs(fromPasteboardString value: String) -> [URL] {
-        value.split(whereSeparator: \.isNewline).compactMap { part in
-            fileURL(fromSinglePasteboardString: String(part))
+    private static func fileURLs(fromPasteboardString value: String, requireEveryLineToBeFile: Bool) -> [URL] {
+        var urls: [URL] = []
+        for part in value.split(whereSeparator: \.isNewline) {
+            let line = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+            if requireEveryLineToBeFile && (line.isEmpty || line.hasPrefix("#")) {
+                continue
+            }
+            guard let url = fileURL(fromSinglePasteboardString: line) else {
+                if requireEveryLineToBeFile {
+                    return []
+                }
+                continue
+            }
+            urls.append(url)
         }
+        return urls
     }
 
     private static func fileURL(fromSinglePasteboardString value: String) -> URL? {
@@ -3238,6 +3269,91 @@ final class FileDropView: NSView {
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
         FileDropReader.fileURLs(from: sender)
     }
+}
+
+private func runFileDropReaderSelfTest() -> Int32 {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory
+        .appendingPathComponent("moonlight-file-drop-reader-\(UUID().uuidString)", isDirectory: true)
+    do {
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let first = root.appendingPathComponent("first file.txt")
+        let second = root.appendingPathComponent("second file.txt")
+        try "first".write(to: first, atomically: true, encoding: .utf8)
+        try "second".write(to: second, atomically: true, encoding: .utf8)
+
+        func withPasteboard(_ body: (NSPasteboard) -> Void) -> NSPasteboard {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("moonlight-file-drop-reader-\(UUID().uuidString)"))
+            pasteboard.clearContents()
+            body(pasteboard)
+            return pasteboard
+        }
+
+        func paths(from pasteboard: NSPasteboard) -> [String] {
+            FileDropReader.fileURLs(from: pasteboard).map { $0.standardizedFileURL.path }
+        }
+
+        func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+            if !condition() {
+                throw NSError(domain: "MoonlightFileDropReaderSelfTest", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: message
+                ])
+            }
+        }
+
+        let urlListPasteboard = withPasteboard { pasteboard in
+            pasteboard.setString(
+                [first.absoluteString, second.absoluteString].joined(separator: "\n"),
+                forType: .URL
+            )
+        }
+        try expect(paths(from: urlListPasteboard) == [first.path, second.path], "public.url list was not parsed as two file URLs")
+        urlListPasteboard.releaseGlobally()
+
+        let plainTextPasteboard = withPasteboard { pasteboard in
+            pasteboard.setString(
+                "# Moonlight Companion self-test\r\n\(first.absoluteString)\r\n\(second.path)\r\n",
+                forType: .string
+            )
+        }
+        try expect(paths(from: plainTextPasteboard) == [first.path, second.path], "plain-text file reference list was not parsed as two file URLs")
+        plainTextPasteboard.releaseGlobally()
+
+        let plainTextItemPasteboard = withPasteboard { pasteboard in
+            let item = NSPasteboardItem()
+            item.setString(first.absoluteString, forType: .string)
+            pasteboard.writeObjects([item])
+        }
+        try expect(paths(from: plainTextItemPasteboard) == [first.path], "item-level plain-text file URL was not parsed")
+        plainTextItemPasteboard.releaseGlobally()
+
+        let legacyPasteboard = withPasteboard { pasteboard in
+            pasteboard.setPropertyList(
+                [first.path, second.path, first.path],
+                forType: FileDropReader.filenamesPasteboardType
+            )
+        }
+        try expect(paths(from: legacyPasteboard) == [first.path, second.path], "legacy filename pasteboard list was not deduplicated")
+        legacyPasteboard.releaseGlobally()
+
+        let mixedTextPasteboard = withPasteboard { pasteboard in
+            pasteboard.setString("\(first.absoluteString)\nhttps://example.invalid/not-a-file", forType: .string)
+        }
+        try expect(!FileDropReader.hasFileDropContent(from: mixedTextPasteboard), "mixed plain text was treated as a file drop")
+        mixedTextPasteboard.releaseGlobally()
+
+        print("file-drop-reader self-test ok")
+        return 0
+    } catch {
+        fputs("file-drop-reader self-test failed: \(error.localizedDescription)\n", stderr)
+        return 1
+    }
+}
+
+if CommandLine.arguments.contains("--self-test-file-drop-reader") {
+    exit(runFileDropReaderSelfTest())
 }
 
 let app = NSApplication.shared
