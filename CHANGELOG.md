@@ -19,6 +19,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Mac-to-Windows Windows receive-folder imports now stage received files before moving them into place, preventing broken payloads from leaving partial files on Windows.
 - Oversized Mac-to-Windows direct receive-folder transfers now stage payloads in a hidden Windows folder before moving them into place, so large direct copies do not expose partial results.
 - Failed oversized Mac-to-Windows direct transfers now clean up their temporary Windows payload directory and direct ZIP files.
+- Oversized Mac-to-Windows direct transfers now remove their temporary Windows helper script after success or failure.
 - The automatic Moonlight screen drop overlay now detects file-promise drags too, so source apps that create files on drop can still use the whole stream window as the drop target.
 - Mac-to-Windows sends now reject missing or unreadable dropped items before packaging or opening network transfer paths, with clearer permission guidance in the GUI output.
 - The GUI no longer recursively measures dropped folders on the main thread before sending; folder sizes are measured by the background transfer path so large folder drops stay responsive.

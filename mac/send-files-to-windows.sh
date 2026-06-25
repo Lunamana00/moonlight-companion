@@ -391,7 +391,7 @@ send_zip() {
 
 send_direct_to_windows_receive_folder() {
   local zip_path="$1"
-  local transfer_dir_literal script_path state
+  local transfer_dir_literal script_path state ssh_status
   transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
   script_path="${tmp_dir}/mac-to-windows-direct.ps1"
 
@@ -611,13 +611,27 @@ if (\$null -ne \$directTransferError) {
   exit 1
 }
 POWERSHELL
+  cleanup_remote_direct_script
   scp "${scp_opts[@]}" "$script_path" "${WINDOWS_SSH}:${remote_direct_script}" >/dev/null
 
+  set +e
   state="$(
     ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${remote_direct_script_cmd}"
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${remote_direct_script_cmd}" 2>&1
   )"
+  ssh_status=$?
+  set -e
+  cleanup_remote_direct_script
+  if (( ssh_status != 0 )); then
+    printf '%s\n' "$state" >&2
+    return "$ssh_status"
+  fi
   printf '%s\n' "$state"
+}
+
+cleanup_remote_direct_script() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_direct_script_cmd}\" 2>nul" >/dev/null 2>&1 || true
 }
 
 if [[ $# -lt 1 ]]; then

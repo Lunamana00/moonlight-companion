@@ -324,7 +324,7 @@ windows_receive_staging_count() {
 
 windows_direct_temp_count() {
   local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp'), (Join-Path \$dir 'mac-to-windows-direct.ps1')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
@@ -332,7 +332,7 @@ windows_direct_temp_count() {
 
 remove_windows_direct_temp_artifacts() {
   local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
@@ -891,6 +891,14 @@ if ! wait_for_windows_file "$limit_name"; then
 fi
 if ! assert_windows_receive_staging_absent; then
   echo "Mac -> Windows oversized direct transfer left a staging folder in the Windows receive folder." >&2
+  exit 1
+fi
+direct_temp_count="$(windows_direct_temp_count)"
+if [[ "$direct_temp_count" != "0" ]]; then
+  remove_windows_direct_temp_artifacts
+  echo "Mac -> Windows oversized direct transfer left direct temp artifacts on Windows." >&2
+  echo "direct temp artifact count: ${direct_temp_count}" >&2
+  cat "$limit_out" >&2
   exit 1
 fi
 remove_windows_file "$limit_name"
