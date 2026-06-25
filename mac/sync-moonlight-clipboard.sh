@@ -33,6 +33,7 @@ tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
 tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
+mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
@@ -270,6 +271,24 @@ read_tcp_state() {
   return 0
 }
 
+consume_mac_ignore_id() {
+  local mac_id="$1"
+  [[ -n "$mac_id" && -f "$mac_ignore_state" ]] || return 1
+
+  local now ignore_mtime ignore_id
+  now="$(date +%s)"
+  ignore_mtime="$(stat -f "%m" "$mac_ignore_state" 2>/dev/null || printf '0')"
+  if (( now - ignore_mtime > 60 )); then
+    rm -f "$mac_ignore_state"
+    return 1
+  fi
+
+  ignore_id="$(state_value "id" "$mac_ignore_state")"
+  [[ -n "$ignore_id" && "$mac_id" == "$ignore_id" ]] || return 1
+  rm -f "$mac_ignore_state"
+  return 0
+}
+
 tcp_receive_in_progress() {
   [[ "$tcp_enabled" == "yes" && -f "$tcp_receive_lock" ]] || return 1
 
@@ -358,7 +377,10 @@ while true; do
 
     if [[ -n "$mac_id" && "$mac_id" != "$last_mac_id" ]]; then
       read_tcp_state
-      if [[ "$mac_id" == "$last_windows_id" || "$mac_id" == "$last_mac_id" ]]; then
+      if consume_mac_ignore_id "$mac_id"; then
+        last_mac_id="$mac_id"
+        log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); local clipboard restore"
+      elif [[ "$mac_id" == "$last_windows_id" || "$mac_id" == "$last_mac_id" ]]; then
         last_mac_id="$mac_id"
       elif (( mac_bytes > max_bytes )); then
         log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"

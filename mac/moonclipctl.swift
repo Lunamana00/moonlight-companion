@@ -25,6 +25,11 @@ struct ImportResult {
     let fileURLs: [URL]
 }
 
+struct ExportResult {
+    let manifest: Manifest
+    let fileURLs: [URL]
+}
+
 enum ClipError: Error, CustomStringConvertible {
     case usage
     case unsupported
@@ -382,10 +387,7 @@ func exportText(_ text: String, to dir: URL) throws -> Manifest {
     return Manifest(version: 2, origin: "mac", kind: "text", id: "text:\(hash)", bytes: UInt64(data.count), textFile: textFile, imageFile: nil, files: nil)
 }
 
-func exportClipboard(to dir: URL) throws -> Manifest {
-    try ensureCleanDirectory(dir)
-    let pasteboard = NSPasteboard.general
-
+func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
     var fileURLs: [URL] = []
 
     if let fileObjects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
@@ -417,7 +419,7 @@ func exportClipboard(to dir: URL) throws -> Manifest {
     }
 
     var seenPaths = Set<String>()
-    fileURLs = fileURLs.filter { url in
+    return fileURLs.filter { url in
         let path = url.standardizedFileURL.path
         guard !seenPaths.contains(path) else {
             return false
@@ -425,17 +427,24 @@ func exportClipboard(to dir: URL) throws -> Manifest {
         seenPaths.insert(path)
         return true
     }
+}
+
+func exportClipboard(to dir: URL) throws -> ExportResult {
+    try ensureCleanDirectory(dir)
+    let pasteboard = NSPasteboard.general
+
+    let fileURLs = fileURLs(from: pasteboard)
 
     if !fileURLs.isEmpty {
-        return try exportFiles(fileURLs, to: dir)
+        return ExportResult(manifest: try exportFiles(fileURLs, to: dir), fileURLs: fileURLs)
     }
 
     if let image = NSImage(pasteboard: pasteboard) {
-        return try exportImage(image, to: dir)
+        return ExportResult(manifest: try exportImage(image, to: dir), fileURLs: [])
     }
 
     if let text = pasteboard.string(forType: .string), !text.isEmpty {
-        return try exportText(text, to: dir)
+        return ExportResult(manifest: try exportText(text, to: dir), fileURLs: [])
     }
 
     throw ClipError.unsupported
@@ -542,9 +551,9 @@ do {
     switch command {
     case "export":
         guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
-        let manifest = try exportClipboard(to: dir)
-        try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
-        printManifest(manifest)
+        let result = try exportClipboard(to: dir)
+        try writeJSON(result.manifest, to: dir.appendingPathComponent("manifest.json"))
+        printManifest(result.manifest, fileURLs: result.fileURLs)
     case "export-paths":
         guard CommandLine.arguments.count >= 4 else { throw ClipError.usage }
         try ensureCleanDirectory(dir)

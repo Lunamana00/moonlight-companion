@@ -25,6 +25,7 @@ runtime_dir="${MOONLIGHT_CLIPBOARD_RUNTIME_DIR:-${HOME}/Library/Application Supp
 helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
 tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
+mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
 source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
@@ -325,6 +326,67 @@ update_receive_state_normalized_id() {
   mv "$tmp_state" "$tcp_state"
 }
 
+clipboard_file_paths_from_meta() {
+  local meta_path="$1"
+  local count index path
+  count="$(meta_value file_paths "$meta_path")"
+  [[ "$count" =~ ^[0-9]+$ ]] || return 0
+  for ((index = 1; index <= count; index++)); do
+    path="$(meta_value "file_path_${index}" "$meta_path")"
+    [[ -n "$path" ]] && printf '%s\n' "$path"
+  done
+}
+
+write_mac_clipboard_ignore_id() {
+  local payload_id="$1"
+  [[ -n "$payload_id" ]] || return 0
+
+  local state_dir tmp_state
+  state_dir="$(dirname "$mac_ignore_state")"
+  tmp_state="${mac_ignore_state}.tmp"
+  mkdir -p "$state_dir"
+  {
+    printf 'id=%s\n' "$payload_id"
+    printf 'reason=test-clipboard-restore\n'
+  } > "$tmp_state"
+  mv "$tmp_state" "$mac_ignore_state"
+}
+
+save_clipboard_snapshot() {
+  clipboard_snapshot_saved="no"
+  clipboard_snapshot_payload="${tmp_dir}/clipboard-snapshot-payload"
+  clipboard_snapshot_meta="${tmp_dir}/clipboard-snapshot-meta.txt"
+  if "$helper" export "$clipboard_snapshot_payload" > "$clipboard_snapshot_meta" 2>/dev/null; then
+    clipboard_snapshot_saved="yes"
+  fi
+}
+
+restore_clipboard_snapshot() {
+  [[ "${clipboard_snapshot_saved:-no}" == "yes" ]] || return 0
+  [[ -f "$clipboard_snapshot_meta" ]] || return 0
+
+  local kind restore_payload snapshot_id
+  kind="$(meta_value kind "$clipboard_snapshot_meta")"
+  snapshot_id="$(meta_value id "$clipboard_snapshot_meta")"
+  if [[ "$kind" == "files" ]]; then
+    local paths=()
+    while IFS= read -r path || [[ -n "$path" ]]; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(clipboard_file_paths_from_meta "$clipboard_snapshot_meta")
+    ((${#paths[@]} > 0)) || return 0
+    restore_payload="${tmp_dir}/clipboard-snapshot-restore-payload"
+    write_mac_clipboard_ignore_id "$snapshot_id"
+    if ! "$helper" set-files "$restore_payload" "${paths[@]}" >/dev/null 2>&1; then
+      rm -f "$mac_ignore_state"
+    fi
+  else
+    write_mac_clipboard_ignore_id "$snapshot_id"
+    if ! env -u MOONLIGHT_TRANSFER_MAC_DIR "$helper" import "$clipboard_snapshot_payload" >/dev/null 2>&1; then
+      rm -f "$mac_ignore_state"
+    fi
+  fi
+}
+
 collision_name() {
   local file_name="$1"
   local stem ext
@@ -344,6 +406,20 @@ if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$MOONLIGHT_CLIPBOARD_TCP")" != "yes" ]];
 fi
 
 ensure_helpers
+
+transfer_mac_dir="$(expand_mac_path "$MOONLIGHT_TRANSFER_MAC_DIR")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
+
+cleanup_self_test_artifacts() {
+  restore_clipboard_snapshot
+  rm -rf "$tmp_dir"
+  cleanup_mac_self_test_files "$transfer_mac_dir"
+  cleanup_windows_self_test_files
+}
+
+trap cleanup_self_test_artifacts EXIT
+
+save_clipboard_snapshot
 
 if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   echo "Refreshing Windows agent..."
@@ -375,20 +451,9 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_SERVICE_START:-no}" != "yes" ]]; then
   fi
 fi
 
-transfer_mac_dir="$(expand_mac_path "$MOONLIGHT_TRANSFER_MAC_DIR")"
 mkdir -p "$transfer_mac_dir"
 cleanup_mac_self_test_files "$transfer_mac_dir"
 cleanup_windows_self_test_files
-
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
-
-cleanup_self_test_artifacts() {
-  rm -rf "$tmp_dir"
-  cleanup_mac_self_test_files "$transfer_mac_dir"
-  cleanup_windows_self_test_files
-}
-
-trap cleanup_self_test_artifacts EXIT
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
