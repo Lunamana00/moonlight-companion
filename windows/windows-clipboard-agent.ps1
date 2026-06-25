@@ -1276,6 +1276,10 @@ function Write-MacImportTcpAck($stream, $manifest) {
     }
 
     $ackLine = "MOONCLIPACK 1 id={0} kind={1} bytes={2} files={3} imported_paths={4}" -f $manifest.id, $manifest.kind, $manifest.bytes, $fileCount, $paths.Count
+    $pathsForAck = @($paths | Select-Object -First 12)
+    for ($i = 0; $i -lt $pathsForAck.Count; $i++) {
+        $ackLine = "$ackLine imported_path_$($i + 1)_b64=$(ConvertTo-StateBase64 $pathsForAck[$i])"
+    }
     $namesForAck = @($names | Select-Object -First 12)
     if ($namesForAck.Count -gt 0) {
         $namesText = [string]::Join([string][char]31, $namesForAck)

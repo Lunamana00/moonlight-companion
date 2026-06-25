@@ -162,6 +162,34 @@ verify_tcp_b64_state_self_test() {
   fi
 }
 
+verify_tcp_ack_path_output_self_test() {
+  local output
+  if ! output="$(swift "${script_dir}/mooncliptcp.swift" self-test-ack-path-output 2>&1)"; then
+    echo "Mac clipboard TCP ack path output self-test failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"ack_path_output=ok"* ]]; then
+    echo "Mac clipboard TCP ack path output self-test output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
+verify_send_files_ack_path_state_self_test() {
+  local output
+  if ! output="$(MOONLIGHT_SEND_FILES_ACK_PATH_STATE_SELF_TEST=yes "${script_dir}/send-files-to-windows.sh" 2>&1)"; then
+    echo "Mac file sender ack path state self-test failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"ack_path_state=ok"* ]]; then
+    echo "Mac file sender ack path state self-test output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -397,6 +425,62 @@ verify_windows_agent_tcp_receive_timeout() {
   fi
   if [[ "$output" != *"tcp_receive_timeout=ok"* ]]; then
     echo "Windows agent TCP receive timeout guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
+verify_windows_agent_tcp_ack_path_fields() {
+  local script encoded output
+  script="$(cat <<'POWERSHELL'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
+$agent = Join-Path $dir 'windows-clipboard-agent.ps1'
+$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'
+. $agent
+$ErrorActionPreference = 'Stop'
+try {
+    $paths = @(
+        'C:\Users\Test User\Downloads\Moonlight Companion\received file.txt',
+        'C:\Users\Test User\Downloads\Moonlight Companion\받은파일.txt'
+    )
+    $manifest = [pscustomobject]@{
+        id = 'files:ack-path-self-test'
+        kind = 'files'
+        bytes = 1
+        files = @([pscustomobject]@{ name = 'received file.txt' })
+        importedPaths = $paths
+    }
+    $stream = [System.IO.MemoryStream]::new()
+    Write-MacImportTcpAck $stream $manifest
+    $line = [System.Text.Encoding]::UTF8.GetString($stream.ToArray()).Trim()
+    $ack = Parse-TcpAckLine $line
+    if ($null -eq $ack) { Write-Output 'ack_parse_missing'; exit 1 }
+    if ($ack['imported_paths'] -ne '2') { Write-Output ('imported_paths_unexpected=' + $ack['imported_paths']); exit 1 }
+    for ($i = 0; $i -lt $paths.Count; $i++) {
+        $key = 'imported_path_{0}_b64' -f ($i + 1)
+        if (-not $ack.ContainsKey($key)) { Write-Output ('missing_' + $key); exit 1 }
+        $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($ack[$key]))
+        if ($decoded -ne $paths[$i]) { Write-Output ('decoded_mismatch_' + $key); exit 1 }
+    }
+    Write-Output 'tcp_ack_path_fields=ok'
+} finally {
+    Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue
+}
+POWERSHELL
+)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent TCP ack path field guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"tcp_ack_path_fields=ok"* ]]; then
+    echo "Windows agent TCP ack path field guard output was incomplete." >&2
     printf '%s\n' "$output" >&2
     return 1
   fi
@@ -957,6 +1041,8 @@ trap cleanup_self_test_artifacts EXIT
 
 verify_mac_helper_timeout
 verify_tcp_b64_state_self_test
+verify_tcp_ack_path_output_self_test
+verify_send_files_ack_path_state_self_test
 save_clipboard_snapshot
 write_mac_clipboard_suspend_state
 write_transfer_quiet_state
@@ -969,6 +1055,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   verify_windows_agent_file_import_guard
   verify_windows_agent_receive_staging_cleanup
   verify_windows_agent_tcp_receive_timeout
+  verify_windows_agent_tcp_ack_path_fields
   verify_windows_agent_compress_cleanup
   echo "Windows agent ready."
 fi

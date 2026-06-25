@@ -219,6 +219,28 @@ func parseAckLine(_ line: String) -> [String: String]? {
     return result
 }
 
+func ackOutputLines(_ ack: [String: String]) -> [String] {
+    var lines: [String] = []
+    for key in ["id", "kind", "bytes", "files", "imported_paths", "imported_names_b64"] {
+        if let value = ack[key] {
+            lines.append("\(key)=\(value)")
+        }
+    }
+
+    let importedPathCount = Int(ack["imported_paths"] ?? "") ?? 0
+    if importedPathCount > 0 {
+        for index in 1...importedPathCount {
+            for key in ["imported_path_\(index)", "imported_path_\(index)_b64"] {
+                if let value = ack[key] {
+                    lines.append("\(key)=\(value)")
+                }
+            }
+        }
+    }
+
+    return lines
+}
+
 func tcpAckLine(imported: [String: String]) -> String {
     var fields = [
         "id=\(imported["id"] ?? "")",
@@ -678,6 +700,24 @@ func runB64StateSelfTest() throws {
     print("b64_state=ok")
 }
 
+func runAckPathOutputSelfTest() throws {
+    let path = #"C:\Users\Test User\Downloads\Moonlight Companion\received file.txt"#
+    let encodedPath = Data(path.utf8).base64EncodedString()
+    guard let ack = parseAckLine("MOONCLIPACK 1 id=files:self-test kind=files bytes=1 files=1 imported_paths=1 imported_path_1_b64=\(encodedPath) imported_names_b64=cmVjZWl2ZWQgZmlsZS50eHQ=") else {
+        throw ClipTcpError.protocolError("ack path self-test parse failed")
+    }
+
+    let lines = ackOutputLines(ack)
+    guard lines.contains("imported_path_1_b64=\(encodedPath)") else {
+        throw ClipTcpError.protocolError("ack path output missing imported_path_1_b64")
+    }
+    guard !lines.contains(where: { $0.hasPrefix("imported_path_2") }) else {
+        throw ClipTcpError.protocolError("ack path output printed unexpected path")
+    }
+
+    print("ack_path_output=ok")
+}
+
 func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64, logPath: String) throws {
     let header = try readLine(fd: fd)
     let parts = header.split(separator: " ")
@@ -784,17 +824,16 @@ do {
     case "self-test-b64-state":
         guard CommandLine.arguments.count == 2 else { throw ClipTcpError.usage }
         try runB64StateSelfTest()
+    case "self-test-ack-path-output":
+        guard CommandLine.arguments.count == 2 else { throw ClipTcpError.usage }
+        try runAckPathOutputSelfTest()
     case "send":
         guard CommandLine.arguments.count == 5 else { throw ClipTcpError.usage }
         if let ack = try sendPayload(
             host: CommandLine.arguments[2],
             port: try parsePort(CommandLine.arguments[3]),
             zipPath: CommandLine.arguments[4]) {
-            for key in ["id", "kind", "bytes", "files", "imported_paths", "imported_names_b64"] {
-                if let value = ack[key] {
-                    print("\(key)=\(value)")
-                }
-            }
+            print(ackOutputLines(ack).joined(separator: "\n"))
         }
     case "listen":
         guard CommandLine.arguments.count == 8 else { throw ClipTcpError.usage }

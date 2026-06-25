@@ -335,6 +335,44 @@ write_transfer_result_state() {
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$state_path" 2>/dev/null || rm -f "$tmp_path"
 }
 
+run_ack_path_state_self_test() {
+  local self_test_dir self_test_state expected_path expected_path_b64 actual_path actual_path_b64
+  self_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-send-files-ack-state.XXXXXX")"
+  self_test_state="${self_test_dir}/transfer-result.txt"
+  expected_path='C:\Users\Test User\Downloads\Moonlight Companion\received file.txt'
+  expected_path_b64="$(printf '%s' "$expected_path" | base64_state_value)"
+
+  MOONLIGHT_TRANSFER_RESULT_STATE="$self_test_state"
+  payload_id="files:self-test"
+  kind="files"
+  bytes="1"
+  transport="tcp"
+  windows_import_confirmation="tcp-ack"
+  imported_paths="1"
+  imported_names_b64=""
+  clipboard_ready="yes"
+  windows_import_state="$(
+    printf 'id=files:self-test\n'
+    printf 'kind=files\n'
+    printf 'bytes=1\n'
+    printf 'files=1\n'
+    printf 'imported_paths=1\n'
+    printf 'imported_path_1_b64=%s\n' "$expected_path_b64"
+  )"
+
+  write_transfer_result_state
+  actual_path="$(state_path_value "$(cat "$self_test_state")" imported_path_1)"
+  actual_path_b64="$(state_text_value "$(cat "$self_test_state")" imported_path_1_b64)"
+  rm -rf "$self_test_dir"
+
+  if [[ "$actual_path" != "$expected_path" || "$actual_path_b64" != "$expected_path_b64" ]]; then
+    echo "ack path state self-test failed" >&2
+    return 1
+  fi
+
+  echo "ack_path_state=ok"
+}
+
 encode_powershell() {
   iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
 }
@@ -736,6 +774,11 @@ cleanup_remote_direct_artifacts() {
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "cmd.exe /c del /Q \"${remote_direct_zip_cmd}\" \"${remote_direct_tmp_cmd}\" \"${remote_direct_script_cmd}\" 2>nul & rmdir /S /Q \"${remote_dir}\\direct-mac-payload\" 2>nul" >/dev/null 2>&1 || true
 }
+
+if [[ "$(normalize_yes_no "${MOONLIGHT_SEND_FILES_ACK_PATH_STATE_SELF_TEST:-no}")" == "yes" ]]; then
+  run_ack_path_state_self_test
+  exit $?
+fi
 
 if [[ $# -lt 1 ]]; then
   echo "usage: send-files-to-windows.sh <path>..." >&2
