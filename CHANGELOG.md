@@ -20,6 +20,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Pending Windows-to-Mac receive notices are now shown after cancelled or failed operations too, while queued Mac-to-Windows drops still stay cleared.
 - The GUI now disables `Reveal Last Mac Receive` until a latest Windows-to-Mac receive state is available, so stale empty actions are less tempting.
 - The GUI now records the last confirmed Mac-to-Windows receive id locally and disables `Reveal Last Windows Receive` until that confirmed Windows receive can be targeted.
+- The Companion window no longer force-activates itself on launch by default; `MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH` can opt back into the old foreground behavior.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
 - Moonlight window, strip, and Companion file drops now show active drag feedback with the item count and dropped file names before release.
