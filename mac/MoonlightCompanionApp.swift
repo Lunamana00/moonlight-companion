@@ -2941,12 +2941,24 @@ enum FileDropReader {
                 }
                 continue
             }
-            if requireEveryLineToBeFile && !FileManager.default.fileExists(atPath: url.standardizedFileURL.path) {
-                return []
+            if requireEveryLineToBeFile {
+                guard plainTextFileReferenceIsUsable(url) else {
+                    return []
+                }
             }
             urls.append(url)
         }
         return urls
+    }
+
+    private static func plainTextFileReferenceIsUsable(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              FileManager.default.isReadableFile(atPath: path) else {
+            return false
+        }
+        return !isDirectory.boolValue || FileManager.default.isExecutableFile(atPath: path)
     }
 
     private static func fileURL(fromSinglePasteboardString value: String) -> URL? {
@@ -3352,6 +3364,16 @@ private func runFileDropReaderSelfTest() -> Int32 {
         }
         try expect(!FileDropReader.hasFileDropContent(from: missingTextPasteboard), "missing plain-text path was treated as a file drop")
         missingTextPasteboard.releaseGlobally()
+
+        let unreadable = root.appendingPathComponent("unreadable.txt")
+        try "unreadable".write(to: unreadable, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: unreadable.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: unreadable.path) }
+        let unreadableTextPasteboard = withPasteboard { pasteboard in
+            pasteboard.setString(unreadable.path, forType: .string)
+        }
+        try expect(!FileDropReader.hasFileDropContent(from: unreadableTextPasteboard), "unreadable plain-text path was treated as a file drop")
+        unreadableTextPasteboard.releaseGlobally()
 
         print("file-drop-reader self-test ok")
         return 0
