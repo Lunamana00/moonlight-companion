@@ -1250,6 +1250,82 @@ fi
 remove_windows_file "$limit_name"
 echo "Mac -> Windows oversized direct transfer ok."
 
+echo "Testing Mac -> Windows oversized direct multi-item transfer..."
+limit_multi_file="${tmp_dir}/moonlight-companion-transfer-test-limit-multi-file-${stamp}.txt"
+limit_multi_file_name="$(basename "$limit_multi_file")"
+limit_multi_dir="${tmp_dir}/moonlight-companion-transfer-test-limit-multi-folder-${stamp}"
+limit_multi_dir_name="$(basename "$limit_multi_dir")"
+limit_multi_nested_path="nested/from-limit-multi.txt"
+limit_multi_empty_dir_path="nested/empty-from-limit-multi"
+limit_multi_out="${tmp_dir}/mac-to-windows-limit-multi-send.txt"
+limit_multi_state="${tmp_dir}/mac-to-windows-limit-multi-state.txt"
+mkdir -p "${limit_multi_dir}/nested" "${limit_multi_dir}/${limit_multi_empty_dir_path}"
+printf 'Moonlight Companion oversized direct multi file test %s\n' "$stamp" > "$limit_multi_file"
+printf 'Moonlight Companion oversized direct multi folder test %s\n' "$stamp" > "${limit_multi_dir}/${limit_multi_nested_path}"
+if ! MOONLIGHT_COMPANION_CONFIG="$limit_config" MOONLIGHT_TRANSFER_RESULT_STATE="$limit_multi_state" "${script_dir}/send-files-to-windows.sh" "$limit_multi_file" "$limit_multi_dir" > "$limit_multi_out" 2>&1; then
+  echo "Mac -> Windows oversized multi-item payload did not use direct receive-folder transfer." >&2
+  cat "$limit_multi_out" >&2
+  exit 1
+fi
+if ! grep -Fq "sent oversized" "$limit_multi_out" || ! grep -Fq "Windows copied 2 items" "$limit_multi_out"; then
+  echo "Mac -> Windows oversized multi-item payload did not report both direct receive-folder items." >&2
+  cat "$limit_multi_out" >&2
+  exit 1
+fi
+if [[ "$(meta_value confirmation "$limit_multi_state")" != "direct-ssh" ||
+      "$(meta_value clipboard_ready "$limit_multi_state")" != "no" ||
+      "$(meta_value imported_paths "$limit_multi_state")" != "2" ]]; then
+  echo "Mac -> Windows oversized multi-item payload did not write complete direct-transfer GUI state." >&2
+  [[ -f "$limit_multi_state" ]] && cat "$limit_multi_state" >&2
+  exit 1
+fi
+limit_multi_path_1="$(meta_value imported_path_1 "$limit_multi_state")"
+limit_multi_path_2="$(meta_value imported_path_2 "$limit_multi_state")"
+limit_multi_path_1_b64="$(meta_value imported_path_1_b64 "$limit_multi_state")"
+limit_multi_path_2_b64="$(meta_value imported_path_2_b64 "$limit_multi_state")"
+if [[ -z "$limit_multi_path_1_b64" || "$(decode_b64_value "$limit_multi_path_1_b64")" != "$limit_multi_path_1" ||
+      -z "$limit_multi_path_2_b64" || "$(decode_b64_value "$limit_multi_path_2_b64")" != "$limit_multi_path_2" ]]; then
+  echo "Mac -> Windows oversized multi-item payload did not write decodable imported Windows receive paths." >&2
+  [[ -f "$limit_multi_state" ]] && cat "$limit_multi_state" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$limit_multi_file_name"; then
+  echo "Mac -> Windows oversized multi-item transfer did not preserve the top-level file." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${limit_multi_dir_name}/${limit_multi_nested_path}" "Leaf"; then
+  echo "Mac -> Windows oversized multi-item transfer did not preserve the folder item." >&2
+  exit 1
+fi
+if ! wait_for_windows_path "${limit_multi_dir_name}/${limit_multi_empty_dir_path}" "Container"; then
+  echo "Mac -> Windows oversized multi-item transfer did not preserve the empty nested folder." >&2
+  exit 1
+fi
+limit_multi_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --select-path "$limit_multi_path_1" --select-path "$limit_multi_path_2"
+)"
+if ! grep -Fq "asked Windows to open the containing folder for multiple received items" <<<"$limit_multi_reveal_out"; then
+  echo "Windows receive reveal did not open the common parent for oversized multi-item direct paths." >&2
+  printf '%s\n' "$limit_multi_reveal_out" >&2
+  exit 1
+fi
+if ! assert_windows_receive_staging_absent; then
+  echo "Mac -> Windows oversized multi-item direct transfer left a staging folder in the Windows receive folder." >&2
+  exit 1
+fi
+direct_temp_count="$(windows_direct_temp_count)"
+if [[ "$direct_temp_count" != "0" ]]; then
+  remove_windows_direct_temp_artifacts
+  echo "Mac -> Windows oversized multi-item direct transfer left direct temp artifacts on Windows." >&2
+  echo "direct temp artifact count: ${direct_temp_count}" >&2
+  cat "$limit_multi_out" >&2
+  exit 1
+fi
+remove_windows_file "$limit_multi_file_name"
+remove_windows_path "$limit_multi_dir_name"
+echo "Mac -> Windows oversized direct multi-item ok."
+
 echo "Testing Mac -> Windows oversized direct transfer failure cleanup..."
 limit_cleanup_out="${tmp_dir}/mac-to-windows-limit-cleanup-send.txt"
 limit_cleanup_config="${tmp_dir}/moonlight-companion-limit-cleanup.conf"
