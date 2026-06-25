@@ -215,6 +215,7 @@ exit "${status}"
     private var pendingLatestMacReceiveURLs: [URL] = []
     private var latestWindowsReceiveID = ""
     private var latestWindowsReceiveSummary = ""
+    private var latestWindowsReceivePaths: [String] = []
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -928,6 +929,7 @@ exit "${status}"
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         latestWindowsReceiveID = windowsImportConfirmed(state) ? id : ""
         latestWindowsReceiveSummary = windowsImportSummary(state)
+        latestWindowsReceivePaths = latestWindowsImportedPaths(from: state)
         updateLatestWindowsReceiveButtonState()
     }
 
@@ -954,7 +956,8 @@ exit "${status}"
 
         latestWindowsReceiveID = id
         latestWindowsReceiveSummary = windowsImportSummary(state)
-        let values = [
+        latestWindowsReceivePaths = latestWindowsImportedPaths(from: state)
+        var values: [String: String] = [
             "bytes": state["bytes"] ?? "",
             "confirmation": confirmation,
             "clipboard_ready": state["clipboard_ready"] ?? "",
@@ -963,6 +966,9 @@ exit "${status}"
             "imported_paths": "\(importedPaths)",
             "kind": state["kind"] ?? ""
         ]
+        for (index, path) in latestWindowsReceivePaths.enumerated() {
+            values["imported_path_\(index + 1)"] = path
+        }
         writeSimpleState(values, to: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
     }
@@ -970,8 +976,23 @@ exit "${status}"
     private func clearLatestWindowsReceiveState() {
         latestWindowsReceiveID = ""
         latestWindowsReceiveSummary = ""
+        latestWindowsReceivePaths = []
         try? FileManager.default.removeItem(at: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
+    }
+
+    private func latestWindowsImportedPaths(from state: [String: String]) -> [String] {
+        let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
+        guard importedPaths > 0 else { return [] }
+
+        var paths: [String] = []
+        for index in 1...importedPaths {
+            let path = state["imported_path_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !path.isEmpty {
+                paths.append(path)
+            }
+        }
+        return paths
     }
 
     private func windowsImportSummary(_ state: [String: String]) -> String {
@@ -1490,6 +1511,7 @@ exit "${status}"
 
     @objc private func revealLatestWindowsReceive() {
         guard saveSettings() else { return }
+        loadLatestWindowsReceiveState()
         let expectedImportID = latestWindowsReceiveID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !expectedImportID.isEmpty else {
             clearLatestWindowsReceiveState()
@@ -1502,7 +1524,12 @@ exit "${status}"
             ? "Asking Windows to select the latest received item."
             : "Asking Windows to select \(latestWindowsReceiveSummary)."
         setBusy(true, status: "Revealing Windows Files", detail: revealDetail)
-        requestWindowsReceiveFolderOpen(selectLatestImport: true, expectedImportID: expectedImportID) { [weak self] succeeded, detail in
+        let selectPaths = latestWindowsReceivePaths
+        requestWindowsReceiveFolderOpen(
+            selectLatestImport: selectPaths.isEmpty,
+            expectedImportID: expectedImportID,
+            selectPaths: selectPaths
+        ) { [weak self] succeeded, detail in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
@@ -1540,6 +1567,7 @@ exit "${status}"
     private func requestWindowsReceiveFolderOpen(
         selectLatestImport: Bool,
         expectedImportID: String? = nil,
+        selectPaths: [String] = [],
         completion: @escaping (Bool, String) -> Void
     ) {
         let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
@@ -1557,6 +1585,9 @@ exit "${status}"
         if let expectedImportID,
            !expectedImportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             arguments.append(contentsOf: ["--expected-id", expectedImportID])
+        }
+        for path in selectPaths where !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments.append(contentsOf: ["--select-path", path])
         }
         configureCancellableTransferTask(task, scriptURL: openerURL, arguments: Array(arguments.dropFirst()))
         task.currentDirectoryURL = resourceURL
@@ -2196,7 +2227,8 @@ exit "${status}"
                         self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive result.")
                         self?.requestWindowsReceiveFolderOpen(
                             selectLatestImport: true,
-                            expectedImportID: transferResult["id"]
+                            expectedImportID: transferResult["id"],
+                            selectPaths: self?.latestWindowsImportedPaths(from: transferResult) ?? []
                         ) { [weak self] succeeded, openDetail in
                             if openDetail == "cancelled" {
                                 self?.clearQueuedFileDrops()

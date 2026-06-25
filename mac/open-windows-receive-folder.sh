@@ -17,6 +17,8 @@ WINDOWS_SSH="${WINDOWS_SSH:-moonlight-windows}"
 MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}"
 select_latest_import="no"
 expected_id=""
+select_paths=()
+dry_run="$(printf '%s' "${MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN:-no}" | tr '[:upper:]' '[:lower:]')"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,8 +34,16 @@ while [[ $# -gt 0 ]]; do
       expected_id="$2"
       shift 2
       ;;
+    --select-path)
+      if [[ $# -lt 2 ]]; then
+        echo "open-windows-receive-folder.sh: --select-path requires a value" >&2
+        exit 2
+      fi
+      select_paths+=("$2")
+      shift 2
+      ;;
     *)
-      echo "usage: open-windows-receive-folder.sh [--latest-import] [--expected-id <id>]" >&2
+      echo "usage: open-windows-receive-folder.sh [--latest-import] [--expected-id <id>] [--select-path <path> ...]" >&2
       exit 2
       ;;
   esac
@@ -46,6 +56,7 @@ ssh_opts=(
   -o LogLevel=ERROR
   -o StrictHostKeyChecking=accept-new
 )
+scp_opts=("${ssh_opts[@]}")
 
 ps_single_quoted() {
   local value="$1"
@@ -53,19 +64,39 @@ ps_single_quoted() {
   printf "'%s'" "$value"
 }
 
-encode_powershell() {
-  iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
+ps_array_literal() {
+  local value
+  if [[ $# -eq 0 ]]; then
+    printf '@()'
+    return 0
+  fi
+
+  printf '@('
+  local first="yes"
+  for value in "$@"; do
+    if [[ "$first" == "yes" ]]; then
+      first="no"
+    else
+      printf ', '
+    fi
+    ps_single_quoted "$value"
+  done
+  printf ')'
 }
 
 transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
 select_latest_import_literal="$(ps_single_quoted "$select_latest_import")"
 expected_id_literal="$(ps_single_quoted "$expected_id")"
+select_paths_literal="$(ps_array_literal "${select_paths[@]}")"
+dry_run_literal="$(ps_single_quoted "$dry_run")"
 read -r -d '' script <<POWERSHELL || true
 \$ErrorActionPreference = "Stop"
 \$ProgressPreference = "SilentlyContinue"
 \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal})
 \$selectLatestImport = (${select_latest_import_literal} -eq "yes")
 \$expectedId = ${expected_id_literal}
+\$explicitPaths = ${select_paths_literal}
+\$dryRun = (${dry_run_literal} -in @("1", "true", "yes", "on"))
 if ([string]::IsNullOrWhiteSpace(\$dir)) {
   \$dir = Join-Path \$env:USERPROFILE "Downloads\\Moonlight Companion"
 }
@@ -74,7 +105,28 @@ New-Item -ItemType Directory -Force -Path \$dir | Out-Null
 \$selectedLatestImport = \$false
 \$openResult = "folder"
 
-if (\$selectLatestImport) {
+if (\$explicitPaths.Count -gt 0) {
+  \$validPaths = @()
+  foreach (\$path in \$explicitPaths) {
+    if (-not [string]::IsNullOrWhiteSpace(\$path) -and (Test-Path -LiteralPath \$path)) {
+      \$validPaths += \$path
+    }
+  }
+
+  if (\$validPaths.Count -eq 1) {
+    \$targetPath = \$validPaths[0]
+    \$selectedLatestImport = \$true
+    \$openResult = "selected-explicit"
+  } elseif (\$validPaths.Count -gt 1) {
+    \$firstParent = Split-Path -Parent \$validPaths[0]
+    if (-not [string]::IsNullOrWhiteSpace(\$firstParent) -and (Test-Path -LiteralPath \$firstParent)) {
+      \$targetPath = \$firstParent
+    }
+    \$openResult = "folder-explicit-multi-item"
+  } else {
+    \$openResult = "folder-explicit-missing-item"
+  }
+} elseif (\$selectLatestImport) {
   \$openResult = "folder-no-state"
   \$statePath = Join-Path (Join-Path \$env:USERPROFILE ".moonlight-clipboard-sync") "mac-to-windows-import-state.txt"
   if (Test-Path -LiteralPath \$statePath) {
@@ -108,28 +160,52 @@ if (\$selectLatestImport) {
   }
 }
 
-\$taskName = "MoonlightCompanionOpenReceiveFolder"
-Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
-\$argument = if (\$selectedLatestImport) { ('/select,"{0}"' -f \$targetPath) } else { ('"{0}"' -f \$targetPath) }
-\$action = New-ScheduledTaskAction -Execute "explorer.exe" -Argument \$argument
-\$principal = New-ScheduledTaskPrincipal -UserId \$env:USERNAME -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName \$taskName -Action \$action -Principal \$principal -Force | Out-Null
-Start-ScheduledTask -TaskName \$taskName
-Start-Sleep -Milliseconds 800
-Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+if (-not \$dryRun) {
+  \$taskName = "MoonlightCompanionOpenReceiveFolder"
+  Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+  \$argument = if (\$selectedLatestImport) { ('/select,"{0}"' -f \$targetPath) } else { ('"{0}"' -f \$targetPath) }
+  \$action = New-ScheduledTaskAction -Execute "explorer.exe" -Argument \$argument
+  \$principal = New-ScheduledTaskPrincipal -UserId \$env:USERNAME -LogonType Interactive -RunLevel Limited
+  Register-ScheduledTask -TaskName \$taskName -Action \$action -Principal \$principal -Force | Out-Null
+  Start-ScheduledTask -TaskName \$taskName
+  Start-Sleep -Milliseconds 800
+  Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+}
 Write-Output ("MOONLIGHT_OPEN_RESULT={0}" -f \$openResult)
 POWERSHELL
 
-encoded="$(printf '%s' "$script" | encode_powershell)"
+script_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-open-windows-receive.XXXXXX.ps1")"
+remote_script="${remote_dir:-.moonlight-clipboard-sync}/moonlight-open-windows-receive-$$-$RANDOM.ps1"
+remote_script_cmd="${remote_script//\//\\}"
+cleanup_remote_script() {
+  rm -f "$script_tmp"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_script_cmd}\" 2>nul" >/dev/null 2>&1 || true
+}
+trap cleanup_remote_script EXIT
+
+printf '\xef\xbb\xbf%s' "$script" > "$script_tmp"
+ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+  "cmd.exe /c if not exist .moonlight-clipboard-sync mkdir .moonlight-clipboard-sync" >/dev/null
+scp "${scp_opts[@]}" "$script_tmp" "${WINDOWS_SSH}:${remote_script}" >/dev/null
 remote_output="$(
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}"
+    "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${remote_script_cmd}\""
 )"
 open_result="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_OPEN_RESULT" {sub(/\r$/, "", $2); print $2; exit}')"
 
 case "$open_result" in
+  selected-explicit)
+    printf 'asked Windows to select the received item\n'
+    ;;
   selected)
     printf 'asked Windows to select the latest received item\n'
+    ;;
+  folder-explicit-multi-item)
+    printf 'asked Windows to open the receive folder for multiple received items\n'
+    ;;
+  folder-explicit-missing-item)
+    printf 'asked Windows to open the receive folder; received item was unavailable\n'
     ;;
   folder-id-mismatch)
     printf 'asked Windows to open the receive folder; latest item did not match this transfer\n'

@@ -277,7 +277,7 @@ write_transfer_result_state() {
   local state_path="${MOONLIGHT_TRANSFER_RESULT_STATE:-}"
   [[ -n "$state_path" ]] || return 0
 
-  local state_dir tmp_path
+  local state_dir tmp_path imported_path index
   state_dir="$(dirname "$state_path")"
   tmp_path="${state_path}.tmp"
   mkdir -p "$state_dir" 2>/dev/null || return 0
@@ -290,6 +290,14 @@ write_transfer_result_state() {
     printf 'imported_paths=%s\n' "${imported_paths:-0}"
     printf 'imported_names_b64=%s\n' "${imported_names_b64:-}"
     printf 'clipboard_ready=%s\n' "${clipboard_ready:-yes}"
+    if [[ "${imported_paths:-0}" =~ ^[0-9]+$ ]]; then
+      for ((index = 1; index <= imported_paths; index++)); do
+        imported_path="$(printf '%s\n' "${windows_import_state:-}" | state_value "imported_path_${index}")"
+        if [[ -n "$imported_path" ]]; then
+          printf 'imported_path_%s=%s\n' "$index" "$imported_path"
+        fi
+      done
+    fi
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$state_path" 2>/dev/null || rm -f "$tmp_path"
 }
 
@@ -316,6 +324,11 @@ wait_for_windows_import() {
     if [[ "$state_id" == "$expected_id" ]]; then
       windows_import_state="$tcp_ack_state"
       windows_import_confirmation="tcp-ack"
+      state="$(read_windows_import_state "$expected_id" 2>/dev/null || true)"
+      state_id="$(printf '%s\n' "$state" | state_value id)"
+      if [[ "$state_id" == "$expected_id" ]]; then
+        windows_import_state="$state"
+      fi
       return 0
     fi
   fi

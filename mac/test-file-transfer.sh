@@ -986,6 +986,12 @@ if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "dir
   [[ -f "$limit_state" ]] && cat "$limit_state" >&2
   exit 1
 fi
+limit_state_path="$(meta_value imported_path_1 "$limit_state")"
+if [[ "$limit_state_path" != *"$limit_name"* ]]; then
+  echo "Mac -> Windows oversized payload did not write the imported Windows receive path to the GUI state." >&2
+  [[ -f "$limit_state" ]] && cat "$limit_state" >&2
+  exit 1
+fi
 if ! wait_for_windows_file "$limit_name"; then
   echo "Mac -> Windows oversized payload did not arrive in the Windows receive folder." >&2
   cat "$limit_out" >&2
@@ -1132,8 +1138,23 @@ if [[ -z "$m2w_state_names_b64" || "$m2w_state_names" != *"$m2w_collision_name"*
   [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
   exit 1
 fi
+m2w_state_path="$(meta_value imported_path_1 "$m2w_state")"
+if [[ "$m2w_state_path" != *"$m2w_collision_name"* ]]; then
+  echo "Mac -> Windows transfer did not write the imported Windows receive path to the GUI result state." >&2
+  [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
+  exit 1
+fi
 if ! wait_for_windows_file "$m2w_collision_name"; then
   echo "Mac -> Windows transfer did not create a collision-safe file in the Windows receive folder." >&2
+  exit 1
+fi
+windows_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --select-path "$m2w_state_path"
+)"
+if ! grep -Fq "asked Windows to select the received item" <<<"$windows_reveal_out"; then
+  echo "Windows receive reveal did not select the explicit imported path." >&2
+  printf '%s\n' "$windows_reveal_out" >&2
   exit 1
 fi
 remove_windows_file "$m2w_name"
