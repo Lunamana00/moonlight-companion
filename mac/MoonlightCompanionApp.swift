@@ -228,7 +228,9 @@ exit "${status}"
     private var isBusy = false
     private var dropOverlayTimer: Timer?
     private var latestMacReceiveTimer: Timer?
+    private var latestWindowsReceiveTimer: Timer?
     private var latestMacReceiveStateSignature = ""
+    private var latestWindowsReceiveStateSignature = ""
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
     private var dropOverlayLastDragLocation: NSPoint?
@@ -279,7 +281,7 @@ exit "${status}"
         settings = SettingsFile.load(resourceURL: resourceURL)
         cleanupStalePromisedDropDirectories()
         buildWindow()
-        loadLatestWindowsReceiveState()
+        startLatestWindowsReceiveMonitor()
         updateDropOverlayMonitor()
         startLatestMacReceiveMonitor()
     }
@@ -930,6 +932,36 @@ exit "${status}"
             .appendingPathComponent("Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt")
     }
 
+    private func startLatestWindowsReceiveMonitor() {
+        updateLatestWindowsReceiveStatus()
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateLatestWindowsReceiveStatus()
+        }
+        latestWindowsReceiveTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func updateLatestWindowsReceiveStatus() {
+        let stateURL = latestWindowsReceiveStateURL()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            latestWindowsReceiveStateSignature = ""
+            latestWindowsReceiveID = ""
+            latestWindowsReceiveSummary = ""
+            latestWindowsReceivePaths = []
+            updateLatestWindowsReceiveButtonState()
+            return
+        }
+
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let signature = "\(modifiedAt.timeIntervalSince1970):\(size)"
+        guard signature != latestWindowsReceiveStateSignature else {
+            return
+        }
+        latestWindowsReceiveStateSignature = signature
+        loadLatestWindowsReceiveState()
+    }
+
     private func loadLatestWindowsReceiveState() {
         let state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -984,6 +1016,7 @@ exit "${status}"
         latestWindowsReceiveID = ""
         latestWindowsReceiveSummary = ""
         latestWindowsReceivePaths = []
+        latestWindowsReceiveStateSignature = ""
         try? FileManager.default.removeItem(at: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
     }
@@ -2611,6 +2644,7 @@ exit "${status}"
         transferProcess?.terminate()
         _ = cancelPromisedFileDrops()
         latestMacReceiveTimer?.invalidate()
+        latestWindowsReceiveTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()
         dropStripWindow?.close()

@@ -190,6 +190,20 @@ verify_send_files_ack_path_state_self_test() {
   fi
 }
 
+verify_sync_latest_windows_ack_state_self_test() {
+  local output
+  if ! output="$(MOONLIGHT_CLIPBOARD_SYNC_ACK_STATE_SELF_TEST=yes "${script_dir}/sync-moonlight-clipboard.sh" 2>&1)"; then
+    echo "Mac clipboard sync latest Windows ACK state self-test failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"latest_windows_ack_state=ok"* ]]; then
+    echo "Mac clipboard sync latest Windows ACK state self-test output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -1062,6 +1076,7 @@ verify_mac_helper_timeout
 verify_tcp_b64_state_self_test
 verify_tcp_ack_path_output_self_test
 verify_send_files_ack_path_state_self_test
+verify_sync_latest_windows_ack_state_self_test
 save_clipboard_snapshot
 write_mac_clipboard_suspend_state
 write_transfer_quiet_state

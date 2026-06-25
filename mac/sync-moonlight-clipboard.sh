@@ -42,6 +42,7 @@ tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
+latest_windows_receive_state="${MOONLIGHT_LATEST_WINDOWS_RECEIVE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt}"
 
 remote_dir=".moonlight-clipboard-sync"
 remote_mac_zip="${remote_dir}/mac-to-windows.zip"
@@ -123,6 +124,16 @@ decode_state_b64() {
   local encoded="$1"
   [[ -n "$encoded" ]] || return 0
   printf '%s' "$encoded" | /usr/bin/base64 -D 2>/dev/null || true
+}
+
+base64_state_value() {
+  /usr/bin/base64 | tr -d '\n'
+}
+
+state_text_value() {
+  local state="$1"
+  local key="$2"
+  printf '%s\n' "$state" | awk -F= -v key="$key" '$1 == key {value = substr($0, length(key) + 2); sub(/\r$/, "", value); print value; exit}'
 }
 
 payload_state_value() {
@@ -263,6 +274,86 @@ write_windows_receive_state() {
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$tcp_state" 2>/dev/null || rm -f "$tmp_path"
 }
 
+write_latest_windows_receive_state_from_ack() {
+  local meta_path="$1"
+  local ack_state="$2"
+  local ack_id ack_kind ack_bytes imported_paths imported_names_b64
+  local state_dir tmp_path index encoded_path imported_path
+
+  [[ -n "$ack_state" ]] || return 0
+  ack_id="$(state_text_value "$ack_state" id)"
+  ack_kind="$(state_text_value "$ack_state" kind)"
+  ack_bytes="$(state_text_value "$ack_state" bytes)"
+  imported_paths="$(state_text_value "$ack_state" imported_paths)"
+  [[ -n "$ack_id" && "$ack_kind" == "files" && "$imported_paths" =~ ^[0-9]+$ && "$imported_paths" -gt 0 ]] || return 0
+
+  imported_names_b64="$(state_text_value "$ack_state" imported_names_b64)"
+  state_dir="$(dirname "$latest_windows_receive_state")"
+  tmp_path="${latest_windows_receive_state}.tmp"
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  {
+    printf 'bytes=%s\n' "${ack_bytes:-$(payload_bytes "$meta_path")}"
+    printf 'clipboard_ready=yes\n'
+    printf 'confirmation=tcp-ack\n'
+    printf 'id=%s\n' "$ack_id"
+    printf 'imported_names_b64=%s\n' "$imported_names_b64"
+    printf 'imported_paths=%s\n' "$imported_paths"
+    printf 'kind=files\n'
+    printf 'transport=tcp\n'
+    for ((index = 1; index <= imported_paths; index++)); do
+      encoded_path="$(state_text_value "$ack_state" "imported_path_${index}_b64")"
+      imported_path=""
+      if [[ -n "$encoded_path" ]]; then
+        imported_path="$(decode_state_b64 "$encoded_path")"
+      else
+        imported_path="$(state_text_value "$ack_state" "imported_path_${index}")"
+        [[ -n "$imported_path" ]] && encoded_path="$(printf '%s' "$imported_path" | base64_state_value)"
+      fi
+      if [[ -n "$imported_path" ]]; then
+        printf 'imported_path_%s=%s\n' "$index" "$imported_path"
+        printf 'imported_path_%s_b64=%s\n' "$index" "$encoded_path"
+      fi
+    done
+  } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$latest_windows_receive_state" 2>/dev/null || rm -f "$tmp_path"
+}
+
+run_latest_windows_receive_ack_state_self_test() {
+  local self_test_dir self_test_state meta_path expected_path expected_path_b64 ack_state actual_path actual_path_b64
+  self_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-sync-latest-windows.XXXXXX")"
+  self_test_state="${self_test_dir}/latest-windows-receive-state.txt"
+  meta_path="${self_test_dir}/meta.txt"
+  expected_path='C:\Users\Test User\Downloads\Moonlight Companion\background clipboard file.txt'
+  expected_path_b64="$(printf '%s' "$expected_path" | base64_state_value)"
+  cat > "$meta_path" <<META
+id=files:self-test
+kind=files
+bytes=1
+files=1
+META
+  ack_state="$(
+    printf 'id=files:self-test\n'
+    printf 'kind=files\n'
+    printf 'bytes=1\n'
+    printf 'files=1\n'
+    printf 'imported_paths=1\n'
+    printf 'imported_path_1_b64=%s\n' "$expected_path_b64"
+    printf 'imported_names_b64=YmFja2dyb3VuZCBjbGlwYm9hcmQgZmlsZS50eHQ=\n'
+  )"
+
+  latest_windows_receive_state="$self_test_state"
+  write_latest_windows_receive_state_from_ack "$meta_path" "$ack_state"
+  actual_path="$(state_text_value "$(cat "$self_test_state")" imported_path_1)"
+  actual_path_b64="$(state_text_value "$(cat "$self_test_state")" imported_path_1_b64)"
+  rm -rf "$self_test_dir"
+
+  if [[ "$actual_path" != "$expected_path" || "$actual_path_b64" != "$expected_path_b64" ]]; then
+    echo "latest Windows receive ACK state self-test failed" >&2
+    return 1
+  fi
+
+  echo "latest_windows_ack_state=ok"
+}
+
 dir_size_bytes() {
   du -sk "$1" | awk '{print $1 * 1024}'
 }
@@ -293,8 +384,11 @@ cleanup_remote_mac_tmp() {
 upload_to_windows() {
   local zip_path="$1"
   upload_transport="ssh"
+  tcp_ack_state=""
   if [[ "$tcp_enabled" == "yes" && -x "$tcp_helper" ]]; then
-    if "$tcp_helper" send "$tcp_send_host" "$tcp_send_port" "$zip_path" >/dev/null 2>&1; then
+    local output
+    if output="$("$tcp_helper" send "$tcp_send_host" "$tcp_send_port" "$zip_path" 2>/dev/null)"; then
+      tcp_ack_state="$output"
       upload_transport="tcp"
       return 0
     fi
@@ -526,6 +620,11 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_HELPER_TIMEOUT_SELF_TEST:-
   exit 0
 fi
 
+if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_ACK_STATE_SELF_TEST:-no}")" == "yes" ]]; then
+  run_latest_windows_receive_ack_state_self_test
+  exit $?
+fi
+
 tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "${tmp_root%/}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -546,6 +645,7 @@ last_windows_failed_archive_failures=0
 last_windows_poll="0"
 last_tcp_state_hash=""
 upload_transport="ssh"
+tcp_ack_state=""
 
 log "starting payload sync with ${remote}; local interval=${interval}s, windows interval=${windows_interval}s, max=${max_bytes}B, tcp=${tcp_enabled}"
 require_ready
@@ -581,6 +681,9 @@ while true; do
         zip_payload "$mac_payload" "$mac_zip"
         if upload_to_windows "$mac_zip"; then
           last_mac_id="$mac_id"
+          if [[ "$upload_transport" == "tcp" && "$mac_kind" == "files" ]]; then
+            write_latest_windows_receive_state_from_ack "$mac_meta" "$tcp_ack_state"
+          fi
           log "Mac -> Windows ${mac_kind} (${mac_bytes}B) via ${upload_transport}"
         else
           log "Mac -> Windows failed"
