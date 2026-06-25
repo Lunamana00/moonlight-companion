@@ -167,7 +167,11 @@ foreach (\$path in \$paths) {
 }
 
 if (\$validPaths.Count -ne \$paths.Count) {
-  Write-Output "MOONLIGHT_COPY_RESULT=missing"
+  if (\$validPaths.Count -gt 0) {
+    Write-Output "MOONLIGHT_COPY_RESULT=partial-missing"
+  } else {
+    Write-Output "MOONLIGHT_COPY_RESULT=missing"
+  }
   exit 0
 }
 
@@ -233,6 +237,9 @@ case "$copy_result" in
     ;;
   missing)
     printf 'asked Windows to copy the %s; %s %s unavailable\n' "$(latest_received_text)" "$(received_item_text)" "$(received_item_unavailable_verb)"
+    ;;
+  partial-missing)
+    printf 'asked Windows to copy the %s; some received items were unavailable\n' "$(latest_received_text)"
     ;;
   no-paths)
     printf 'asked Windows to copy the latest received item; latest receive state was unavailable\n'
