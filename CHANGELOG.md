@@ -62,6 +62,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The GUI now offers a Cancel action for in-progress file sends, transfer tests, and Windows receive-folder reveal requests.
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
 - Existing user settings now keep the Companion control window hidden on launch unless `MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH` is enabled, and background failures no longer raise modal alerts over the current workspace.
+- The GUI now has a `Status` action that runs the bundled service status check and shows clipboard sync, TCP tunnel, Caps Lock helper, and recent log output without opening Terminal.
 - Launching the wrapper with `--background`, `--quiet-launch`, or `--no-window` now suppresses the Companion control window even when saved settings would normally show it.
 - Added `scripts/open-mac-app-background.sh` so rebuild workflows can start Companion quietly and skip macOS reopen events when the app is already running.
 - Automatic Moonlight drop overlays now avoid forced frontmost ordering, while manually shown overlays can still be brought above the stream when requested.

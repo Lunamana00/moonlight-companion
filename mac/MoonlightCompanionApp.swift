@@ -200,6 +200,7 @@ exit "${status}"
     private var stopMoonlightButton: NSButton!
     private var saveButton: NSButton!
     private var stopButton: NSButton!
+    private var serviceStatusButton: NSButton!
     private var dropStripButton: NSButton!
     private var dropOverlayButton: NSButton!
     private var testTransferButton: NSButton!
@@ -464,6 +465,9 @@ exit "${status}"
         stopButton = NSButton(title: "Stop Services", target: self, action: #selector(stopServices))
         stopButton.translatesAutoresizingMaskIntoConstraints = false
 
+        serviceStatusButton = NSButton(title: "Status", target: self, action: #selector(checkServiceStatus))
+        serviceStatusButton.translatesAutoresizingMaskIntoConstraints = false
+
         let logsButton = NSButton(title: "Logs", target: self, action: #selector(openLogs))
         logsButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -482,6 +486,7 @@ exit "${status}"
         content.addSubview(stopMoonlightButton)
         content.addSubview(saveButton)
         content.addSubview(stopButton)
+        content.addSubview(serviceStatusButton)
         content.addSubview(permissionsButton)
         content.addSubview(logsButton)
         content.addSubview(quitButton)
@@ -518,7 +523,11 @@ exit "${status}"
 
             stopButton.leadingAnchor.constraint(equalTo: saveButton.trailingAnchor, constant: 10),
             stopButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
-            stopButton.trailingAnchor.constraint(lessThanOrEqualTo: permissionsButton.leadingAnchor, constant: -16),
+            stopButton.trailingAnchor.constraint(lessThanOrEqualTo: serviceStatusButton.leadingAnchor, constant: -10),
+
+            serviceStatusButton.leadingAnchor.constraint(equalTo: stopButton.trailingAnchor, constant: 10),
+            serviceStatusButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
+            serviceStatusButton.trailingAnchor.constraint(lessThanOrEqualTo: permissionsButton.leadingAnchor, constant: -16),
 
             quitButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
             quitButton.centerYAnchor.constraint(equalTo: startButton.centerYAnchor),
@@ -1478,6 +1487,70 @@ exit "${status}"
         } catch {
             fail(error.localizedDescription)
         }
+    }
+
+    @objc private func checkServiceStatus() {
+        let statusURL = resourceURL.appendingPathComponent("mac/status-moonlight-clipboard-sync.sh")
+        guard FileManager.default.isExecutableFile(atPath: statusURL.path) else {
+            fail("Status script is missing or not executable: \(statusURL.path)")
+            return
+        }
+
+        serviceStatusButton.isEnabled = false
+        statusLabel.stringValue = "Checking Services"
+        detailLabel.stringValue = "Reading Moonlight Companion service status."
+
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = [statusURL.path]
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.terminationHandler = { [weak self] process in
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.serviceStatusButton.isEnabled = true
+                let succeeded = process.terminationStatus == 0
+                self.statusLabel.stringValue = succeeded ? "Services Checked" : "Status Failed"
+                self.detailLabel.stringValue = self.serviceStatusSummary(from: output)
+                self.showServiceStatusOutput(output, succeeded: succeeded)
+            }
+        }
+
+        do {
+            try task.run()
+        } catch {
+            serviceStatusButton.isEnabled = true
+            fail(error.localizedDescription)
+        }
+    }
+
+    private func serviceStatusSummary(from output: String) -> String {
+        let serviceLines = output
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                line.contains(": ") &&
+                    !line.hasPrefix("plist:") &&
+                    !line.hasPrefix("clipboard TCP plist:") &&
+                    !line.hasPrefix("clipboard tunnel plist:") &&
+                    !line.hasPrefix("keyboard helper plist:") &&
+                    !line.hasPrefix("caps tunnel plist:")
+            }
+            .prefix(5)
+        let summary = serviceLines.joined(separator: " | ")
+        return summary.isEmpty ? "No service status output." : summary
+    }
+
+    private func showServiceStatusOutput(_ output: String, succeeded: Bool) {
+        let alert = NSAlert()
+        alert.messageText = succeeded ? "Moonlight Companion Services" : "Service Status Failed"
+        alert.informativeText = output.isEmpty ? "No service status output." : output
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func stopMoonlight() {
