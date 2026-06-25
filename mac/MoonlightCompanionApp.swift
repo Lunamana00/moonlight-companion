@@ -755,6 +755,7 @@ exit "${status}"
         let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
         let signature = "\(modifiedAt.timeIntervalSince1970):\(size)"
         guard signature != latestMacReceiveStateSignature else {
+            refreshLatestMacReceiveAvailability(initial: initial)
             return
         }
         latestMacReceiveStateSignature = signature
@@ -766,15 +767,46 @@ exit "${status}"
             updateLatestMacReceiveButtonState()
             return
         }
-        latestMacReceiveURLs = urls
+        let existingURLs = existingFileURLs(from: urls)
+        guard !existingURLs.isEmpty else {
+            latestMacReceiveURLs = []
+            updateLatestMacReceiveButtonState()
+            if !initial {
+                statusLabel.stringValue = "Mac Files Missing"
+                detailLabel.stringValue = "The latest received files are no longer in the Mac receive folder."
+            }
+            return
+        }
+
+        latestMacReceiveURLs = existingURLs
         updateLatestMacReceiveButtonState()
 
         if !initial {
             if isBusy {
-                pendingLatestMacReceiveURLs = urls
+                pendingLatestMacReceiveURLs = existingURLs
             } else {
-                showLatestMacReceiveStatus(urls)
+                showLatestMacReceiveStatus(existingURLs, totalCount: urls.count)
             }
+        }
+    }
+
+    private func refreshLatestMacReceiveAvailability(initial: Bool) {
+        guard !latestMacReceiveURLs.isEmpty else {
+            return
+        }
+
+        let existingURLs = existingFileURLs(from: latestMacReceiveURLs)
+        guard existingURLs.count != latestMacReceiveURLs.count else {
+            return
+        }
+
+        latestMacReceiveURLs = existingURLs
+        pendingLatestMacReceiveURLs = existingFileURLs(from: pendingLatestMacReceiveURLs)
+        updateLatestMacReceiveButtonState()
+
+        if existingURLs.isEmpty && !initial {
+            statusLabel.stringValue = "Mac Files Missing"
+            detailLabel.stringValue = "The latest received files are no longer in the Mac receive folder."
         }
     }
 
@@ -788,10 +820,15 @@ exit "${status}"
         showLatestMacReceiveStatus(pendingLatestMacReceiveURLs)
     }
 
-    private func showLatestMacReceiveStatus(_ urls: [URL]) {
+    private func showLatestMacReceiveStatus(_ urls: [URL], totalCount: Int? = nil) {
         pendingLatestMacReceiveURLs = []
         statusLabel.stringValue = "Files Received"
-        detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+        let summary = FileDropReader.dropSummary(for: urls)
+        if let totalCount, totalCount > urls.count {
+            detailLabel.stringValue = "\(urls.count) of \(totalCount) received items still available: \(summary)"
+        } else {
+            detailLabel.stringValue = summary
+        }
     }
 
     private func updateLatestMacReceiveButtonState() {
@@ -1085,8 +1122,10 @@ exit "${status}"
     @objc private func revealLatestMacReceive() {
         let state = SettingsFile.parse(url: latestMacReceiveStateURL())
         let urls = latestMacReceiveFileURLs(from: state)
-        let existingURLs = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let existingURLs = existingFileURLs(from: urls)
         guard !existingURLs.isEmpty else {
+            latestMacReceiveURLs = []
+            updateLatestMacReceiveButtonState()
             openMacReceiveFolderWithStatusUpdate(false)
             statusLabel.stringValue = "Mac Folder Opened"
             detailLabel.stringValue = urls.isEmpty
@@ -1095,6 +1134,8 @@ exit "${status}"
             return
         }
 
+        latestMacReceiveURLs = existingURLs
+        updateLatestMacReceiveButtonState()
         NSWorkspace.shared.activateFileViewerSelecting(existingURLs)
         statusLabel.stringValue = "Mac Files Revealed"
         detailLabel.stringValue = FileDropReader.dropSummary(for: existingURLs)
@@ -1103,8 +1144,10 @@ exit "${status}"
     @objc private func copyLatestMacReceive() {
         let state = SettingsFile.parse(url: latestMacReceiveStateURL())
         let urls = latestMacReceiveFileURLs(from: state)
-        let existingURLs = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let existingURLs = existingFileURLs(from: urls)
         guard !existingURLs.isEmpty else {
+            latestMacReceiveURLs = []
+            updateLatestMacReceiveButtonState()
             statusLabel.stringValue = "Copy Failed"
             detailLabel.stringValue = urls.isEmpty
                 ? "No latest received Mac file state was found yet."
@@ -1314,6 +1357,10 @@ exit "${status}"
             let path = expandedUserPath(rawPath.trimmingCharacters(in: .whitespacesAndNewlines))
             return path.isEmpty ? nil : URL(fileURLWithPath: path)
         }
+    }
+
+    private func existingFileURLs(from urls: [URL]) -> [URL] {
+        urls.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     @objc private func openWindowsReceiveFolder() {
