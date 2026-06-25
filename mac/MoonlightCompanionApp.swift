@@ -580,7 +580,8 @@ exit "${status}"
                 if task.terminationStatus == 0 {
                     self?.setBusy(false, status: "Running", detail: "Moonlight launched with saved settings.")
                 } else {
-                    self?.setBusy(false, status: "Failed", detail: "Launcher exited with status \(task.terminationStatus).")
+                    self?.clearQueuedFileDrops()
+                    self?.setBusy(false, status: "Failed", detail: "Launcher exited with status \(task.terminationStatus).", startQueuedDropsWhenIdle: false)
                     self?.showFailure("Launcher exited with status \(task.terminationStatus).")
                 }
             }
@@ -590,12 +591,11 @@ exit "${status}"
             try task.run()
             process = task
         } catch {
-            setBusy(false, status: "Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
         }
     }
 
-    private func setBusy(_ busy: Bool, status: String, detail: String) {
+    private func setBusy(_ busy: Bool, status: String, detail: String, startQueuedDropsWhenIdle: Bool = true) {
         isBusy = busy
         progressIndicator.isHidden = !busy
         if busy {
@@ -618,11 +618,15 @@ exit "${status}"
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
 
-        if !busy {
+        if !busy && startQueuedDropsWhenIdle {
             DispatchQueue.main.async { [weak self] in
                 self?.startNextQueuedFileDropIfIdle()
             }
         }
+    }
+
+    private func clearQueuedFileDrops() {
+        queuedFileDrops.removeAll()
     }
 
     private func queueFileDropIfBusy(_ urls: [URL], source: FileDropSource) -> Bool {
@@ -776,7 +780,8 @@ exit "${status}"
     }
 
     private func fail(_ message: String) {
-        setBusy(false, status: "Failed", detail: message)
+        clearQueuedFileDrops()
+        setBusy(false, status: "Failed", detail: message, startQueuedDropsWhenIdle: false)
         showFailure(message)
     }
 
@@ -852,10 +857,14 @@ exit "${status}"
     @objc private func cancelTransferOperation() {
         guard let task = transferProcess else { return }
         cancelledTransferProcessIDs.insert(task.processIdentifier)
+        let queuedDropCount = queuedFileDrops.count
+        clearQueuedFileDrops()
         task.terminate()
         cancelTransferButton?.isEnabled = false
         statusLabel.stringValue = "Cancelling"
-        detailLabel.stringValue = "Stopping the current transfer operation."
+        detailLabel.stringValue = queuedDropCount == 0
+            ? "Stopping the current transfer operation."
+            : "Stopping the current transfer operation and clearing \(queuedDropCount) queued drop(s)."
     }
 
     @objc private func openMacReceiveFolder() {
@@ -926,13 +935,15 @@ exit "${status}"
         setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
         requestWindowsReceiveFolderOpen(selectLatestImport: false) { [weak self] succeeded, detail in
             if detail == "cancelled" {
-                self?.setBusy(false, status: "Cancelled", detail: "Windows receive folder open was cancelled.")
+                self?.clearQueuedFileDrops()
+                self?.setBusy(false, status: "Cancelled", detail: "Windows receive folder open was cancelled.", startQueuedDropsWhenIdle: false)
                 return
             }
             if succeeded {
                 self?.setBusy(false, status: "Windows Folder Opened", detail: detail)
             } else {
-                self?.setBusy(false, status: "Open Failed", detail: detail)
+                self?.clearQueuedFileDrops()
+                self?.setBusy(false, status: "Open Failed", detail: detail, startQueuedDropsWhenIdle: false)
                 self?.showFailure("Windows receive folder opener failed.")
             }
         }
@@ -944,14 +955,16 @@ exit "${status}"
         setBusy(true, status: "Revealing Windows Files", detail: "Asking Windows to select the latest received item.")
         requestWindowsReceiveFolderOpen(selectLatestImport: true) { [weak self] succeeded, detail in
             if detail == "cancelled" {
-                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.")
+                self?.clearQueuedFileDrops()
+                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
                 return
             }
             if succeeded {
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
                 self?.setBusy(false, status: status, detail: detail)
             } else {
-                self?.setBusy(false, status: "Reveal Failed", detail: detail)
+                self?.clearQueuedFileDrops()
+                self?.setBusy(false, status: "Reveal Failed", detail: detail, startQueuedDropsWhenIdle: false)
                 self?.showFailure("Windows receive reveal failed.")
             }
         }
@@ -1048,7 +1061,7 @@ exit "${status}"
                 pipe.fileHandleForReading.readabilityHandler = nil
                 if self?.consumeTransferCancellation(for: task) == true {
                     self?.transferProcess = nil
-                    self?.setBusy(false, status: "Cancelled", detail: "File transfer test was cancelled.")
+                    self?.setBusy(false, status: "Cancelled", detail: "File transfer test was cancelled.", startQueuedDropsWhenIdle: false)
                     return
                 }
                 self?.transferProcess = nil
@@ -1058,7 +1071,8 @@ exit "${status}"
                 if task.terminationStatus == 0 {
                     self?.setBusy(false, status: "Transfer OK", detail: detail)
                 } else {
-                    self?.setBusy(false, status: "Transfer Failed", detail: detail)
+                    self?.clearQueuedFileDrops()
+                    self?.setBusy(false, status: "Transfer Failed", detail: detail, startQueuedDropsWhenIdle: false)
                     self?.showFailure("File transfer test failed.")
                 }
             }
@@ -1068,7 +1082,6 @@ exit "${status}"
             try task.run()
             transferProcess = task
         } catch {
-            setBusy(false, status: "Transfer Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
         }
     }
@@ -1563,7 +1576,7 @@ exit "${status}"
                 if self?.consumeTransferCancellation(for: task) == true {
                     self?.transferProcess = nil
                     try? FileManager.default.removeItem(at: transferResultStateURL)
-                    self?.setBusy(false, status: "Cancelled", detail: "\(summary.detail) send was cancelled.")
+                    self?.setBusy(false, status: "Cancelled", detail: "\(summary.detail) send was cancelled.", startQueuedDropsWhenIdle: false)
                     return
                 }
                 self?.transferProcess = nil
@@ -1586,7 +1599,8 @@ exit "${status}"
                             expectedImportID: transferResult["id"]
                         ) { [weak self] succeeded, openDetail in
                             if openDetail == "cancelled" {
-                                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.")
+                                self?.clearQueuedFileDrops()
+                                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
                                 return
                             }
                             let suffix = succeeded
@@ -1601,7 +1615,8 @@ exit "${status}"
                     try? FileManager.default.removeItem(at: transferResultStateURL)
                     let detail = text?.isEmpty == false ? text! : "File sender exited with status \(task.terminationStatus)."
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
-                    self?.setBusy(false, status: "Send Failed", detail: detail)
+                    self?.clearQueuedFileDrops()
+                    self?.setBusy(false, status: "Send Failed", detail: detail, startQueuedDropsWhenIdle: false)
                     self?.showFailure("File sender exited with status \(task.terminationStatus).")
                 }
             }
@@ -1612,7 +1627,6 @@ exit "${status}"
             transferProcess = task
         } catch {
             notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: error.localizedDescription)
-            setBusy(false, status: "Send Failed", detail: error.localizedDescription)
             fail(error.localizedDescription)
         }
     }
