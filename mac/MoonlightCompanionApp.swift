@@ -207,6 +207,7 @@ exit "${status}"
     private var copyMacReceiveButton: NSButton!
     private var openWindowsReceiveButton: NSButton!
     private var revealWindowsReceiveButton: NSButton!
+    private var copyWindowsReceiveButton: NSButton!
     private var cancelTransferButton: NSButton!
     private var output = Data()
     private var transferProgressLineBuffer = ""
@@ -410,6 +411,9 @@ exit "${status}"
         revealWindowsReceiveButton = NSButton(title: "Reveal Last Windows Receive", target: self, action: #selector(revealLatestWindowsReceive))
         revealWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealWindowsReceiveButton.isEnabled = false
+        copyWindowsReceiveButton = NSButton(title: "Copy Last Windows Receive", target: self, action: #selector(copyLatestWindowsReceive))
+        copyWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        copyWindowsReceiveButton.isEnabled = false
         cancelTransferButton = NSButton(title: "Cancel", target: self, action: #selector(cancelTransferOperation))
         cancelTransferButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton.isEnabled = false
@@ -425,7 +429,7 @@ exit "${status}"
         transferMacFolderButtons.spacing = 10
         transferMacFolderButtons.translatesAutoresizingMaskIntoConstraints = false
         form.addArrangedSubview(row("Mac Folders", transferMacFolderButtons))
-        let transferWindowsFolderButtons = NSStackView(views: [openWindowsReceiveButton, revealWindowsReceiveButton])
+        let transferWindowsFolderButtons = NSStackView(views: [openWindowsReceiveButton, revealWindowsReceiveButton, copyWindowsReceiveButton])
         transferWindowsFolderButtons.orientation = .horizontal
         transferWindowsFolderButtons.alignment = .centerY
         transferWindowsFolderButtons.spacing = 10
@@ -744,6 +748,7 @@ exit "${status}"
         copyMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
         openWindowsReceiveButton?.isEnabled = !busy
         revealWindowsReceiveButton?.isEnabled = !busy && !latestWindowsReceiveID.isEmpty
+        copyWindowsReceiveButton?.isEnabled = !busy && !latestWindowsReceiveID.isEmpty
         updateCancelTransferButtonState()
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
@@ -1095,6 +1100,7 @@ exit "${status}"
 
     private func updateLatestWindowsReceiveButtonState() {
         revealWindowsReceiveButton?.isEnabled = !isBusy && !latestWindowsReceiveID.isEmpty
+        copyWindowsReceiveButton?.isEnabled = !isBusy && !latestWindowsReceiveID.isEmpty
     }
 
     @discardableResult
@@ -1677,10 +1683,113 @@ exit "${status}"
         }
     }
 
+    @objc private func copyLatestWindowsReceive() {
+        guard saveSettings() else { return }
+        loadLatestWindowsReceiveState()
+        let expectedImportID = latestWindowsReceiveID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !expectedImportID.isEmpty else {
+            clearLatestWindowsReceiveState()
+            statusLabel.stringValue = "No Windows Receive"
+            detailLabel.stringValue = "No confirmed latest Windows receive state is available yet."
+            return
+        }
+
+        let selectPaths = latestWindowsReceivePaths
+        guard !selectPaths.isEmpty else {
+            statusLabel.stringValue = "Copy Failed"
+            detailLabel.stringValue = "No confirmed Windows receive paths are available for clipboard restore."
+            return
+        }
+
+        let copyDetail = latestWindowsReceiveSummary.isEmpty
+            ? "Asking Windows to put the latest received item on the clipboard."
+            : "Asking Windows to put \(latestWindowsReceiveSummary) on the clipboard."
+        setBusy(true, status: "Copying Windows Files", detail: copyDetail)
+        requestWindowsReceiveClipboardRestore(
+            expectedImportID: expectedImportID,
+            selectPaths: selectPaths
+        ) { [weak self] succeeded, detail in
+            if detail == "cancelled" {
+                self?.clearQueuedFileDrops()
+                self?.setBusy(false, status: "Cancelled", detail: "Windows receive clipboard restore was cancelled.", startQueuedDropsWhenIdle: false)
+                return
+            }
+            if succeeded {
+                if self?.windowsReceiveRevealStateExpired(detail) == true {
+                    self?.clearLatestWindowsReceiveState()
+                    self?.setBusy(false, status: "Windows Receive Missing", detail: detail)
+                    return
+                }
+                let summary = self?.latestWindowsReceiveSummary ?? ""
+                let resultDetail = summary.isEmpty
+                    ? detail
+                    : "\(summary) is ready on the Windows clipboard."
+                self?.setBusy(false, status: "Windows Files Copied", detail: resultDetail)
+            } else {
+                self?.setBusy(false, status: "Copy Failed", detail: detail, startQueuedDropsWhenIdle: false)
+            }
+        }
+    }
+
     private func windowsReceiveRevealStateExpired(_ detail: String) -> Bool {
         detail.contains("did not match") ||
             detail.contains("state was unavailable") ||
             detail.contains("item was unavailable")
+    }
+
+    private func requestWindowsReceiveClipboardRestore(
+        expectedImportID: String,
+        selectPaths: [String],
+        completion: @escaping (Bool, String) -> Void
+    ) {
+        let copierURL = resourceURL.appendingPathComponent("mac/copy-windows-receive-to-clipboard.sh")
+        guard FileManager.default.isExecutableFile(atPath: copierURL.path) else {
+            completion(false, "Windows receive clipboard copier is missing or not executable: \(copierURL.path)")
+            return
+        }
+
+        let task = Process()
+        let pipe = Pipe()
+        var arguments = [
+            copierURL.path,
+            "--expected-id",
+            expectedImportID
+        ]
+        for path in selectPaths where !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments.append(contentsOf: ["--select-path", path])
+        }
+        configureCancellableTransferTask(task, scriptURL: copierURL, arguments: Array(arguments.dropFirst()))
+        task.currentDirectoryURL = resourceURL
+        task.standardOutput = pipe
+        task.standardError = pipe
+        var environment = ProcessInfo.processInfo.environment
+        environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        task.environment = environment
+
+        task.terminationHandler = { [weak self] task in
+            let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: outputData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = text?.isEmpty == false ? text! : "Windows clipboard restore exited with status \(task.terminationStatus)."
+            DispatchQueue.main.async {
+                let cancelled = self?.consumeTransferCancellation(for: task) == true
+                if self?.transferProcess === task {
+                    self?.transferProcess = nil
+                }
+                if cancelled {
+                    completion(false, "cancelled")
+                    return
+                }
+                completion(task.terminationStatus == 0, detail)
+            }
+        }
+
+        do {
+            try task.run()
+            transferProcess = task
+        } catch {
+            completion(false, error.localizedDescription)
+        }
     }
 
     private func requestWindowsReceiveFolderOpen(

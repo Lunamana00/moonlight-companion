@@ -23,6 +23,7 @@ cp \
   "${repo_dir}/mac/moonlight-companion-launch.sh" \
   "${repo_dir}/mac/deploy-windows-agent.sh" \
   "${repo_dir}/mac/start-moonlight-clipboard-sync.sh" \
+  "${repo_dir}/mac/copy-windows-receive-to-clipboard.sh" \
   "${repo_dir}/mac/open-windows-receive-folder.sh" \
   "${repo_dir}/mac/send-files-to-windows.sh" \
   "${repo_dir}/mac/test-file-transfer.sh" \

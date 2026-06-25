@@ -1480,6 +1480,7 @@ if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "dir
 fi
 limit_state_path="$(meta_value imported_path_1 "$limit_state")"
 limit_state_path_b64="$(meta_value imported_path_1_b64 "$limit_state")"
+limit_state_id="$(meta_value id "$limit_state")"
 if [[ "$limit_state_path" != *"$limit_name"* ]]; then
   echo "Mac -> Windows oversized payload did not write the imported Windows receive path to the GUI state." >&2
   [[ -f "$limit_state" ]] && cat "$limit_state" >&2
@@ -1493,6 +1494,15 @@ fi
 if ! wait_for_windows_file "$limit_name"; then
   echo "Mac -> Windows oversized payload did not arrive in the Windows receive folder." >&2
   cat "$limit_out" >&2
+  exit 1
+fi
+limit_copy_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" \
+    "${script_dir}/copy-windows-receive-to-clipboard.sh" --expected-id "$limit_state_id" --select-path "$limit_state_path"
+)"
+if ! grep -Fq "asked Windows to put the latest received item on the clipboard" <<<"$limit_copy_out"; then
+  echo "Mac -> Windows oversized payload latest Windows clipboard restore failed." >&2
+  printf '%s\n' "$limit_copy_out" >&2
   exit 1
 fi
 if ! assert_windows_receive_staging_absent; then
