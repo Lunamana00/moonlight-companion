@@ -1767,6 +1767,11 @@ if ! grep -Fq "asked Windows to put the latest received items on the clipboard" 
   printf '%s\n' "$limit_multi_copy_out" >&2
   exit 1
 fi
+if grep -Fq "MOONLIGHT_COPY_PATH_" <<<"$limit_multi_copy_out"; then
+  echo "Windows receive clipboard restore leaked machine-readable path output without an explicit request." >&2
+  printf '%s\n' "$limit_multi_copy_out" >&2
+  exit 1
+fi
 remove_windows_path "$limit_multi_dir_name"
 limit_multi_partial_reveal_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
@@ -1778,7 +1783,7 @@ if ! grep -Fq "asked Windows to open the receive folder; some received items wer
   exit 1
 fi
 limit_multi_partial_copy_out="$(
-  MOONLIGHT_COMPANION_CONFIG="$config" \
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_COPY_MACHINE_OUTPUT=yes \
     "${script_dir}/copy-windows-receive-to-clipboard.sh" \
       --expected-id "$(meta_value id "$limit_multi_state")" \
       --select-path "$limit_multi_path_1" \
@@ -1786,6 +1791,14 @@ limit_multi_partial_copy_out="$(
 )"
 if ! grep -Fq "asked Windows to put 1 of 2 latest received items on the clipboard; some received items were unavailable" <<<"$limit_multi_partial_copy_out"; then
   echo "Windows receive clipboard restore did not copy remaining explicit imported paths while reporting partially missing items." >&2
+  printf '%s\n' "$limit_multi_partial_copy_out" >&2
+  exit 1
+fi
+limit_multi_partial_copy_path_b64="$(awk -F= '$1 == "MOONLIGHT_COPY_PATH_1_B64" {print substr($0, length($1) + 2); exit}' <<<"$limit_multi_partial_copy_out")"
+if [[ -z "$limit_multi_partial_copy_path_b64" ||
+      "$(decode_b64_value "$limit_multi_partial_copy_path_b64")" != "$limit_multi_path_1" ||
+      "$(grep -Fc "MOONLIGHT_COPY_PATH_" <<<"$limit_multi_partial_copy_out")" != "1" ]]; then
+  echo "Windows receive clipboard restore did not report the remaining partial copy path." >&2
   printf '%s\n' "$limit_multi_partial_copy_out" >&2
   exit 1
 fi

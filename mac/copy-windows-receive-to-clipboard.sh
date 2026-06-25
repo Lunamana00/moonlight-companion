@@ -18,6 +18,7 @@ remote_dir=".moonlight-clipboard-sync"
 expected_id=""
 select_paths=()
 timeout_ms="${MOONLIGHT_WINDOWS_CLIPBOARD_RESTORE_TIMEOUT_MS:-5000}"
+machine_output="${MOONLIGHT_COPY_MACHINE_OUTPUT:-no}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -197,6 +198,9 @@ while ((Get-Date) -lt \$deadline) {
           Write-Output "MOONLIGHT_COPY_RESULT=ready"
         }
         Write-Output ("MOONLIGHT_COPY_PATHS={0}" -f [string]\$response["imported_paths"])
+        for (\$i = 0; \$i -lt \$validPaths.Count; \$i++) {
+          Write-Output ("MOONLIGHT_COPY_PATH_{0}_B64={1}" -f (\$i + 1), (ConvertTo-StateBase64 \$validPaths[\$i]))
+        }
         exit 0
       }
       Write-Output "MOONLIGHT_COPY_RESULT=unavailable"
@@ -237,12 +241,22 @@ if [[ ! "$copy_paths_count" =~ ^[0-9]+$ ]]; then
   copy_paths_count=0
 fi
 
+print_copy_machine_paths() {
+  case "$machine_output" in
+    1|y|Y|yes|YES|true|TRUE|on|ON) ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' "$remote_output" | awk '/^MOONLIGHT_COPY_PATH_[0-9]+_B64=/ { sub(/\r$/, ""); print }'
+}
+
 case "$copy_result" in
   ready)
     printf 'asked Windows to put the %s on the clipboard\n' "$(latest_received_text)"
+    print_copy_machine_paths
     ;;
   partial-ready)
     printf 'asked Windows to put %s of %s latest received items on the clipboard; some received items were unavailable\n' "$copy_paths_count" "$selected_count"
+    print_copy_machine_paths
     ;;
   missing)
     printf 'asked Windows to copy the %s; %s %s unavailable\n' "$(latest_received_text)" "$(received_item_text)" "$(received_item_unavailable_verb)"

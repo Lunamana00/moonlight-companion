@@ -58,6 +58,63 @@ private func moonlightWindowsImportConfirmed(id: String, confirmation: String, i
         !importedPaths.isEmpty
 }
 
+private struct MoonlightWindowsReceiveClipboardRestoreOutput {
+    let detail: String
+    let remainingPaths: [String]
+}
+
+private func moonlightParseWindowsReceiveClipboardRestoreOutput(
+    _ text: String?,
+    fallbackDetail: String
+) -> MoonlightWindowsReceiveClipboardRestoreOutput {
+    let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !trimmed.isEmpty else {
+        return MoonlightWindowsReceiveClipboardRestoreOutput(detail: fallbackDetail, remainingPaths: [])
+    }
+
+    let pathPrefix = "MOONLIGHT_COPY_PATH_"
+    let pathSuffix = "_B64"
+    var detailLines: [String] = []
+    var pathsByIndex: [Int: String] = [:]
+    for rawLine in trimmed.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { continue }
+
+        if line.hasPrefix(pathPrefix),
+           let equalsIndex = line.firstIndex(of: "=") {
+            let key = String(line[..<equalsIndex])
+            let value = String(line[line.index(after: equalsIndex)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if key.hasSuffix(pathSuffix) {
+                let indexStart = key.index(key.startIndex, offsetBy: pathPrefix.count)
+                let indexEnd = key.index(key.endIndex, offsetBy: -pathSuffix.count)
+                let indexText = String(key[indexStart..<indexEnd])
+                if let index = Int(indexText),
+                   let data = Data(base64Encoded: value),
+                   let path = String(data: data, encoding: .utf8) {
+                    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmedPath.isEmpty {
+                        pathsByIndex[index] = trimmedPath
+                    }
+                }
+                continue
+            }
+        }
+
+        if line.hasPrefix("MOONLIGHT_COPY_") {
+            continue
+        }
+        detailLines.append(line)
+    }
+
+    let detail = detailLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    let remainingPaths = pathsByIndex.keys.sorted().compactMap { pathsByIndex[$0] }
+    return MoonlightWindowsReceiveClipboardRestoreOutput(
+        detail: detail.isEmpty ? fallbackDetail : detail,
+        remainingPaths: remainingPaths
+    )
+}
+
 private func moonlightMacReceiveAvailabilityDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
     if totalCount > availableCount {
         return "\(availableCount) of \(totalCount) received items still available: \(summary)"
@@ -791,6 +848,7 @@ exit "${status}"
         task.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        environment["MOONLIGHT_COPY_MACHINE_OUTPUT"] = "yes"
         task.environment = environment
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -1194,6 +1252,32 @@ exit "${status}"
         }
         writeSimpleState(values, to: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
+    }
+
+    private func pruneLatestWindowsReceiveState(to remainingPaths: [String]) {
+        let paths = remainingPaths
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !paths.isEmpty else { return }
+
+        var state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
+        if (state["id"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state["id"] = latestWindowsReceiveID
+        }
+        if (state["confirmation"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state["confirmation"] = "direct-clipboard"
+        }
+        if (state["kind"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state["kind"] = "files"
+        }
+        state["clipboard_ready"] = "yes"
+        state["imported_names_b64"] = ""
+        state["imported_paths"] = "\(paths.count)"
+        for (index, path) in paths.enumerated() {
+            state["imported_path_\(index + 1)"] = path
+            state["imported_path_\(index + 1)_b64"] = base64StateValue(path)
+        }
+        recordLatestWindowsReceiveState(state)
     }
 
     private func clearLatestWindowsReceiveState() {
@@ -2115,7 +2199,7 @@ exit "${status}"
         requestWindowsReceiveClipboardRestore(
             expectedImportID: expectedImportID,
             selectPaths: selectPaths
-        ) { [weak self] succeeded, detail in
+        ) { [weak self] succeeded, detail, remainingPaths in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive clipboard restore was cancelled.", startQueuedDropsWhenIdle: false)
@@ -2127,9 +2211,16 @@ exit "${status}"
                     self?.setBusy(false, status: "Windows Receive Missing", detail: detail)
                     return
                 }
+                let partial = self?.windowsReceiveRevealStatePartiallyMissing(detail) == true
+                if partial && !remainingPaths.isEmpty {
+                    self?.pruneLatestWindowsReceiveState(to: remainingPaths)
+                }
                 let summary = self?.latestWindowsReceiveSummary ?? ""
                 let resultDetail: String
-                if self?.windowsReceiveRevealStatePartiallyMissing(detail) == true {
+                if partial && !summary.isEmpty && !remainingPaths.isEmpty {
+                    let verb = remainingPaths.count == 1 ? "is" : "are"
+                    resultDetail = "\(summary) \(verb) ready on the Windows clipboard. Some received items were unavailable."
+                } else if partial {
                     resultDetail = detail
                 } else if summary.isEmpty {
                     resultDetail = detail
@@ -2158,11 +2249,11 @@ exit "${status}"
     private func requestWindowsReceiveClipboardRestore(
         expectedImportID: String,
         selectPaths: [String],
-        completion: @escaping (Bool, String) -> Void
+        completion: @escaping (Bool, String, [String]) -> Void
     ) {
         let copierURL = resourceURL.appendingPathComponent("mac/copy-windows-receive-to-clipboard.sh")
         guard FileManager.default.isExecutableFile(atPath: copierURL.path) else {
-            completion(false, "Windows receive clipboard copier is missing or not executable: \(copierURL.path)")
+            completion(false, "Windows receive clipboard copier is missing or not executable: \(copierURL.path)", [])
             return
         }
 
@@ -2188,17 +2279,20 @@ exit "${status}"
             let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
             let text = String(data: outputData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let detail = text?.isEmpty == false ? text! : "Windows clipboard restore exited with status \(task.terminationStatus)."
+            let output = moonlightParseWindowsReceiveClipboardRestoreOutput(
+                text,
+                fallbackDetail: "Windows clipboard restore exited with status \(task.terminationStatus)."
+            )
             DispatchQueue.main.async {
                 let cancelled = self?.consumeTransferCancellation(for: task) == true
                 if self?.transferProcess === task {
                     self?.transferProcess = nil
                 }
                 if cancelled {
-                    completion(false, "cancelled")
+                    completion(false, "cancelled", [])
                     return
                 }
-                completion(task.terminationStatus == 0, detail)
+                completion(task.terminationStatus == 0, output.detail, output.remainingPaths)
             }
         }
 
@@ -2206,7 +2300,7 @@ exit "${status}"
             try task.run()
             transferProcess = task
         } catch {
-            completion(false, error.localizedDescription)
+            completion(false, error.localizedDescription, [])
         }
     }
 
@@ -3836,6 +3930,24 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             moonlightWindowsImportSummary(importedNamesB64: "", importedPaths: []) == "",
             "empty import state should not produce a summary"
+        )
+        let firstPath = "C:\\Receive\\alpha.txt"
+        let secondPath = "D:\\Receive Folder\\beta.png"
+        let parsedCopyOutput = moonlightParseWindowsReceiveClipboardRestoreOutput(
+            """
+            asked Windows to put 2 of 3 latest received items on the clipboard; some received items were unavailable
+            MOONLIGHT_COPY_PATH_2_B64=\(Data(secondPath.utf8).base64EncodedString())
+            MOONLIGHT_COPY_PATH_1_B64=\(Data(firstPath.utf8).base64EncodedString())
+            """,
+            fallbackDetail: "fallback"
+        )
+        try expect(
+            parsedCopyOutput.detail == "asked Windows to put 2 of 3 latest received items on the clipboard; some received items were unavailable",
+            "clipboard restore parser leaked machine-readable copy state into detail"
+        )
+        try expect(
+            parsedCopyOutput.remainingPaths == [firstPath, secondPath],
+            "clipboard restore parser did not return remaining paths in index order"
         )
         try expect(
             moonlightWindowsImportConfirmed(
