@@ -2316,11 +2316,11 @@ enum FileDropSource {
 
 enum FileDropReader {
     static let filenamesPasteboardType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-    private static let urlPasteboardTypes: [NSPasteboard.PasteboardType] = [
+    static let urlPasteboardTypes: [NSPasteboard.PasteboardType] = [
         .fileURL,
-        NSPasteboard.PasteboardType("NSURLPboardType"),
-        NSPasteboard.PasteboardType("public.url")
+        .URL
     ]
+    static let readablePasteboardTypes = urlPasteboardTypes + [filenamesPasteboardType]
 
     static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
         var urls: [URL] = []
@@ -2336,14 +2336,20 @@ enum FileDropReader {
             urls.append(contentsOf: items.compactMap { item in
                 urlPasteboardTypes.compactMap { type -> URL? in
                     guard let value = item.string(forType: type),
-                          let parsedURL = URL(string: value),
-                          parsedURL.isFileURL else {
+                          let parsedURL = fileURL(fromPasteboardString: value) else {
                         return nil
                     }
                     return parsedURL
                 }.first
             })
         }
+
+        urls.append(contentsOf: urlPasteboardTypes.compactMap { type in
+            guard let value = pasteboard.string(forType: type) else {
+                return nil
+            }
+            return fileURL(fromPasteboardString: value)
+        })
 
         if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
             urls.append(contentsOf: paths.map { URL(fileURLWithPath: $0) })
@@ -2362,6 +2368,17 @@ enum FileDropReader {
             seenPaths.insert(path)
             return url
         }
+    }
+
+    private static func fileURL(fromPasteboardString value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parsedURL = URL(string: trimmed), parsedURL.isFileURL {
+            return parsedURL
+        }
+        if trimmed.hasPrefix("/") {
+            return URL(fileURLWithPath: trimmed)
+        }
+        return nil
     }
 
     static func fileURLs(from sender: NSDraggingInfo) -> [URL] {
@@ -2428,7 +2445,7 @@ final class MoonlightDropOverlayView: NSView {
         wantsLayer = true
         setActiveDropURLs([])
         layer?.borderWidth = 3
-        registerForDraggedTypes([.fileURL, FileDropReader.filenamesPasteboardType])
+        registerForDraggedTypes(FileDropReader.readablePasteboardTypes)
 
         titleLabel.font = NSFont.systemFont(ofSize: 28, weight: .semibold)
         titleLabel.textColor = .white
@@ -2546,7 +2563,7 @@ final class FileDropView: NSView {
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
         setActiveDropURLs([])
-        registerForDraggedTypes([.fileURL, FileDropReader.filenamesPasteboardType])
+        registerForDraggedTypes(FileDropReader.readablePasteboardTypes)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: preferredSize.width).isActive = true
         heightAnchor.constraint(equalToConstant: preferredSize.height).isActive = true

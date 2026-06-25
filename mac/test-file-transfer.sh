@@ -620,6 +620,46 @@ if [[ "$(meta_value kind "$empty_snapshot_meta")" != "empty" || "$(meta_value id
 fi
 echo "Helper empty clipboard snapshot ok."
 
+echo "Testing helper URL pasteboard variants..."
+url_variant_file="${tmp_dir}/moonlight-companion-transfer-test-url-pasteboard-${stamp}.txt"
+url_variant_writer="${tmp_dir}/write-url-pasteboard.swift"
+printf 'Moonlight Companion URL pasteboard variant test %s\n' "$stamp" > "$url_variant_file"
+cat > "$url_variant_writer" <<'SWIFT'
+import AppKit
+import Foundation
+
+guard CommandLine.arguments.count == 3 else {
+    exit(2)
+}
+
+let fileURL = URL(fileURLWithPath: CommandLine.arguments[1]).absoluteString
+let pasteboardType = NSPasteboard.PasteboardType(CommandLine.arguments[2])
+let item = NSPasteboardItem()
+item.setString(fileURL, forType: pasteboardType)
+
+let pasteboard = NSPasteboard.general
+pasteboard.clearContents()
+if !pasteboard.writeObjects([item]) {
+    exit(1)
+}
+SWIFT
+for pasteboard_type in "public.url" "public.file-url"; do
+  url_variant_payload="${tmp_dir}/url-pasteboard-${pasteboard_type}-payload"
+  url_variant_meta="${tmp_dir}/url-pasteboard-${pasteboard_type}-meta.txt"
+  swift "$url_variant_writer" "$url_variant_file" "$pasteboard_type"
+  if ! "$helper" export "$url_variant_payload" > "$url_variant_meta"; then
+    echo "Helper did not export a file clipboard from ${pasteboard_type}." >&2
+    exit 1
+  fi
+  if [[ "$(meta_value kind "$url_variant_meta")" != "files" ||
+        "$(meta_value file_name_1 "$url_variant_meta")" != "$(basename "$url_variant_file")" ]]; then
+    echo "Helper did not recognize ${pasteboard_type} as a file URL clipboard." >&2
+    cat "$url_variant_meta" >&2
+    exit 1
+  fi
+done
+echo "Helper URL pasteboard variants ok."
+
 echo "Testing Mac -> Windows oversized direct transfer..."
 limit_file="${tmp_dir}/moonlight-companion-transfer-test-limit-${stamp}.txt"
 limit_name="$(basename "$limit_file")"

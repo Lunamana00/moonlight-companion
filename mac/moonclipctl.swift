@@ -55,6 +55,10 @@ enum ClipError: Error, CustomStringConvertible {
 
 let fm = FileManager.default
 let filenamesPasteboardType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+let urlPasteboardTypes: [NSPasteboard.PasteboardType] = [
+    .fileURL,
+    .URL
+]
 
 func sha256Hex(_ data: Data) -> String {
     hexString(SHA256.hash(data: data))
@@ -409,14 +413,23 @@ func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
 
     if let items = pasteboard.pasteboardItems {
         fileURLs.append(contentsOf: items.compactMap { item -> URL? in
-            guard let value = item.string(forType: .fileURL),
-                  let url = URL(string: value),
-                  url.isFileURL else {
-                return nil
+            for type in urlPasteboardTypes {
+                guard let value = item.string(forType: type),
+                      let url = fileURL(fromPasteboardString: value) else {
+                    continue
+                }
+                return url
             }
-            return url
+            return nil
         })
     }
+
+    fileURLs.append(contentsOf: urlPasteboardTypes.compactMap { type in
+        guard let value = pasteboard.string(forType: type) else {
+            return nil
+        }
+        return fileURL(fromPasteboardString: value)
+    })
 
     if let paths = pasteboard.propertyList(forType: filenamesPasteboardType) as? [String] {
         fileURLs.append(contentsOf: paths.map { URL(fileURLWithPath: $0) })
@@ -431,6 +444,17 @@ func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
         seenPaths.insert(path)
         return true
     }
+}
+
+func fileURL(fromPasteboardString value: String) -> URL? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let url = URL(string: trimmed), url.isFileURL {
+        return url
+    }
+    if trimmed.hasPrefix("/") {
+        return URL(fileURLWithPath: trimmed)
+    }
+    return nil
 }
 
 func exportClipboard(to dir: URL) throws -> ExportResult {
