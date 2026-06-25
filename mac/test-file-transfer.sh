@@ -614,6 +614,33 @@ fi
 rm -f "$metadata_path" "${transfer_mac_dir}/${metadata_name}"
 echo "Received file metadata ok."
 
+echo "Testing Windows -> Mac partial import rejection..."
+partial_import_file_a="${tmp_dir}/moonlight-companion-transfer-test-partial-import-a-${stamp}.txt"
+partial_import_file_b="${tmp_dir}/moonlight-companion-transfer-test-partial-import-b-${stamp}.txt"
+partial_import_payload="${tmp_dir}/partial-import-payload"
+partial_import_out="${tmp_dir}/partial-import.txt"
+printf 'Moonlight Companion partial import first file %s\n' "$stamp" > "$partial_import_file_a"
+printf 'Moonlight Companion partial import second file %s\n' "$stamp" > "$partial_import_file_b"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$partial_import_payload" "$partial_import_file_a" "$partial_import_file_b" >/dev/null
+rm -f "${partial_import_payload}/files/$(basename "$partial_import_file_b")"
+if MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" import "$partial_import_payload" > "$partial_import_out" 2>&1; then
+  echo "Windows -> Mac partial import payload unexpectedly succeeded." >&2
+  cat "$partial_import_out" >&2
+  exit 1
+fi
+if [[ -e "${transfer_mac_dir}/$(basename "$partial_import_file_a")" ||
+      -e "${transfer_mac_dir}/$(basename "$partial_import_file_b")" ]]; then
+  echo "Windows -> Mac partial import left files in the Mac receive folder." >&2
+  ls -la "$transfer_mac_dir" >&2
+  exit 1
+fi
+if find "$transfer_mac_dir" -maxdepth 1 -name '.moonlight-companion-import-*' | grep -q .; then
+  echo "Windows -> Mac partial import left a staging folder in the Mac receive folder." >&2
+  find "$transfer_mac_dir" -maxdepth 1 -name '.moonlight-companion-import-*' >&2
+  exit 1
+fi
+echo "Windows -> Mac partial import rejection ok."
+
 echo "Testing helper set-files metadata id..."
 helper_id_file_a="${tmp_dir}/helper-id-a/same-name-${stamp}.txt"
 helper_id_file_b="${tmp_dir}/helper-id-b/same-name-${stamp}.txt"

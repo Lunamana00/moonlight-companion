@@ -577,11 +577,37 @@ func transferMacDirectory() -> URL? {
 func copyFiles(_ urls: [URL], to directory: URL) throws -> [URL] {
     try fm.createDirectory(at: directory, withIntermediateDirectories: true)
     var used = Set<String>()
-    return try urls.map { source in
-        let dest = uniqueDestination(for: source, in: directory, used: &used)
-        try fm.copyItem(at: source, to: dest)
-        return dest.standardizedFileURL
+    let destinations = urls.map { source in
+        uniqueDestination(for: source, in: directory, used: &used)
     }
+
+    let stagingDirectory = directory.appendingPathComponent(
+        ".moonlight-companion-import-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: false)
+    var stagedURLs: [URL] = []
+    var movedURLs: [URL] = []
+    do {
+        for (index, source) in urls.enumerated() {
+            let stagedURL = stagingDirectory.appendingPathComponent(destinations[index].lastPathComponent)
+            try fm.copyItem(at: source, to: stagedURL)
+            stagedURLs.append(stagedURL)
+        }
+        for (index, stagedURL) in stagedURLs.enumerated() {
+            try fm.moveItem(at: stagedURL, to: destinations[index])
+            movedURLs.append(destinations[index])
+        }
+        try? fm.removeItem(at: stagingDirectory)
+    } catch {
+        for movedURL in movedURLs {
+            try? fm.removeItem(at: movedURL)
+        }
+        try? fm.removeItem(at: stagingDirectory)
+        throw error
+    }
+
+    return destinations.map(\.standardizedFileURL)
 }
 
 func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {

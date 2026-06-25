@@ -13,6 +13,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Promised file drops can now be cancelled while the source app is still materializing files, and their temporary staging folders are cleaned up with other queued transfer work.
 - Promised file drops now fail as a whole if the source app cannot provide every promised item, avoiding surprising partial Mac-to-Windows transfers.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.
+- Windows-to-Mac Mac receive-folder imports now stage received files before moving them into place, so a broken payload cannot leave only some files in the receive folder.
 - The automatic Moonlight screen drop overlay now detects file-promise drags too, so source apps that create files on drop can still use the whole stream window as the drop target.
 - Mac-to-Windows sends now reject missing or unreadable dropped items before packaging or opening network transfer paths, with clearer permission guidance in the GUI output.
 - The GUI no longer recursively measures dropped folders on the main thread before sending; folder sizes are measured by the background transfer path so large folder drops stay responsive.
