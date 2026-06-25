@@ -899,11 +899,37 @@ function Get-UniqueDestinationPath($destDir, $name, $usedNames) {
     return Join-Path $destDir $candidate
 }
 
+function Remove-StaleReceiveStagingDirs($destDir, [int]$maxAgeHours = 6) {
+    if ([string]::IsNullOrWhiteSpace($destDir) -or -not (Test-Path -LiteralPath $destDir -PathType Container)) {
+        return 0
+    }
+
+    if ($maxAgeHours -lt 1) {
+        $maxAgeHours = 1
+    }
+
+    $cutoff = (Get-Date).AddHours(-$maxAgeHours)
+    $removed = 0
+    foreach ($item in @(Get-ChildItem -LiteralPath $destDir -Force -Directory -Filter ".moonlight-companion-import-*" -ErrorAction SilentlyContinue)) {
+        if ($item.LastWriteTime -ge $cutoff) {
+            continue
+        }
+
+        try {
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+            $removed++
+        } catch {}
+    }
+
+    return $removed
+}
+
 function Copy-PayloadFilesAtomically($payloadDir, $items, $destDir) {
     New-Item -ItemType Directory -Force -Path $destDir -ErrorAction Stop | Out-Null
     if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
         throw "receive folder path is not a directory: $destDir"
     }
+    Remove-StaleReceiveStagingDirs $destDir | Out-Null
     $usedNames = New-Object 'System.Collections.Generic.HashSet[string]'
     $planned = @()
     foreach ($item in $items) {
@@ -1456,6 +1482,11 @@ $loopSleepMs = if ($enableClipboardTcp) { 50 } else { $intervalMs }
 Write-AgentLog "started"
 
 try {
+    $removedStagingDirs = Remove-StaleReceiveStagingDirs $transferWindowsDir
+    if ($removedStagingDirs -gt 0) {
+        Write-AgentLog ("removed {0} stale Windows receive staging folder(s)" -f $removedStagingDirs)
+    }
+
     if ($enableClipboardTcp) {
         $clipboardTcpListener = Start-ClipboardTcpListener $clipboardMacToWindowsTcpPort
     } else {

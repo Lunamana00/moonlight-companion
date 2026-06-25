@@ -289,6 +289,71 @@ verify_windows_agent_file_import_guard() {
   fi
 }
 
+verify_windows_agent_receive_staging_cleanup() {
+  local script encoded output
+  script="$(cat <<'POWERSHELL'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
+$agent = Join-Path $dir 'windows-clipboard-agent.ps1'
+$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'
+. $agent
+$ErrorActionPreference = 'Stop'
+$root = Join-Path $dir ('agent-staging-cleanup-' + [guid]::NewGuid().ToString('N'))
+$receive = Join-Path $root 'receive'
+New-Item -ItemType Directory -Force -Path $root, $receive | Out-Null
+try {
+    $stale = Join-Path $receive '.moonlight-companion-import-stale'
+    $fresh = Join-Path $receive '.moonlight-companion-import-fresh'
+    New-Item -ItemType Directory -Force -Path $stale, $fresh | Out-Null
+    Set-Content -LiteralPath (Join-Path $stale 'partial.txt') -Value 'old interrupted staging' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $fresh 'partial.txt') -Value 'fresh active staging' -Encoding UTF8
+    (Get-Item -LiteralPath $stale -Force).LastWriteTime = (Get-Date).AddHours(-8)
+    (Get-Item -LiteralPath $fresh -Force).LastWriteTime = Get-Date
+
+    $removed = Remove-StaleReceiveStagingDirs $receive 6
+    if ($removed -ne 1) { Write-Output "removed_unexpected=$removed"; exit 1 }
+    if (Test-Path -LiteralPath $stale) { Write-Output 'stale_staging_left'; exit 1 }
+    if (-not (Test-Path -LiteralPath $fresh -PathType Container)) { Write-Output 'fresh_staging_removed'; exit 1 }
+
+    $staleBeforeImport = Join-Path $receive '.moonlight-companion-import-before-copy'
+    New-Item -ItemType Directory -Force -Path $staleBeforeImport | Out-Null
+    Set-Content -LiteralPath (Join-Path $staleBeforeImport 'partial.txt') -Value 'old interrupted staging before copy' -Encoding UTF8
+    (Get-Item -LiteralPath $staleBeforeImport -Force).LastWriteTime = (Get-Date).AddHours(-8)
+
+    $source = Join-Path $root 'source.txt'
+    $payload = Join-Path $root 'payload'
+    Set-Content -LiteralPath $source -Value 'valid cleanup import payload' -Encoding UTF8
+    New-Item -ItemType Directory -Force -Path $payload | Out-Null
+    $manifest = Export-FileDropPathsPayload $payload @($source)
+    $targets = @(Copy-PayloadFilesAtomically $payload @($manifest.files) $receive)
+    if ($targets.Count -ne 1) { Write-Output 'target_count_unexpected'; exit 1 }
+    if (Test-Path -LiteralPath $staleBeforeImport) { Write-Output 'pre_import_staging_left'; exit 1 }
+    if (-not (Test-Path -LiteralPath $fresh -PathType Container)) { Write-Output 'fresh_staging_removed_by_import'; exit 1 }
+
+    Write-Output 'receive_staging_cleanup=ok'
+} finally {
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue
+}
+POWERSHELL
+)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent receive staging cleanup guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"receive_staging_cleanup=ok"* ]]; then
+    echo "Windows agent receive staging cleanup guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 verify_windows_agent_compress_cleanup() {
   local script encoded output
   script="$(cat <<'POWERSHELL'
@@ -403,6 +468,24 @@ windows_receive_staging_count() {
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+}
+
+write_stale_windows_receive_staging_dir() {
+  local script encoded transfer_dir_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); New-Item -ItemType Directory -Force -Path \$dir | Out-Null; \$stale = Join-Path \$dir '.moonlight-companion-import-stale-direct-test'; Remove-Item -LiteralPath \$stale -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force -Path \$stale | Out-Null; Set-Content -LiteralPath (Join-Path \$stale 'partial.txt') -Value 'stale interrupted direct transfer staging' -Encoding UTF8; \$item = Get-Item -LiteralPath \$stale -Force; \$item.Attributes = \$item.Attributes -bor [System.IO.FileAttributes]::Hidden; \$item.LastWriteTime = (Get-Date).AddHours(-8)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
+remove_windows_receive_staging_artifacts() {
+  local script encoded transfer_dir_literal
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal}); if (Test-Path -LiteralPath \$dir) { Get-ChildItem -LiteralPath \$dir -Force -Directory -Filter '.moonlight-companion-import-*' | Remove-Item -Recurse -Force }"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
 windows_direct_temp_count() {
@@ -768,6 +851,7 @@ cleanup_self_test_artifacts() {
   remove_windows_fallback_zip
   remove_windows_mac_upload_artifacts
   remove_windows_receive_opener_test_script
+  remove_windows_receive_staging_artifacts
   cleanup_windows_self_test_files
 }
 
@@ -783,6 +867,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   verify_windows_agent_settings
   verify_windows_agent_file_drop_export_guard
   verify_windows_agent_file_import_guard
+  verify_windows_agent_receive_staging_cleanup
   verify_windows_agent_compress_cleanup
   echo "Windows agent ready."
 fi
@@ -1018,6 +1103,7 @@ limit_state="${tmp_dir}/mac-to-windows-limit-state.txt"
 limit_config="${tmp_dir}/moonlight-companion-limit.conf"
 printf 'Moonlight Companion payload limit test %s\n' "$stamp" > "$limit_file"
 printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\nMOONLIGHT_TRANSFER_OVERSIZE_DIRECT="yes"\n' "$config" > "$limit_config"
+write_stale_windows_receive_staging_dir
 if ! MOONLIGHT_COMPANION_CONFIG="$limit_config" MOONLIGHT_TRANSFER_RESULT_STATE="$limit_state" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_out" 2>&1; then
   echo "Mac -> Windows oversized payload did not use direct receive-folder transfer." >&2
   cat "$limit_out" >&2
