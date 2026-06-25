@@ -1320,6 +1320,29 @@ if [[ -e "${helper_snapshot_payload}/files" ]]; then
 fi
 echo "Helper set-files metadata id ok."
 
+echo "Testing helper file export source validation..."
+helper_export_guard_valid="${tmp_dir}/helper-export-guard-valid-${stamp}.txt"
+helper_export_guard_missing="${tmp_dir}/helper-export-guard-missing-${stamp}.txt"
+helper_export_guard_payload="${tmp_dir}/helper-export-guard-payload"
+helper_export_guard_out="${tmp_dir}/helper-export-guard-out.txt"
+printf 'Moonlight Companion helper export guard valid file %s\n' "$stamp" > "$helper_export_guard_valid"
+if "$helper" export-paths "$helper_export_guard_payload" "$helper_export_guard_valid" "$helper_export_guard_missing" > "$helper_export_guard_out" 2>&1; then
+  echo "Helper file export unexpectedly accepted a missing source path." >&2
+  cat "$helper_export_guard_out" >&2
+  exit 1
+fi
+if ! grep -Fq "file-drop-unavailable: source path is missing:" "$helper_export_guard_out"; then
+  echo "Helper file export source validation did not report the missing source path." >&2
+  cat "$helper_export_guard_out" >&2
+  exit 1
+fi
+if [[ -e "${helper_export_guard_payload}/manifest.json" || -e "${helper_export_guard_payload}/files" ]]; then
+  echo "Helper file export source validation left a partial payload behind." >&2
+  find "$helper_export_guard_payload" -maxdepth 2 -print >&2 2>/dev/null || true
+  exit 1
+fi
+echo "Helper file export source validation ok."
+
 echo "Testing helper newline filename state encoding..."
 newline_char=$'\n'
 newline_file="${tmp_dir}/moonlight-companion-transfer-test-newline-${stamp}${newline_char}name.txt"

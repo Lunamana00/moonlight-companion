@@ -36,6 +36,7 @@ enum ClipError: Error, CustomStringConvertible {
     case unsupported
     case missingManifest
     case invalidManifest
+    case fileDropUnavailable(String)
     case importFailed(String)
 
     var description: String {
@@ -48,6 +49,8 @@ enum ClipError: Error, CustomStringConvertible {
             return "missing-manifest"
         case .invalidManifest:
             return "invalid-manifest"
+        case .fileDropUnavailable(let message):
+            return "file-drop-unavailable: \(message)"
         case .importFailed(let message):
             return "import-failed: \(message)"
         }
@@ -292,6 +295,37 @@ func uniqueExportFileName(for source: URL, used: inout Set<String>) -> String {
     return candidate
 }
 
+func fileDropSourceUnavailableMessage(_ url: URL) -> String? {
+    guard url.isFileURL else {
+        return "not a file URL: \(url.absoluteString)"
+    }
+
+    let path = url.standardizedFileURL.path
+    var isDirectory: ObjCBool = false
+    guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else {
+        return "source path is missing: \(path)"
+    }
+    guard fm.isReadableFile(atPath: path) else {
+        return "cannot read source path: \(path)"
+    }
+    if isDirectory.boolValue && !fm.isExecutableFile(atPath: path) {
+        return "cannot open source folder: \(path)"
+    }
+    return nil
+}
+
+func validateFileDropSources(_ urls: [URL]) throws {
+    guard !urls.isEmpty else {
+        throw ClipError.unsupported
+    }
+
+    for url in urls {
+        if let message = fileDropSourceUnavailableMessage(url) {
+            throw ClipError.fileDropUnavailable(message)
+        }
+    }
+}
+
 func exportExistingFilesMetadataWithoutCopy(_ urls: [URL]) throws -> Manifest? {
     for source in urls {
         guard source.isFileURL,
@@ -328,41 +362,48 @@ func exportExistingFilesMetadataWithoutCopy(_ urls: [URL]) throws -> Manifest? {
 }
 
 func exportFiles(_ urls: [URL], to dir: URL) throws -> Manifest {
+    try validateFileDropSources(urls)
     let filesDir = dir.appendingPathComponent("files")
     try fm.createDirectory(at: filesDir, withIntermediateDirectories: true)
 
-    var used = Set<String>()
-    var items: [Manifest.Item] = []
-    var hashLines: [String] = []
-    var total: UInt64 = 0
+    do {
+        var used = Set<String>()
+        var items: [Manifest.Item] = []
+        var hashLines: [String] = []
+        var total: UInt64 = 0
 
-    for source in urls {
-        guard source.isFileURL else { continue }
-        var dest = uniqueDestination(for: source, in: filesDir, used: &used)
-        try fm.copyItem(at: source, to: dest)
-        dest = try sanitizePathTreeNames(dest)
+        for source in urls {
+            guard source.isFileURL else { continue }
+            var dest = uniqueDestination(for: source, in: filesDir, used: &used)
+            try fm.copyItem(at: source, to: dest)
+            dest = try sanitizePathTreeNames(dest)
 
-        let values = try dest.resourceValues(forKeys: [.isDirectoryKey])
-        let isDirectory = values.isDirectory == true
-        let bytes = isDirectory ? directoryBytes(dest) : fileBytes(dest)
-        let itemHash = isDirectory ? try hashDirectory(dest) : try hashFile(dest)
-        let relPath = "files/\(dest.lastPathComponent)"
+            let values = try dest.resourceValues(forKeys: [.isDirectoryKey])
+            let isDirectory = values.isDirectory == true
+            let bytes = isDirectory ? directoryBytes(dest) : fileBytes(dest)
+            let itemHash = isDirectory ? try hashDirectory(dest) : try hashFile(dest)
+            let relPath = "files/\(dest.lastPathComponent)"
 
-        total += bytes
-        items.append(Manifest.Item(name: dest.lastPathComponent, path: relPath, isDirectory: isDirectory, bytes: bytes))
-        hashLines.append("\(isDirectory ? "d" : "f"):\(dest.lastPathComponent):\(itemHash)")
+            total += bytes
+            items.append(Manifest.Item(name: dest.lastPathComponent, path: relPath, isDirectory: isDirectory, bytes: bytes))
+            hashLines.append("\(isDirectory ? "d" : "f"):\(dest.lastPathComponent):\(itemHash)")
+        }
+
+        guard !items.isEmpty else {
+            throw ClipError.unsupported
+        }
+
+        let contentHash = sha256Hex(hashLines.sorted().joined(separator: "\n"))
+        return Manifest(version: 2, origin: "mac", kind: "files", id: "files:\(contentHash)", bytes: total, textFile: nil, imageFile: nil, files: items)
+    } catch {
+        try? fm.removeItem(at: filesDir)
+        throw error
     }
-
-    guard !items.isEmpty else {
-        throw ClipError.unsupported
-    }
-
-    let contentHash = sha256Hex(hashLines.sorted().joined(separator: "\n"))
-    return Manifest(version: 2, origin: "mac", kind: "files", id: "files:\(contentHash)", bytes: total, textFile: nil, imageFile: nil, files: items)
 }
 
 func exportFilesForClipboardSet(_ urls: [URL], to dir: URL) throws -> Manifest {
     try ensureCleanDirectory(dir)
+    try validateFileDropSources(urls)
     if let manifest = try exportExistingFilesMetadataWithoutCopy(urls) {
         return manifest
     }

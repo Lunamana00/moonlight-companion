@@ -88,6 +88,8 @@ Receive folders never overwrite an existing file with the same name. Repeated sa
 
 Files received from Windows are marked as the current Mac clipboard state, so the background sync does not immediately echo them back to Windows.
 
+Mac-to-Windows file clipboard exports validate all source file paths before packaging and discard partial payloads after copy failures, so stale Finder file clipboards do not turn into broken partial transfers.
+
 If the TCP channel is unavailable, the fallback polling path keeps the same receive-folder import and file-detail notifications.
 
 The default setting keeps Finder reveal off so received Windows files do not interrupt your current Mac workspace. Use `Reveal Last Mac Receive` or enable `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` when you want Finder to jump to new files automatically.
