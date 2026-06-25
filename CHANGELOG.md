@@ -22,6 +22,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The GUI now records the last confirmed Mac-to-Windows receive id locally and disables `Reveal Last Windows Receive` until that confirmed Windows receive can be targeted.
 - The Companion window no longer force-activates itself on launch by default; `MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH` can opt back into the old foreground behavior.
 - The default Windows-to-Mac receive behavior no longer opens Finder automatically; received files stay in the receive folder, on the Mac clipboard, and available through `Reveal Last Mac Receive`.
+- Existing user settings from before the quiet defaults are migrated so the old Finder reveal default does not keep stealing focus after upgrade.
 - The Mac clipboard sync loop now rechecks for in-flight TCP receives after exporting the local clipboard, closing a race that could echo a just-received Windows file back to Windows.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.

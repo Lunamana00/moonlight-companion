@@ -82,9 +82,24 @@ enum SettingsFile {
             values.merge(parse(url: local)) { _, new in new }
         }
         if FileManager.default.fileExists(atPath: userURL.path) {
-            values.merge(parse(url: userURL)) { _, new in new }
+            let userValues = parse(url: userURL)
+            values.merge(userValues) { _, new in new }
+            applyQuietDefaultMigration(userValues: userValues, values: &values)
         }
         return CompanionSettings(values: values)
+    }
+
+    private static func applyQuietDefaultMigration(userValues: [String: String], values: inout [String: String]) {
+        guard userValues["MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH"] == nil else {
+            return
+        }
+
+        let revealMacDir = userValues["MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if revealMacDir == "yes" {
+            values["MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"] = "no"
+        }
     }
 
     static func parse(url: URL) -> [String: String] {
