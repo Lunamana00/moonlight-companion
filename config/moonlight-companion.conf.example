@@ -39,6 +39,6 @@ MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE="yes"
 MOONLIGHT_TRANSFER_AUTO_PASTE="no"
 MOONLIGHT_TRANSFER_NOTIFY="yes"
 # When enabled, Finder reveals newly received Windows files.
-MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="yes"
+MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="no"
 # When enabled, Explorer opens the Windows receive folder after Mac-to-Windows sends.
 MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR="no"

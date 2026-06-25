@@ -35,7 +35,7 @@ tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
-transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-yes}"
+transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 
 remote_dir=".moonlight-clipboard-sync"
@@ -345,6 +345,13 @@ while true; do
   read_tcp_state
 
   if ! tcp_receive_in_progress && "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
+    sleep 0.05
+    if tcp_receive_in_progress; then
+      read_tcp_state
+      sleep "$interval"
+      continue
+    fi
+
     mac_id="$(payload_id "$mac_meta")"
     mac_kind="$(payload_kind "$mac_meta")"
     mac_bytes="$(payload_bytes "$mac_meta")"

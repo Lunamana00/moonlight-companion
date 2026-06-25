@@ -88,7 +88,7 @@ Files received from Windows are marked as the current Mac clipboard state, so th
 
 If the TCP channel is unavailable, the fallback polling path keeps the same receive-folder import and file-detail notifications.
 
-The default setting enables Finder reveal so newly received Windows files appear immediately on the Mac side.
+The default setting keeps Finder reveal off so received Windows files do not interrupt your current Mac workspace. Use `Reveal Last Mac Receive` or enable `MOONLIGHT_TRANSFER_REVEAL_MAC_DIR` when you want Finder to jump to new files automatically.
 
 Use `Test File Transfer` in the GUI to refresh the Windows agent, start the Mac transfer services, stream the current test step into the status line, create small temporary and empty files, PNG image files, Korean file names, Windows-safe Mac file and folder name conversion, file names with spaces and apostrophes, multi-item selections, nested folders, and empty subfolders, verify both directions, confirm the Mac-to-Windows receive-folder import, check same-name collision handling, and clean up the test payloads without opening Terminal.
 
@@ -200,7 +200,7 @@ MOONLIGHT_TRANSFER_DROP_OVERLAY="yes"
 MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE="yes"
 MOONLIGHT_TRANSFER_AUTO_PASTE="no"
 MOONLIGHT_TRANSFER_NOTIFY="yes"
-MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="yes"
+MOONLIGHT_TRANSFER_REVEAL_MAC_DIR="no"
 MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR="no"
 ```
 
@@ -303,7 +303,7 @@ Transferred file payloads are copied into durable receive folders:
 - macOS default: `~/Downloads/Moonlight Companion`
 - Windows default: `%USERPROFILE%\Downloads\Moonlight Companion`
 
-Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can ask Windows to open the configured receive folder in Explorer or reveal the latest confirmed received item again, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` can open the latest receive result automatically after successful Mac-to-Windows sends, selecting the received item for single-item sends and opening the folder for multi-item sends. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder, keep a latest-receive state for the GUI reveal action, and leave the received files ready to paste in Finder. The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
+Mac-to-Windows drops can be made by dropping onto the Moonlight window overlay, the floating Moonlight drop strip, or the fallback Companion drop target. The GUI can ask Windows to open the configured receive folder in Explorer or reveal the latest confirmed received item again, and `MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR` can open the latest receive result automatically after successful Mac-to-Windows sends, selecting the received item for single-item sends and opening the folder for multi-item sends. Windows-to-Mac file copies notify macOS, can reveal the newly received files in Finder on demand, keep a latest-receive state for the GUI reveal action, and leave the received files ready to paste in Finder. The default payload limit is 50 MiB. This is intentional; very large file clipboard payloads are better moved with a file sync tool.
 
 If Caps Lock Han/Eng switching does not respond, check:
 

@@ -364,7 +364,7 @@ func notifyWindowsFilesReceived(_ imported: [String: String]) {
     }
 
     let detail = receivedFileDetail(imported)
-    let revealEnabled = boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: true)
+    let revealEnabled = boolEnv("MOONLIGHT_TRANSFER_REVEAL_MAC_DIR", defaultValue: false)
 
     if boolEnv("MOONLIGHT_TRANSFER_NOTIFY", defaultValue: true) {
         let body = revealEnabled
