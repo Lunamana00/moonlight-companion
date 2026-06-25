@@ -659,9 +659,52 @@ function Write-KeyValueState(\$path, [string[]]\$lines) {
   Move-Item -LiteralPath \$tmpPath -Destination \$path -Force
 }
 
+function Read-KeyValueState(\$path) {
+  \$state = @{}
+  if (-not (Test-Path -LiteralPath \$path)) { return \$state }
+  Get-Content -LiteralPath \$path -Encoding UTF8 | ForEach-Object {
+    \$index = \$_.IndexOf("=")
+    if (\$index -gt 0) {
+      \$key = \$_.Substring(0, \$index)
+      \$value = \$_.Substring(\$index + 1).TrimEnd([char]13)
+      \$state[\$key] = \$value
+    }
+  }
+  return \$state
+}
+
 function ConvertTo-StateBase64([string]\$value) {
   if (\$null -eq \$value) { return "" }
   return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$value))
+}
+
+function Request-FileDropClipboard([string]\$requestId, [string[]]\$paths) {
+  if (\$null -eq \$paths -or \$paths.Count -le 0) { return \$false }
+  \$requestPath = Join-Path \$remoteDir "direct-clipboard-request.txt"
+  \$responsePath = Join-Path \$remoteDir "direct-clipboard-response.txt"
+  Remove-Item -LiteralPath \$responsePath -Force -ErrorAction SilentlyContinue
+  \$lines = @(
+    "id=\$requestId",
+    "imported_paths=\$(\$paths.Count)"
+  )
+  for (\$i = 0; \$i -lt \$paths.Count; \$i++) {
+    \$lines += "imported_path_\$(\$i + 1)=\$(\$paths[\$i])"
+    \$lines += "imported_path_\$(\$i + 1)_b64=\$(ConvertTo-StateBase64 \$paths[\$i])"
+  }
+  Write-KeyValueState \$requestPath \$lines
+
+  \$deadline = (Get-Date).AddSeconds(5)
+  while ((Get-Date) -lt \$deadline) {
+    if (Test-Path -LiteralPath \$responsePath) {
+      \$response = Read-KeyValueState \$responsePath
+      if ([string]\$response["id"] -eq \$requestId) {
+        return ([string]\$response["clipboard_ready"] -eq "yes")
+      }
+    }
+    Start-Sleep -Milliseconds 50
+  }
+  Remove-Item -LiteralPath \$requestPath -Force -ErrorAction SilentlyContinue
+  return \$false
 }
 
 \$remoteDir = Join-Path \$env:USERPROFILE ".moonlight-clipboard-sync"
@@ -697,6 +740,7 @@ try {
     throw "direct receive-folder transfer copied \$(\$targetPaths.Count) of \$(\$manifestItems.Count) item(s)"
   }
 
+  \$clipboardReady = if (Request-FileDropClipboard \$manifest.id @(\$targetPaths)) { "yes" } else { "no" }
   \$archiveHash = (Get-FileHash -LiteralPath \$zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
   \$fileCount = \$manifestItems.Count
   \$lines = @(
@@ -706,7 +750,7 @@ try {
     "bytes=\$(\$manifest.bytes)",
     "files=\$fileCount",
     "imported_paths=\$(\$targetPaths.Count)",
-    "clipboard_ready=no",
+    "clipboard_ready=\$clipboardReady",
     "direct_transfer=yes"
   )
 
@@ -772,7 +816,7 @@ cleanup_remote_direct_script() {
 
 cleanup_remote_direct_artifacts() {
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-    "cmd.exe /c del /Q \"${remote_direct_zip_cmd}\" \"${remote_direct_tmp_cmd}\" \"${remote_direct_script_cmd}\" 2>nul & rmdir /S /Q \"${remote_dir}\\direct-mac-payload\" 2>nul" >/dev/null 2>&1 || true
+    "cmd.exe /c del /Q \"${remote_direct_zip_cmd}\" \"${remote_direct_tmp_cmd}\" \"${remote_direct_script_cmd}\" \"${remote_dir}\\direct-clipboard-request.txt\" \"${remote_dir}\\direct-clipboard-response.txt\" 2>nul & rmdir /S /Q \"${remote_dir}\\direct-mac-payload\" 2>nul" >/dev/null 2>&1 || true
 }
 
 if [[ "$(normalize_yes_no "${MOONLIGHT_SEND_FILES_ACK_PATH_STATE_SELF_TEST:-no}")" == "yes" ]]; then
@@ -837,6 +881,7 @@ if [[ "$oversized_payload" == "yes" ]]; then
   imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
   direct_state_id="$(printf '%s\n' "$windows_import_state" | state_value id)"
   direct_transfer="$(printf '%s\n' "$windows_import_state" | state_value direct_transfer)"
+  clipboard_ready="$(printf '%s\n' "$windows_import_state" | state_value clipboard_ready)"
   if [[ "$direct_state_id" != "$payload_id" ||
         "$direct_transfer" != "yes" ||
         ! "$imported_paths" =~ ^[0-9]+$ ||
@@ -853,13 +898,17 @@ if [[ "$oversized_payload" == "yes" ]]; then
   if [[ -n "$imported_summary" ]]; then
     imported_suffix=": ${imported_summary}"
   fi
-  clipboard_ready="no"
   write_transfer_result_state
   log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}; direct receive-folder copy"
-  if [[ "${imported_paths:-0}" == "1" ]]; then
-    printf 'sent oversized %s payload (%sB) via %s; Windows copied 1 item to the receive folder%s; not placed on the Windows clipboard\n' "${kind:-files}" "$bytes" "$transport" "$imported_suffix"
+  if [[ "$(normalize_yes_no "$clipboard_ready")" == "yes" ]]; then
+    clipboard_suffix="; ready on the Windows clipboard"
   else
-    printf 'sent oversized %s payload (%sB) via %s; Windows copied %s items to the receive folder%s; not placed on the Windows clipboard\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}" "$imported_suffix"
+    clipboard_suffix="; not placed on the Windows clipboard"
+  fi
+  if [[ "${imported_paths:-0}" == "1" ]]; then
+    printf 'sent oversized %s payload (%sB) via %s; Windows copied 1 item to the receive folder%s%s\n' "${kind:-files}" "$bytes" "$transport" "$imported_suffix" "$clipboard_suffix"
+  else
+    printf 'sent oversized %s payload (%sB) via %s; Windows copied %s items to the receive folder%s%s\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}" "$imported_suffix" "$clipboard_suffix"
   fi
   exit 0
 fi

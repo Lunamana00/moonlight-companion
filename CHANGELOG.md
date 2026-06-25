@@ -24,6 +24,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Background Mac-to-Windows file clipboard sync now records confirmed TCP receive paths for the GUI's latest Windows receive action, and the open GUI watches that state so files copied from Finder are easier to reveal later.
 - The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
+- Oversized direct Mac-to-Windows transfers now ask the Windows GUI agent to put the received file paths onto the Windows clipboard after the receive-folder copy, so large drops can still be pasted when clipboard handoff succeeds.
 - Oversized background direct Mac-to-Windows file clipboard sends now leave the clipboard item retryable after a transient direct-transfer failure, so a temporary SSH/SCP hiccup does not require copying the file again.
 - The file transfer self-test now verifies the background Mac-to-Windows file clipboard path, including the Windows receive-folder copy and latest Windows receive state written from the TCP acknowledgement.
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
@@ -54,7 +55,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Automatic Moonlight drop overlays now avoid forced frontmost ordering, while manually shown overlays can still be brought above the stream when requested.
 - Automatic paste after Moonlight window or strip drops no longer brings Moonlight forward by default; `MOONLIGHT_TRANSFER_ACTIVATE_MOONLIGHT_FOR_PASTE` can opt back into the old focus-changing paste behavior.
 - The GUI now revalidates the latest Windows-to-Mac received file paths while it is open, disabling reveal/copy actions when those files have been moved or deleted.
-- Oversized Mac-to-Windows drops can now bypass the clipboard and copy directly into the Windows receive folder over SSH, with GUI state marking that auto-paste is unavailable for that direct path.
+- Oversized Mac-to-Windows drops can now bypass the ZIP clipboard payload limit and copy directly into the Windows receive folder over SSH, with GUI state reporting whether the Windows agent put the received paths back onto the Windows clipboard.
 - Oversized Windows-to-Mac file clipboards now prepare an SSH fallback ZIP instead of being silently skipped, so the Mac sync agent can still pull large received files into the Mac receive folder.
 - Windows-to-Mac SSH fallback imports now retry transient ZIP/import failures and remove repeatedly failing stale fallback ZIPs instead of letting them stop or wedge the Mac sync loop.
 - macOS fallback polling now removes hash-verified consumed or stale Windows-to-Mac fallback ZIPs from the Windows sync folder, preventing duplicate receives after the Mac sync service restarts.

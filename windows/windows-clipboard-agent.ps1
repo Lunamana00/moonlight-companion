@@ -9,6 +9,8 @@ $macZip = Join-Path $dir "mac-to-windows.zip"
 $windowsZip = Join-Path $dir "windows-to-mac.zip"
 $windowsTmpZip = Join-Path $dir "windows-to-mac.tmp.zip"
 $macImportState = Join-Path $dir "mac-to-windows-import-state.txt"
+$directClipboardRequest = Join-Path $dir "direct-clipboard-request.txt"
+$directClipboardResponse = Join-Path $dir "direct-clipboard-response.txt"
 $exportRoot = Join-Path $dir "windows-payloads"
 $importDir = Join-Path $dir "imported-mac-payload"
 $normalizedDir = Join-Path $dir "windows-normalized-payload"
@@ -733,9 +735,106 @@ function Write-KeyValueState($path, [string[]]$lines) {
     Move-Item -LiteralPath $tmpPath -Destination $path -Force
 }
 
+function Read-KeyValueState($path) {
+    $state = @{}
+    if (-not (Test-Path -LiteralPath $path)) { return $state }
+    Get-Content -LiteralPath $path -Encoding UTF8 | ForEach-Object {
+        $index = $_.IndexOf("=")
+        if ($index -gt 0) {
+            $key = $_.Substring(0, $index)
+            $value = $_.Substring($index + 1).TrimEnd([char]13)
+            $state[$key] = $value
+        }
+    }
+    return $state
+}
+
 function ConvertTo-StateBase64([string]$value) {
     if ($null -eq $value) { return "" }
     return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($value))
+}
+
+function ConvertFrom-StateBase64([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return "" }
+    try {
+        return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($value))
+    } catch {
+        return ""
+    }
+}
+
+function Set-FileDropClipboardPaths([string[]]$paths) {
+    if ($null -eq $paths -or $paths.Count -le 0) { return $false }
+
+    $collection = New-Object System.Collections.Specialized.StringCollection
+    foreach ($path in @($paths)) {
+        if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) {
+            return $false
+        }
+        [void]$collection.Add($path)
+    }
+
+    [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
+    if (-not [System.Windows.Forms.Clipboard]::ContainsFileDropList()) {
+        return $false
+    }
+
+    $readBack = @([System.Windows.Forms.Clipboard]::GetFileDropList())
+    if ($readBack.Count -ne $paths.Count) { return $false }
+    foreach ($path in @($paths)) {
+        if ($readBack -notcontains $path) { return $false }
+    }
+    return $true
+}
+
+function Invoke-DirectClipboardRequest {
+    if (-not (Test-Path -LiteralPath $directClipboardRequest)) { return }
+
+    $state = Read-KeyValueState $directClipboardRequest
+    $requestId = [string]$state["id"]
+    if ([string]::IsNullOrWhiteSpace($requestId)) {
+        Remove-Item -LiteralPath $directClipboardRequest -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    $paths = @()
+    $pathCount = 0
+    [void][int]::TryParse([string]$state["imported_paths"], [ref]$pathCount)
+    if ($pathCount -gt 0) {
+        for ($i = 1; $i -le $pathCount; $i++) {
+            $path = ConvertFrom-StateBase64 ([string]$state["imported_path_${i}_b64"])
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                $path = [string]$state["imported_path_${i}"]
+            }
+            if (-not [string]::IsNullOrWhiteSpace($path)) {
+                $paths += $path
+            }
+        }
+    }
+
+    $ready = "no"
+    $reason = ""
+    try {
+        if ($paths.Count -eq $pathCount -and $paths.Count -gt 0 -and (Set-FileDropClipboardPaths @($paths))) {
+            $ready = "yes"
+        } else {
+            $reason = "clipboard-readback-mismatch"
+        }
+    } catch {
+        $reason = $_.Exception.Message
+    }
+
+    $lines = @(
+        "id=$requestId",
+        "clipboard_ready=$ready",
+        "imported_paths=$($paths.Count)"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($reason)) {
+        $lines += "reason=$reason"
+    }
+    Write-KeyValueState $directClipboardResponse $lines
+    Remove-Item -LiteralPath $directClipboardRequest -Force -ErrorAction SilentlyContinue
+    Write-AgentLog ("Direct Mac -> Windows clipboard handoff {0} for {1} path(s)" -f $ready, $paths.Count)
 }
 
 function Write-MacImportState($manifest, $archiveHash) {
@@ -1619,6 +1718,8 @@ try {
                     Invoke-CapsLockHangulRequest $capsLockHangulRequestId
                 }
             }
+
+            Invoke-DirectClipboardRequest
 
             $now = Get-Date
             if (Test-Path -LiteralPath $macZip) {

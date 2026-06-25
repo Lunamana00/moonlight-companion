@@ -2335,8 +2335,8 @@ exit "${status}"
                             detail += " Could not send Ctrl+V to Moonlight."
                         }
                     } else if pasteAfterSend && importConfirmed {
-                        pasteSummary = "Copied to the Windows receive folder; paste is unavailable for direct oversized transfers."
-                        detail += " Skipped Ctrl+V because this transfer went directly to the Windows receive folder."
+                        pasteSummary = "Copied to the Windows receive folder; Windows clipboard handoff was unavailable."
+                        detail += " Skipped Ctrl+V because Windows clipboard handoff was unavailable."
                     } else if pasteAfterSend {
                         pasteSummary = "Windows import confirmation is pending; paste manually after it lands."
                         detail += " Skipped Ctrl+V because Windows import confirmation is pending."

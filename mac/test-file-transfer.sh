@@ -672,7 +672,7 @@ remove_windows_receive_staging_artifacts() {
 
 windows_direct_temp_count() {
   local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp'), (Join-Path \$dir 'mac-to-windows-direct.ps1')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp'), (Join-Path \$dir 'mac-to-windows-direct.ps1'), (Join-Path \$dir 'direct-clipboard-request.txt')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
@@ -680,7 +680,7 @@ windows_direct_temp_count() {
 
 write_stale_windows_direct_temp_artifacts() {
   local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; New-Item -ItemType Directory -Force -Path (Join-Path \$dir 'direct-mac-payload') | Out-Null; Set-Content -LiteralPath (Join-Path \$dir 'direct-mac-payload\\partial.txt') -Value 'stale direct payload' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Value 'stale direct zip' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Value 'stale direct tmp' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Value 'stale direct script' -Encoding UTF8"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; New-Item -ItemType Directory -Force -Path (Join-Path \$dir 'direct-mac-payload') | Out-Null; Set-Content -LiteralPath (Join-Path \$dir 'direct-mac-payload\\partial.txt') -Value 'stale direct payload' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Value 'stale direct zip' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Value 'stale direct tmp' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Value 'stale direct script' -Encoding UTF8; Set-Content -LiteralPath (Join-Path \$dir 'direct-clipboard-request.txt') -Value 'stale direct clipboard request' -Encoding UTF8"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
@@ -688,7 +688,7 @@ write_stale_windows_direct_temp_artifacts() {
 
 remove_windows_direct_temp_artifacts() {
   local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'direct-clipboard-request.txt') -Force"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
@@ -1457,12 +1457,12 @@ if ! MOONLIGHT_COMPANION_CONFIG="$limit_config" MOONLIGHT_TRANSFER_RESULT_STATE=
   cat "$limit_out" >&2
   exit 1
 fi
-if ! grep -Fq "sent oversized" "$limit_out" || ! grep -Fq "not placed on the Windows clipboard" "$limit_out"; then
+if ! grep -Fq "sent oversized" "$limit_out" || ! grep -Fq "ready on the Windows clipboard" "$limit_out"; then
   echo "Mac -> Windows oversized payload did not explain the direct receive-folder fallback clearly." >&2
   cat "$limit_out" >&2
   exit 1
 fi
-if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "direct-ssh" || "$(meta_value clipboard_ready "$limit_state")" != "no" ]]; then
+if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "direct-ssh" || "$(meta_value clipboard_ready "$limit_state")" != "yes" ]]; then
   echo "Mac -> Windows oversized payload did not write direct-transfer GUI state." >&2
   [[ -f "$limit_state" ]] && cat "$limit_state" >&2
   exit 1
@@ -1522,7 +1522,7 @@ if ! grep -Fq "sent oversized" "$limit_multi_out" || ! grep -Fq "Windows copied 
   exit 1
 fi
 if [[ "$(meta_value confirmation "$limit_multi_state")" != "direct-ssh" ||
-      "$(meta_value clipboard_ready "$limit_multi_state")" != "no" ||
+      "$(meta_value clipboard_ready "$limit_multi_state")" != "yes" ||
       "$(meta_value imported_paths "$limit_multi_state")" != "2" ]]; then
   echo "Mac -> Windows oversized multi-item payload did not write complete direct-transfer GUI state." >&2
   [[ -f "$limit_multi_state" ]] && cat "$limit_multi_state" >&2
@@ -1790,7 +1790,7 @@ if ! wait_for_latest_windows_receive_state_id "$m2w_clipboard_limit_id"; then
 fi
 if [[ "$(meta_value kind "$latest_windows_receive_state")" != "files" ||
       "$(meta_value confirmation "$latest_windows_receive_state")" != "direct-ssh" ||
-      "$(meta_value clipboard_ready "$latest_windows_receive_state")" != "no" ||
+      "$(meta_value clipboard_ready "$latest_windows_receive_state")" != "yes" ||
       "$(meta_value imported_paths "$latest_windows_receive_state")" != "1" ]]; then
   write_mac_clipboard_suspend_state
   refresh_mac_transfer_services_with_config "$config"
