@@ -18,6 +18,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Mac clipboard helper import/export calls now have a bounded timeout in both the polling sync loop and TCP receiver, so a stuck clipboard or file operation cannot wedge later transfers.
 - Windows clipboard TCP receive sockets now use bounded read/write timeouts, preventing half-open Mac-to-Windows TCP sends from blocking later transfers.
 - Latest receive path state now includes base64 path fields on both Mac and Windows, making reveal/copy actions more resilient while staying compatible with older plain-path state files.
+- Mac receive state readers now prefer base64 file path/name fields and keep plain state lines single-line, preserving exact paths for unusual macOS file names without corrupting later reveal/copy actions.
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
 - The file transfer self-test now verifies Windows-to-Mac SSH fallback multi-item pulls, including folder contents, empty nested folders, latest receive state, and loop-prevention.
 - Oversized direct Mac-to-Windows sends now clean stale direct-transfer artifacts before upload and after upload/setup failures, making immediate retry safer after an interrupted SSH/SCP step.

@@ -148,6 +148,20 @@ verify_mac_helper_timeout() {
   fi
 }
 
+verify_tcp_b64_state_self_test() {
+  local output
+  if ! output="$(swift "${script_dir}/mooncliptcp.swift" self-test-b64-state 2>&1)"; then
+    echo "Mac clipboard TCP b64 state self-test failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"b64_state=ok"* ]]; then
+    echo "Mac clipboard TCP b64 state self-test output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -781,6 +795,21 @@ decode_b64_value() {
   printf '%s' "$value" | /usr/bin/base64 -D 2>/dev/null || true
 }
 
+meta_path_value() {
+  local key="$1"
+  local path="$2"
+  local encoded decoded
+  encoded="$(meta_value "${key}_b64" "$path")"
+  if [[ -n "$encoded" ]]; then
+    decoded="$(decode_b64_value "$encoded")"
+    if [[ -n "$decoded" ]]; then
+      printf '%s\n' "$decoded"
+      return 0
+    fi
+  fi
+  meta_value "$key" "$path"
+}
+
 update_receive_state_normalized_id() {
   local restored_id="$1"
   local tmp_state="${tcp_state}.tmp"
@@ -807,7 +836,7 @@ clipboard_file_paths_from_meta() {
   count="$(meta_value file_paths "$meta_path")"
   [[ "$count" =~ ^[0-9]+$ ]] || return 0
   for ((index = 1; index <= count; index++)); do
-    path="$(meta_value "file_path_${index}" "$meta_path")"
+    path="$(meta_path_value "file_path_${index}" "$meta_path")"
     [[ -n "$path" ]] && printf '%s\n' "$path"
   done
 }
@@ -927,6 +956,7 @@ cleanup_self_test_artifacts() {
 trap cleanup_self_test_artifacts EXIT
 
 verify_mac_helper_timeout
+verify_tcp_b64_state_self_test
 save_clipboard_snapshot
 write_mac_clipboard_suspend_state
 write_transfer_quiet_state
@@ -1091,6 +1121,30 @@ if [[ -e "${helper_snapshot_payload}/files" ]]; then
   exit 1
 fi
 echo "Helper set-files metadata id ok."
+
+echo "Testing helper newline filename state encoding..."
+newline_char=$'\n'
+newline_file="${tmp_dir}/moonlight-companion-transfer-test-newline-${stamp}${newline_char}name.txt"
+newline_payload="${tmp_dir}/helper-newline-payload"
+newline_meta="${tmp_dir}/helper-newline-meta.txt"
+printf 'Moonlight Companion newline filename state test %s\n' "$stamp" > "$newline_file"
+"$helper" set-files "$newline_payload" "$newline_file" > "$newline_meta"
+newline_expected_path="$(swift -e 'import Foundation; print(URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path)' "$newline_file")"
+newline_expected_name="$(basename "$newline_file")"
+newline_expected_path_b64="$(printf '%s' "$newline_expected_path" | /usr/bin/base64 | tr -d '\n')"
+newline_expected_name_b64="$(printf '%s' "$newline_expected_name" | /usr/bin/base64 | tr -d '\n')"
+if [[ "$(meta_value file_path_1_b64 "$newline_meta")" != "$newline_expected_path_b64" ||
+      "$(meta_value file_name_1_b64 "$newline_meta")" != "$newline_expected_name_b64" ]]; then
+  echo "Helper newline filename state did not preserve exact path/name in b64 fields." >&2
+  cat "$newline_meta" >&2
+  exit 1
+fi
+if grep -Fqx "name.txt" "$newline_meta"; then
+  echo "Helper newline filename state leaked a raw continuation line." >&2
+  cat "$newline_meta" >&2
+  exit 1
+fi
+echo "Helper newline filename state encoding ok."
 
 echo "Testing helper empty clipboard snapshot..."
 empty_payload="${tmp_dir}/empty-clipboard-payload"

@@ -448,15 +448,34 @@ func transferUIQuiet(runtimeDir: String) -> Bool {
     return Darwin.kill(pid, 0) == 0 || errno == EPERM
 }
 
+func decodedStateValue(_ value: String?) -> String? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !value.isEmpty,
+          let data = Data(base64Encoded: value),
+          let decoded = String(data: data, encoding: .utf8) else {
+        return nil
+    }
+    return decoded
+}
+
+func importedStateValue(_ imported: [String: String], key: String) -> String? {
+    if let decoded = decodedStateValue(imported["\(key)_b64"]), !decoded.isEmpty {
+        return decoded
+    }
+    let raw = imported[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return raw.isEmpty ? nil : raw
+}
+
 func importedFilePaths(_ imported: [String: String]) -> [String] {
     let count = Int(imported["file_paths"] ?? "") ?? 0
     guard count > 0 else {
         return []
     }
     return (1...count).compactMap { index in
-        let rawPath = imported["file_path_\(index)"] ?? ""
-        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : NSString(string: trimmed).expandingTildeInPath
+        guard let rawPath = importedStateValue(imported, key: "file_path_\(index)") else {
+            return nil
+        }
+        return NSString(string: rawPath).expandingTildeInPath
     }
 }
 
@@ -467,16 +486,13 @@ func importedFileNames(_ imported: [String: String]) -> [String] {
     }
 
     return (1...count).compactMap { index in
-        if let rawName = imported["file_name_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !rawName.isEmpty {
+        if let rawName = importedStateValue(imported, key: "file_name_\(index)") {
             return rawName.precomposedStringWithCanonicalMapping
         }
-        let rawPath = imported["file_path_\(index)"] ?? ""
-        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard let rawPath = importedStateValue(imported, key: "file_path_\(index)") else {
             return nil
         }
-        let name = URL(fileURLWithPath: trimmed).lastPathComponent
+        let name = URL(fileURLWithPath: rawPath).lastPathComponent
         return name.isEmpty ? "file" : name.precomposedStringWithCanonicalMapping
     }
 }
@@ -563,7 +579,9 @@ func cleanDirectory(_ path: String) throws {
 
 func writeState(path: String, values: [String: String]) throws {
     let tmp = "\(path).tmp"
-    let text = values.keys.sorted().map { "\($0)=\(values[$0] ?? "")" }.joined(separator: "\n") + "\n"
+    let text = values.keys.sorted()
+        .map { "\($0)=\(stateLineValue(values[$0] ?? ""))" }
+        .joined(separator: "\n") + "\n"
     try text.write(toFile: tmp, atomically: true, encoding: .utf8)
     if fm.fileExists(atPath: path) {
         try fm.removeItem(atPath: path)
@@ -573,6 +591,12 @@ func writeState(path: String, values: [String: String]) throws {
 
 func base64StateValue(_ value: String) -> String {
     Data(value.utf8).base64EncodedString()
+}
+
+func stateLineValue(_ value: String) -> String {
+    value
+        .replacingOccurrences(of: "\r", with: " ")
+        .replacingOccurrences(of: "\n", with: " ")
 }
 
 func receiveStateValues(
@@ -592,17 +616,66 @@ func receiveStateValues(
     ]
 
     for (key, value) in imported {
-        if key.hasPrefix("file_path_"), !key.hasSuffix("_b64") {
-            values[key] = value
-            values["\(key)_b64"] = base64StateValue(value)
-        } else if key.hasPrefix("file_name_"), !key.hasSuffix("_b64") {
-            values[key] = value
-            values["\(key)_b64"] = base64StateValue(value)
-        } else if key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
+        if key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
             values[key] = value
         }
     }
+    for (key, value) in imported where (key.hasPrefix("file_path_") || key.hasPrefix("file_name_")) && !key.hasSuffix("_b64") {
+        let encodedKey = "\(key)_b64"
+        if values[encodedKey]?.isEmpty != false {
+            values[encodedKey] = base64StateValue(value)
+        }
+    }
     return values
+}
+
+func runB64StateSelfTest() throws {
+    let exactPath = "/tmp/moonlight-companion-line\nbreak.txt"
+    let exactName = "line\nbreak.txt"
+    let pathB64 = base64StateValue(exactPath)
+    let nameB64 = base64StateValue(exactName)
+    let imported = [
+        "bytes": "1",
+        "files": "1",
+        "file_paths": "1",
+        "file_path_1": "/tmp/plain.txt",
+        "file_path_1_b64": pathB64,
+        "file_name_1": "plain.txt",
+        "file_name_1_b64": nameB64,
+        "id": "files:self-test",
+        "kind": "files"
+    ]
+
+    guard importedFilePaths(imported) == [exactPath] else {
+        throw ClipTcpError.protocolError("b64 path was not preferred")
+    }
+    guard importedFileNames(imported) == [exactName] else {
+        throw ClipTcpError.protocolError("b64 name was not preferred")
+    }
+
+    let state = receiveStateValues(
+        imported: imported,
+        archiveHash: "hash",
+        normalizedID: "normalized",
+        windowsID: "windows"
+    )
+    guard state["file_path_1_b64"] == pathB64,
+          state["file_name_1_b64"] == nameB64 else {
+        throw ClipTcpError.protocolError("explicit b64 state was overwritten")
+    }
+
+    let statePath = "\(NSTemporaryDirectory())/mooncliptcp-b64-state-\(UUID().uuidString).txt"
+    defer {
+        try? fm.removeItem(atPath: statePath)
+    }
+    try writeState(path: statePath, values: ["raw": "line\nbreak", "raw_b64": base64StateValue("line\nbreak")])
+    let stateText = try String(contentsOfFile: statePath, encoding: .utf8)
+    guard stateText.contains("raw=line break\n"),
+          !stateText.contains("raw=line\nbreak\n") else {
+        throw ClipTcpError.protocolError("raw state value was not kept single-line")
+    }
+
+    print("b64_state=ok")
 }
 
 func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64, logPath: String) throws {
@@ -708,6 +781,9 @@ do {
     guard CommandLine.arguments.count >= 2 else { throw ClipTcpError.usage }
     let command = CommandLine.arguments[1]
     switch command {
+    case "self-test-b64-state":
+        guard CommandLine.arguments.count == 2 else { throw ClipTcpError.usage }
+        try runB64StateSelfTest()
     case "send":
         guard CommandLine.arguments.count == 5 else { throw ClipTcpError.usage }
         if let ack = try sendPayload(

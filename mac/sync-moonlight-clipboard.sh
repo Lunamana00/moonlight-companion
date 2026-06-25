@@ -97,28 +97,78 @@ cleanup_stale_sync_tmp_dirs() {
   find "$root" -maxdepth 1 -type d -name 'moonlight-clipboard-sync.*' -mmin +360 -exec rm -rf {} + 2>/dev/null || true
 }
 
+payload_value() {
+  local key="$1"
+  local path="$2"
+  awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
+}
+
 payload_id() {
-  awk -F= '/^id=/{print $2; exit}' "$1"
+  payload_value id "$1"
 }
 
 payload_kind() {
-  awk -F= '/^kind=/{print $2; exit}' "$1"
+  payload_value kind "$1"
 }
 
 payload_bytes() {
-  awk -F= '/^bytes=/{print $2; exit}' "$1"
+  payload_value bytes "$1"
 }
 
 payload_files() {
-  awk -F= '/^files=/{print $2; exit}' "$1"
+  payload_value files "$1"
+}
+
+decode_state_b64() {
+  local encoded="$1"
+  [[ -n "$encoded" ]] || return 0
+  printf '%s' "$encoded" | /usr/bin/base64 -D 2>/dev/null || true
+}
+
+payload_state_value() {
+  local key="$1"
+  local path="$2"
+  local encoded value
+  encoded="$(payload_value "${key}_b64" "$path")"
+  if [[ -n "$encoded" ]]; then
+    value="$(decode_state_b64 "$encoded")"
+    if [[ -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+  payload_value "$key" "$path"
 }
 
 payload_file_paths() {
-  awk -F= '$1 ~ /^file_path_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
+  local path="$1"
+  local count index value
+  count="$(payload_value file_paths "$path")"
+  if [[ "$count" =~ ^[0-9]+$ ]]; then
+    for ((index = 1; index <= count; index++)); do
+      value="$(payload_state_value "file_path_${index}" "$path")"
+      [[ -n "$value" ]] && printf '%s\n' "$value"
+    done
+    return 0
+  fi
+
+  awk -F= '$1 ~ /^file_path_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$path"
 }
 
 payload_manifest_file_names() {
-  awk -F= '$1 ~ /^file_name_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$1"
+  local path="$1"
+  local count index value
+  count="$(payload_value file_paths "$path")"
+  [[ "$count" =~ ^[0-9]+$ ]] || count="$(payload_value files "$path")"
+  if [[ "$count" =~ ^[0-9]+$ ]]; then
+    for ((index = 1; index <= count; index++)); do
+      value="$(payload_state_value "file_name_${index}" "$path")"
+      [[ -n "$value" ]] && printf '%s\n' "$value"
+    done
+    return 0
+  fi
+
+  awk -F= '$1 ~ /^file_name_[0-9]+$/ {print substr($0, index($0, "=") + 1)}' "$path"
 }
 
 payload_file_names() {
@@ -192,7 +242,7 @@ file_hash() {
 state_value() {
   local key="$1"
   local path="$2"
-  awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
+  payload_value "$key" "$path"
 }
 
 write_windows_receive_state() {

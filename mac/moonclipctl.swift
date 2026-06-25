@@ -562,6 +562,12 @@ func setFileClipboard(_ urls: [URL]) throws {
     }
 }
 
+func stateLineValue(_ value: String) -> String {
+    value
+        .replacingOccurrences(of: "\r", with: " ")
+        .replacingOccurrences(of: "\n", with: " ")
+}
+
 func expandedPath(_ value: String) -> String {
     let nsValue = value as NSString
     return nsValue.expandingTildeInPath
@@ -656,9 +662,9 @@ func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {
         for (index, url) in fileURLs.enumerated() {
             let path = url.path
             let name = url.lastPathComponent.precomposedStringWithCanonicalMapping
-            print("file_path_\(index + 1)=\(path)")
+            print("file_path_\(index + 1)=\(stateLineValue(path))")
             print("file_path_\(index + 1)_b64=\(Data(path.utf8).base64EncodedString())")
-            print("file_name_\(index + 1)=\(name)")
+            print("file_name_\(index + 1)=\(stateLineValue(name))")
             print("file_name_\(index + 1)_b64=\(Data(name.utf8).base64EncodedString())")
         }
     }
