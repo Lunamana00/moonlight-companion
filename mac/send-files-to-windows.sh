@@ -100,6 +100,38 @@ format_bytes() {
   '
 }
 
+path_bytes() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    find "$path" -type f -exec stat -f "%z" {} + 2>/dev/null |
+      awk '{ total += $1 } END { printf "%d\n", total + 0 }'
+  elif [[ -f "$path" ]]; then
+    stat -f "%z" "$path" 2>/dev/null || printf '0\n'
+  else
+    printf '0\n'
+  fi
+}
+
+source_payload_bytes() {
+  local total=0 bytes path
+  for path in "$@"; do
+    bytes="$(path_bytes "$path")"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes="0"
+    total=$((total + bytes))
+  done
+  printf '%s\n' "$total"
+}
+
+reject_oversized_payload() {
+  local payload_bytes="$1"
+  local bytes_text max_bytes_text
+  bytes_text="$(format_bytes "$payload_bytes")"
+  max_bytes_text="$(format_bytes "$MOONLIGHT_CLIPBOARD_MAX_BYTES")"
+  echo "payload too large: ${bytes_text} exceeds the ${max_bytes_text} clipboard transfer limit. Split the transfer or use a file sync tool for large files." >&2
+  log "skip File drop Mac -> Windows ${kind:-files} (${payload_bytes}B); limit is ${MOONLIGHT_CLIPBOARD_MAX_BYTES}B"
+  exit 1
+}
+
 payload_value() {
   local key="$1"
   local path="$2"
@@ -324,6 +356,13 @@ for path in "$@"; do
   fi
 done
 
+MOONLIGHT_CLIPBOARD_MAX_BYTES="$(normalize_positive_int "$MOONLIGHT_CLIPBOARD_MAX_BYTES" 52428800)"
+progress "Checking transfer size."
+source_bytes="$(source_payload_bytes "$@")"
+if (( source_bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
+  reject_oversized_payload "$source_bytes"
+fi
+
 ensure_helpers
 
 MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS="$(normalize_positive_int "$MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS" 1800)"
@@ -347,11 +386,7 @@ if [[ -z "$bytes" ]]; then
 fi
 
 if (( bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
-  bytes_text="$(format_bytes "$bytes")"
-  max_bytes_text="$(format_bytes "$MOONLIGHT_CLIPBOARD_MAX_BYTES")"
-  echo "payload too large: ${bytes_text} exceeds the ${max_bytes_text} clipboard transfer limit. Split the transfer or use a file sync tool for large files." >&2
-  log "skip File drop Mac -> Windows ${kind:-files} (${bytes}B); limit is ${MOONLIGHT_CLIPBOARD_MAX_BYTES}B"
-  exit 1
+  reject_oversized_payload "$bytes"
 fi
 
 progress "Packaging ${kind:-files} payload (${bytes}B)."
