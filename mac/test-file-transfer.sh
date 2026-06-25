@@ -366,7 +366,7 @@ verify_windows_agent_file_drop_export_guard() {
 }
 
 verify_windows_agent_file_drop_failure_state() {
-  local script encoded output
+  local script script_file remote_script output
   script="$(cat <<'POWERSHELL'
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
@@ -378,8 +378,10 @@ $root = Join-Path $dir ('agent-export-failure-state-' + [guid]::NewGuid().ToStri
 $statePath = Join-Path $dir 'windows-file-clipboard-failure-state.txt'
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 try {
+    $script:logFile = Join-Path $root 'agent.log'
     Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$statePath.tmp" -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $script:logFile -Force -ErrorAction SilentlyContinue
     $script:lastWindowsExportFailure = ''
     $valid = Join-Path $root 'valid.txt'
     $missing = Join-Path $root 'missing.txt'
@@ -402,9 +404,18 @@ try {
     if ($null -ne $secondResult) { Write-Output 'second_broken_result_not_null'; exit 1 }
     $secondState = Read-KeyValueState $statePath
     if ([string]$secondState['updated_at'] -ne $updatedAt) { Write-Output 'failure_state_duplicate_rewrite'; exit 1 }
+    $failureLogCount = 0
+    if (Test-Path -LiteralPath $script:logFile -PathType Leaf) {
+        $failureLogCount = @((Get-Content -LiteralPath $script:logFile -Encoding UTF8) | Where-Object { $_ -like '*skip Windows -> Mac file clipboard; source unavailable*' }).Count
+    }
+    if ($failureLogCount -ne 1) { Write-Output "failure_log_duplicate_count=$failureLogCount"; exit 1 }
     $validResult = Export-FileDropPathsPayload $validPayload @($valid)
     if ($null -eq $validResult) { Write-Output 'valid_result_missing'; exit 1 }
     if (Test-Path -LiteralPath $statePath) { Write-Output 'failure_state_not_cleared'; exit 1 }
+    $thirdResult = Export-FileDropPathsPayload $payload @($valid, $missing)
+    if ($null -ne $thirdResult) { Write-Output 'third_broken_result_not_null'; exit 1 }
+    $failureLogCount = @((Get-Content -LiteralPath $script:logFile -Encoding UTF8) | Where-Object { $_ -like '*skip Windows -> Mac file clipboard; source unavailable*' }).Count
+    if ($failureLogCount -ne 2) { Write-Output "failure_log_reset_count=$failureLogCount"; exit 1 }
     Write-Output 'file_drop_failure_state=ok'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -414,15 +425,30 @@ try {
 }
 POWERSHELL
 )"
-  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  script_file="$(mktemp "${TMPDIR:-/tmp}/moonlight-windows-agent-failure-state.XXXXXX.ps1")"
+  remote_script="${remote_dir}/_test-windows-file-clipboard-failure-state-$RANDOM.ps1"
+  printf '%s\n' "$script" > "$script_file"
+
+  if ! scp "${scp_opts[@]}" "$script_file" "${WINDOWS_SSH}:${remote_script}" >/dev/null; then
+    rm -f "$script_file"
+    echo "Windows agent file-drop failure state check failed to upload." >&2
+    return 1
+  fi
+  rm -f "$script_file"
+
   if ! output="$(
     ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
-      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${remote_script}" 2>&1 | tr -d '\r'
   )"; then
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -Command \"Remove-Item -LiteralPath '${remote_script}' -Force -ErrorAction SilentlyContinue\"" >/dev/null 2>&1 || true
     echo "Windows agent file-drop failure state check failed." >&2
     printf '%s\n' "$output" >&2
     return 1
   fi
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -Command \"Remove-Item -LiteralPath '${remote_script}' -Force -ErrorAction SilentlyContinue\"" >/dev/null 2>&1 || true
+
   if [[ "$output" != *"file_drop_failure_state=ok"* ]]; then
     echo "Windows agent file-drop failure state output was incomplete." >&2
     printf '%s\n' "$output" >&2

@@ -772,11 +772,11 @@ function Clear-WindowsFileClipboardFailureState {
 
 function Write-WindowsFileClipboardFailureState([string]$message, [string]$sourcePath) {
     $message = if ($null -eq $message) { "" } else { $message.Trim() }
-    if ([string]::IsNullOrWhiteSpace($message)) { return }
+    if ([string]::IsNullOrWhiteSpace($message)) { return $false }
 
     $signature = "$sourcePath`n$message"
     if ($script:lastWindowsExportFailure -eq $signature) {
-        return
+        return $false
     }
 
     $script:lastWindowsExportFailure = $signature
@@ -789,6 +789,7 @@ function Write-WindowsFileClipboardFailureState([string]$message, [string]$sourc
         "updated_at=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
     )
     Write-KeyValueState $windowsFileClipboardFailureState $lines
+    return $true
 }
 
 function Set-FileDropClipboardPaths([string[]]$paths) {
@@ -1186,12 +1187,17 @@ function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
 
     if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
         $failureMessage = "no readable file-drop items were available"
-        Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
     } else {
         $failureMessage = "source unavailable '$failedFileDropPath': $failedFileDropReason"
-        Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
     }
-    Write-WindowsFileClipboardFailureState $failureMessage $failedFileDropPath
+    $newFailureState = Write-WindowsFileClipboardFailureState $failureMessage $failedFileDropPath
+    if ($newFailureState) {
+        if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
+            Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
+        } else {
+            Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
+        }
+    }
     Remove-Item -LiteralPath $filesDir -Recurse -Force -ErrorAction SilentlyContinue
     return $null
 }
