@@ -222,6 +222,7 @@ exit "${status}"
     private var latestWindowsReceivePaths: [String] = []
     private var pendingLatestWindowsReceiveSummary = ""
     private var pendingLatestWindowsReceivePathCount = 0
+    private var pendingMacFileClipboardFailureDetail = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -233,8 +234,10 @@ exit "${status}"
     private var dropOverlayTimer: Timer?
     private var latestMacReceiveTimer: Timer?
     private var latestWindowsReceiveTimer: Timer?
+    private var macFileClipboardFailureTimer: Timer?
     private var latestMacReceiveStateSignature = ""
     private var latestWindowsReceiveStateSignature = ""
+    private var macFileClipboardFailureStateSignature = ""
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
     private var dropOverlayLastDragLocation: NSPoint?
@@ -288,6 +291,7 @@ exit "${status}"
         startLatestWindowsReceiveMonitor()
         updateDropOverlayMonitor()
         startLatestMacReceiveMonitor()
+        startMacFileClipboardFailureMonitor()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -728,7 +732,8 @@ exit "${status}"
         detail: String,
         startQueuedDropsWhenIdle: Bool = true,
         showPendingMacReceiveWhenIdle: Bool = true,
-        showPendingWindowsReceiveWhenIdle: Bool = true
+        showPendingWindowsReceiveWhenIdle: Bool = true,
+        showPendingMacFileClipboardFailureWhenIdle: Bool = true
     ) {
         isBusy = busy
         progressIndicator.isHidden = !busy
@@ -754,7 +759,12 @@ exit "${status}"
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
 
-        if !busy && (startQueuedDropsWhenIdle || showPendingMacReceiveWhenIdle || showPendingWindowsReceiveWhenIdle) {
+        if !busy && (
+            startQueuedDropsWhenIdle ||
+            showPendingMacReceiveWhenIdle ||
+            showPendingWindowsReceiveWhenIdle ||
+            showPendingMacFileClipboardFailureWhenIdle
+        ) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 if self.startNextQueuedFileDropIfIdle(allowStart: startQueuedDropsWhenIdle) {
@@ -764,8 +774,12 @@ exit "${status}"
                    self.showPendingLatestMacReceiveIfIdle() {
                     return
                 }
-                if showPendingWindowsReceiveWhenIdle {
-                    self.showPendingLatestWindowsReceiveIfIdle()
+                if showPendingWindowsReceiveWhenIdle,
+                   self.showPendingLatestWindowsReceiveIfIdle() {
+                    return
+                }
+                if showPendingMacFileClipboardFailureWhenIdle {
+                    self.showPendingMacFileClipboardFailureIfIdle()
                 }
             }
         }
@@ -1134,6 +1148,83 @@ exit "${status}"
         } else {
             detailLabel.stringValue = "Ready in the Windows receive folder: \(summary)"
         }
+    }
+
+    private func macFileClipboardFailureStateURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MoonlightCompanion/mac-file-clipboard-failure-state.txt")
+    }
+
+    private func startMacFileClipboardFailureMonitor() {
+        updateMacFileClipboardFailureStatus(initial: true)
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateMacFileClipboardFailureStatus(initial: false)
+        }
+        macFileClipboardFailureTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func updateMacFileClipboardFailureStatus(initial: Bool) {
+        let stateURL = macFileClipboardFailureStateURL()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            macFileClipboardFailureStateSignature = ""
+            pendingMacFileClipboardFailureDetail = ""
+            return
+        }
+
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let signature = "\(modifiedAt.timeIntervalSince1970):\(size)"
+        guard signature != macFileClipboardFailureStateSignature else {
+            if !initial {
+                showPendingMacFileClipboardFailureIfIdle()
+            }
+            return
+        }
+        macFileClipboardFailureStateSignature = signature
+
+        let state = SettingsFile.parse(url: stateURL)
+        guard let detail = macFileClipboardFailureDetail(from: state) else {
+            pendingMacFileClipboardFailureDetail = ""
+            return
+        }
+
+        if !initial {
+            if isBusy || transferProcess != nil {
+                pendingMacFileClipboardFailureDetail = detail
+            } else {
+                showMacFileClipboardFailureStatus(detail)
+            }
+        }
+    }
+
+    private func macFileClipboardFailureDetail(from state: [String: String]) -> String? {
+        let status = state["status"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard status == "stale-mac-file-clipboard" else {
+            return nil
+        }
+
+        let detail = decodedStateValue(state["message_b64"]) ??
+            state["message"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return detail.isEmpty ? nil : detail
+    }
+
+    @discardableResult
+    private func showPendingMacFileClipboardFailureIfIdle() -> Bool {
+        guard !isBusy,
+              transferProcess == nil,
+              !pendingMacFileClipboardFailureDetail.isEmpty else {
+            return false
+        }
+
+        showMacFileClipboardFailureStatus(pendingMacFileClipboardFailureDetail)
+        return true
+    }
+
+    private func showMacFileClipboardFailureStatus(_ detail: String) {
+        pendingMacFileClipboardFailureDetail = ""
+        statusLabel.stringValue = "Mac Clipboard File Missing"
+        detailLabel.stringValue = "Could not send Mac file clipboard: \(detail)"
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
@@ -2818,6 +2909,7 @@ exit "${status}"
         _ = cancelPromisedFileDrops()
         latestMacReceiveTimer?.invalidate()
         latestWindowsReceiveTimer?.invalidate()
+        macFileClipboardFailureTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()
         dropStripWindow?.close()

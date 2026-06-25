@@ -47,6 +47,7 @@ transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
 transfer_oversize_direct="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 latest_windows_receive_state="${MOONLIGHT_LATEST_WINDOWS_RECEIVE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt}"
+mac_file_clipboard_failure_state="${MOONLIGHT_MAC_FILE_CLIPBOARD_FAILURE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/mac-file-clipboard-failure-state.txt}"
 
 remote_dir=".moonlight-clipboard-sync"
 remote_mac_zip="${remote_dir}/mac-to-windows.zip"
@@ -756,19 +757,41 @@ helper_error_text() {
     }'
 }
 
+write_mac_file_clipboard_failure_state() {
+  local message="$1"
+  local state_dir tmp_state
+  state_dir="$(dirname "$mac_file_clipboard_failure_state")"
+  mkdir -p "$state_dir"
+  tmp_state="${mac_file_clipboard_failure_state}.tmp"
+  {
+    printf 'status=stale-mac-file-clipboard\n'
+    printf 'message=%s\n' "$message"
+    printf 'message_b64=%s\n' "$(printf '%s' "$message" | base64_state_value)"
+    printf 'updated_at=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  } > "$tmp_state"
+  mv "$tmp_state" "$mac_file_clipboard_failure_state"
+}
+
+clear_mac_file_clipboard_failure_state() {
+  rm -f "$mac_file_clipboard_failure_state" "${mac_file_clipboard_failure_state}.tmp"
+}
+
 log_mac_export_failure_if_needed() {
   local output_path="$1"
-  local mac_export_error
+  local mac_export_error message
   mac_export_error="$(helper_error_text "$output_path")"
   if [[ "$mac_export_error" == file-drop-unavailable:* ]]; then
+    message="${mac_export_error#file-drop-unavailable: }"
     if [[ "$mac_export_error" != "$last_mac_export_failure" ]]; then
-      log "skip Mac -> Windows file clipboard; ${mac_export_error#file-drop-unavailable: }"
+      log "skip Mac -> Windows file clipboard; $message"
+      write_mac_file_clipboard_failure_state "$message"
     fi
     last_mac_export_failure="$mac_export_error"
     return 0
   fi
 
   last_mac_export_failure=""
+  clear_mac_file_clipboard_failure_state
   return 1
 }
 
@@ -811,6 +834,7 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SEL
   test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-mac-export-failure-log.XXXXXX")"
   trap 'rm -rf "$test_dir"' EXIT
   log_path="${test_dir}/sync.log"
+  mac_file_clipboard_failure_state="${test_dir}/failure-state.txt"
   last_mac_export_failure=""
   printf 'file-drop-unavailable: source path is missing: /tmp/missing-file\n' > "${test_dir}/mac-meta.txt.err"
   log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt" || {
@@ -826,6 +850,12 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SEL
     cat "$log_path" >&2
     exit 1
   fi
+  if [[ "$(payload_value status "$mac_file_clipboard_failure_state")" != "stale-mac-file-clipboard" ||
+        "$(decode_state_b64 "$(payload_value message_b64 "$mac_file_clipboard_failure_state")")" != "source path is missing: /tmp/missing-file" ]]; then
+    echo "Mac export failure log self-test did not write a decodable failure state." >&2
+    cat "$mac_file_clipboard_failure_state" >&2
+    exit 1
+  fi
   printf 'unsupported-or-empty-clipboard\n' > "${test_dir}/mac-meta.txt.err"
   if log_mac_export_failure_if_needed "${test_dir}/mac-meta.txt"; then
     echo "Mac export failure log self-test treated unsupported clipboard as a file-drop failure." >&2
@@ -833,6 +863,11 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_MAC_EXPORT_FAILURE_LOG_SEL
   fi
   if [[ -n "$last_mac_export_failure" ]]; then
     echo "Mac export failure log self-test did not clear the previous file-drop failure." >&2
+    exit 1
+  fi
+  if [[ -e "$mac_file_clipboard_failure_state" ]]; then
+    echo "Mac export failure log self-test did not clear the failure state." >&2
+    cat "$mac_file_clipboard_failure_state" >&2
     exit 1
   fi
   exit 0
@@ -871,6 +906,7 @@ while true; do
     :
   elif ! tcp_receive_in_progress && run_helper "$mac_meta" export "$mac_payload"; then
     last_mac_export_failure=""
+    clear_mac_file_clipboard_failure_state
     sleep 0.05
     if tcp_receive_in_progress; then
       read_tcp_state
