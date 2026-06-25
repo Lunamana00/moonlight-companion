@@ -51,6 +51,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Moonlight launch and display placement no longer force Moonlight to the foreground by default; `MOONLIGHT_ACTIVATE_ON_LAUNCH` can opt back into the old behavior.
 - The file transfer self-test now writes a temporary quiet-state marker so Windows-to-Mac receive notifications and Finder reveal actions do not interrupt the current Mac workspace while tests run.
 - The Mac clipboard sync loop now rechecks for in-flight TCP receives after exporting the local clipboard, closing a race that could echo a just-received Windows file back to Windows.
+- Windows-to-Mac TCP receives now keep their receive lock alive through reading, expanding, importing, normalizing, and notification phases, preventing slow receives from being mistaken for stale work and echoed back.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
 - Moonlight window, strip, and Companion file drops now show active drag feedback with the item count and dropped file names before release.

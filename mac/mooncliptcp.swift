@@ -238,6 +238,75 @@ func readPayload(fd: Int32, byteCount: UInt64, to path: String) throws {
     }
 }
 
+final class ReceiveLock {
+    private let path: String
+    private let lock = NSLock()
+    private var active = false
+    private var phase = "receiving"
+
+    init(path: String) {
+        self.path = path
+    }
+
+    func start() {
+        lock.lock()
+        active = true
+        lock.unlock()
+        refresh(phase: "receiving")
+        Thread.detachNewThread { [weak self] in
+            self?.heartbeat()
+        }
+    }
+
+    func setPhase(_ nextPhase: String) {
+        refresh(phase: nextPhase)
+    }
+
+    func stop() {
+        lock.lock()
+        active = false
+        lock.unlock()
+        try? fm.removeItem(atPath: path)
+    }
+
+    private func heartbeat() {
+        while true {
+            Thread.sleep(forTimeInterval: 2.0)
+            lock.lock()
+            let shouldContinue = active
+            lock.unlock()
+
+            if !shouldContinue {
+                break
+            }
+            refreshCurrentPhase()
+        }
+    }
+
+    private func refresh(phase nextPhase: String) {
+        lock.lock()
+        guard active else {
+            lock.unlock()
+            return
+        }
+        phase = nextPhase
+        let text = "phase=\(nextPhase)\npid=\(getpid())\n"
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
+        lock.unlock()
+    }
+
+    private func refreshCurrentPhase() {
+        lock.lock()
+        guard active else {
+            lock.unlock()
+            return
+        }
+        let text = "phase=\(phase)\npid=\(getpid())\n"
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
+        lock.unlock()
+    }
+}
+
 func run(_ executable: String, _ arguments: [String]) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -477,23 +546,30 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     let statePath = "\(runtimeDir)/clipboard-tcp-windows-state.txt"
     let receiveLockPath = "\(statePath).lock"
 
-    try? "receiving\n".write(toFile: receiveLockPath, atomically: true, encoding: .utf8)
+    let receiveLock = ReceiveLock(path: receiveLockPath)
+    receiveLock.start()
     defer {
-        try? fm.removeItem(atPath: receiveLockPath)
+        receiveLock.stop()
     }
 
+    receiveLock.setPhase("reading")
     try readPayload(fd: fd, byteCount: byteCount, to: zipPath)
+    receiveLock.setPhase("hashing")
     let archiveHash = try sha256Hex(file: zipPath)
+    receiveLock.setPhase("expanding")
     try cleanDirectory(payloadDir)
     _ = try run("/usr/bin/ditto", ["-x", "-k", "--noqtn", zipPath, payloadDir])
 
+    receiveLock.setPhase("importing")
     let imported = parseMeta(try run(helper, ["import", payloadDir]))
     let winID = imported["id"] ?? ""
+    receiveLock.setPhase("normalizing")
     try? cleanDirectory(normalizedDir)
     let normalizedOutput = try? run(helper, ["export", normalizedDir])
     let normalized = normalizedOutput.map(parseMeta) ?? [:]
 
     let normalizedID = normalized["id"] ?? winID
+    receiveLock.setPhase("writing-state")
     try writeState(
         path: statePath,
         values: receiveStateValues(
@@ -503,6 +579,7 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
             windowsID: winID
         )
     )
+    receiveLock.setPhase("notifying")
     notifyWindowsFilesReceived(imported, runtimeDir: runtimeDir)
     if imported["kind"] == "files" {
         log("Windows -> Mac TCP files \(receivedFileDetail(imported))", to: logPath)
