@@ -131,11 +131,21 @@ if (\$explicitPaths.Count -gt 0) {
     \$selectedLatestImport = \$true
     \$openResult = "selected-explicit"
   } elseif (\$validPaths.Count -gt 1) {
-    \$firstParent = Split-Path -Parent \$validPaths[0]
-    if (-not [string]::IsNullOrWhiteSpace(\$firstParent) -and (Test-Path -LiteralPath \$firstParent)) {
-      \$targetPath = \$firstParent
+    \$commonParent = Split-Path -Parent \$validPaths[0]
+    foreach (\$path in \$validPaths) {
+      \$parent = Split-Path -Parent \$path
+      if ([string]::IsNullOrWhiteSpace(\$commonParent) -or \$parent -ne \$commonParent) {
+        \$commonParent = ""
+        break
+      }
     }
-    \$openResult = "folder-explicit-multi-item"
+    if (-not [string]::IsNullOrWhiteSpace(\$commonParent) -and (Test-Path -LiteralPath \$commonParent)) {
+      \$targetPath = \$commonParent
+      \$openResult = "folder-explicit-common-parent"
+    } else {
+      \$targetPath = \$dir
+      \$openResult = "folder-explicit-multi-parent"
+    }
   } else {
     \$openResult = "folder-explicit-missing-item"
   }
@@ -217,6 +227,12 @@ case "$open_result" in
     ;;
   folder-explicit-multi-item)
     printf 'asked Windows to open the receive folder for multiple received items\n'
+    ;;
+  folder-explicit-common-parent)
+    printf 'asked Windows to open the containing folder for multiple received items\n'
+    ;;
+  folder-explicit-multi-parent)
+    printf 'asked Windows to open the receive folder for multiple received items in different folders\n'
     ;;
   folder-explicit-missing-item)
     printf 'asked Windows to open the receive folder; received item was unavailable\n'

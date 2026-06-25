@@ -1350,13 +1350,19 @@ m2w_multi_dir="${tmp_dir}/moonlight-companion-transfer-test-mac-multi-folder-${s
 m2w_multi_dir_name="$(basename "$m2w_multi_dir")"
 m2w_multi_nested_path="nested/from-mac-multi.txt"
 m2w_multi_out="${tmp_dir}/mac-to-windows-multi-send.txt"
+m2w_multi_state="${tmp_dir}/mac-to-windows-multi-state.txt"
 mkdir -p "${m2w_multi_dir}/nested"
 printf 'Moonlight Companion Mac -> Windows multi file test %s\n' "$stamp" > "$m2w_multi_file"
 printf 'Moonlight Companion Mac -> Windows multi folder test %s\n' "$stamp" > "${m2w_multi_dir}/${m2w_multi_nested_path}"
-env "${send_env[@]}" "${script_dir}/send-files-to-windows.sh" "$m2w_multi_file" "$m2w_multi_dir" > "$m2w_multi_out"
+env "${send_env[@]}" MOONLIGHT_TRANSFER_RESULT_STATE="$m2w_multi_state" "${script_dir}/send-files-to-windows.sh" "$m2w_multi_file" "$m2w_multi_dir" > "$m2w_multi_out"
 if ! grep -q "Windows confirmed 2 items" "$m2w_multi_out"; then
   echo "Mac -> Windows multi-item transfer did not receive confirmation for both items." >&2
   cat "$m2w_multi_out" >&2
+  exit 1
+fi
+if [[ "$(meta_value imported_paths "$m2w_multi_state")" != "2" ]]; then
+  echo "Mac -> Windows multi-item transfer did not write both imported paths to the GUI result state." >&2
+  [[ -f "$m2w_multi_state" ]] && cat "$m2w_multi_state" >&2
   exit 1
 fi
 if ! wait_for_windows_file "$m2w_multi_file_name"; then
@@ -1365,6 +1371,17 @@ if ! wait_for_windows_file "$m2w_multi_file_name"; then
 fi
 if ! wait_for_windows_path "${m2w_multi_dir_name}/${m2w_multi_nested_path}" "Leaf"; then
   echo "Mac -> Windows multi-item transfer did not preserve the folder item." >&2
+  exit 1
+fi
+m2w_multi_path_1="$(meta_value imported_path_1 "$m2w_multi_state")"
+m2w_multi_path_2="$(meta_value imported_path_2 "$m2w_multi_state")"
+windows_multi_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --select-path "$m2w_multi_path_1" --select-path "$m2w_multi_path_2"
+)"
+if ! grep -Fq "asked Windows to open the containing folder for multiple received items" <<<"$windows_multi_reveal_out"; then
+  echo "Windows receive reveal did not open the common parent for multiple explicit imported paths." >&2
+  printf '%s\n' "$windows_multi_reveal_out" >&2
   exit 1
 fi
 remove_windows_file "$m2w_multi_file_name"
