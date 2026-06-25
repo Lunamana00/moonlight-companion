@@ -1762,7 +1762,7 @@ limit_multi_copy_out="$(
       --select-path "$limit_multi_path_1" \
       --select-path "$limit_multi_path_2"
 )"
-if ! grep -Fq "asked Windows to put the latest received item on the clipboard" <<<"$limit_multi_copy_out"; then
+if ! grep -Fq "asked Windows to put the latest received items on the clipboard" <<<"$limit_multi_copy_out"; then
   echo "Windows receive clipboard restore did not copy multiple explicit imported paths." >&2
   printf '%s\n' "$limit_multi_copy_out" >&2
   exit 1

@@ -88,6 +88,31 @@ request_id_literal="$(ps_single_quoted "$request_id")"
 expected_id_literal="$(ps_single_quoted "$expected_id")"
 paths_literal="$(ps_array_literal "${select_paths[@]}")"
 timeout_literal="$(ps_single_quoted "$timeout_ms")"
+selected_count="${#select_paths[@]}"
+
+received_item_text() {
+  if (( selected_count == 1 )); then
+    printf 'received item'
+  else
+    printf 'received items'
+  fi
+}
+
+received_item_unavailable_verb() {
+  if (( selected_count == 1 )); then
+    printf 'was'
+  else
+    printf 'were'
+  fi
+}
+
+latest_received_text() {
+  if (( selected_count == 1 )); then
+    printf 'latest received item'
+  else
+    printf 'latest received items'
+  fi
+}
 
 read -r -d '' script <<POWERSHELL || true
 \$ErrorActionPreference = "Stop"
@@ -204,10 +229,10 @@ copy_result="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_COPY_R
 
 case "$copy_result" in
   ready)
-    printf 'asked Windows to put the latest received item on the clipboard\n'
+    printf 'asked Windows to put the %s on the clipboard\n' "$(latest_received_text)"
     ;;
   missing)
-    printf 'asked Windows to copy the latest received item; received item was unavailable\n'
+    printf 'asked Windows to copy the %s; %s %s unavailable\n' "$(latest_received_text)" "$(received_item_text)" "$(received_item_unavailable_verb)"
     ;;
   no-paths)
     printf 'asked Windows to copy the latest received item; latest receive state was unavailable\n'
