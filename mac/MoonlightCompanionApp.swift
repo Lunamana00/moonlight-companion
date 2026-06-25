@@ -2303,27 +2303,13 @@ exit "${status}"
                     expectedCount: receivers.count,
                     errors: errors
                 )
-                if !wasAlreadyBusy {
-                    self.setBusy(false, status: "Drop Failed", detail: detail, startQueuedDropsWhenIdle: false)
-                } else {
-                    self.statusLabel.stringValue = "Drop Failed"
-                    self.detailLabel.stringValue = detail
-                }
-                self.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
-                self.showFailure("Promised file drop failed.")
+                self.reportPromisedFileDropFailure(detail, source: source, wasAlreadyBusy: wasAlreadyBusy)
                 return
             }
             guard !urls.isEmpty else {
                 self.cleanupTemporaryDropURLs([destination])
-                if !wasAlreadyBusy {
-                    self.setBusy(false, status: "Drop Failed", detail: "The source app did not provide any promised files.", startQueuedDropsWhenIdle: false)
-                } else {
-                    self.statusLabel.stringValue = "Drop Failed"
-                    self.detailLabel.stringValue = "The source app did not provide any promised files."
-                }
-                if !errors.isEmpty {
-                    self.showFailure("Promised file drop failed.")
-                }
+                let detail = "The source app did not provide any promised files."
+                self.reportPromisedFileDropFailure(detail, source: source, wasAlreadyBusy: wasAlreadyBusy)
                 return
             }
 
@@ -2336,6 +2322,17 @@ exit "${status}"
             }
             self.sendFilesToWindows(urls, source: source, cleanupURLs: [destination])
         }
+    }
+
+    private func reportPromisedFileDropFailure(_ detail: String, source: FileDropSource, wasAlreadyBusy: Bool) {
+        notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
+        let stillBusy = isBusy || transferProcess != nil
+        if wasAlreadyBusy && stillBusy {
+            return
+        }
+
+        setBusy(false, status: "Drop Failed", detail: detail, startQueuedDropsWhenIdle: false)
+        showFailure("Promised file drop failed.")
     }
 
     private func promisedFileDropFailureDetail(receivedCount: Int, expectedCount: Int, errors: [String]) -> String {
