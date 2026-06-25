@@ -22,6 +22,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Mac-to-Windows TCP acknowledgements now carry base64 Windows receive-folder paths, so latest-receive reveal state remains available even if the follow-up SSH state read is slow.
 - Windows-to-Mac TCP acknowledgement reads now allow longer response lines while keeping incoming TCP headers tightly bounded, avoiding unnecessary SSH fallback retention for long received file names.
 - Background Mac-to-Windows file clipboard sync now records confirmed TCP receive paths for the GUI's latest Windows receive action, and the open GUI watches that state so files copied from Finder are easier to reveal later.
+- The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
 - Oversized background direct Mac-to-Windows file clipboard sends now leave the clipboard item retryable after a transient direct-transfer failure, so a temporary SSH/SCP hiccup does not require copying the file again.
 - The file transfer self-test now verifies the background Mac-to-Windows file clipboard path, including the Windows receive-folder copy and latest Windows receive state written from the TCP acknowledgement.

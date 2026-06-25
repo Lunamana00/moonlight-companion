@@ -218,6 +218,8 @@ exit "${status}"
     private var latestWindowsReceiveID = ""
     private var latestWindowsReceiveSummary = ""
     private var latestWindowsReceivePaths: [String] = []
+    private var pendingLatestWindowsReceiveSummary = ""
+    private var pendingLatestWindowsReceivePathCount = 0
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -720,7 +722,8 @@ exit "${status}"
         status: String,
         detail: String,
         startQueuedDropsWhenIdle: Bool = true,
-        showPendingMacReceiveWhenIdle: Bool = true
+        showPendingMacReceiveWhenIdle: Bool = true,
+        showPendingWindowsReceiveWhenIdle: Bool = true
     ) {
         isBusy = busy
         progressIndicator.isHidden = !busy
@@ -745,14 +748,18 @@ exit "${status}"
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
 
-        if !busy && (startQueuedDropsWhenIdle || showPendingMacReceiveWhenIdle) {
+        if !busy && (startQueuedDropsWhenIdle || showPendingMacReceiveWhenIdle || showPendingWindowsReceiveWhenIdle) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 if self.startNextQueuedFileDropIfIdle(allowStart: startQueuedDropsWhenIdle) {
                     return
                 }
-                if showPendingMacReceiveWhenIdle {
-                    self.showPendingLatestMacReceiveIfIdle()
+                if showPendingMacReceiveWhenIdle,
+                   self.showPendingLatestMacReceiveIfIdle() {
+                    return
+                }
+                if showPendingWindowsReceiveWhenIdle {
+                    self.showPendingLatestWindowsReceiveIfIdle()
                 }
             }
         }
@@ -901,14 +908,16 @@ exit "${status}"
         }
     }
 
-    private func showPendingLatestMacReceiveIfIdle() {
+    @discardableResult
+    private func showPendingLatestMacReceiveIfIdle() -> Bool {
         guard !isBusy,
               transferProcess == nil,
               !pendingLatestMacReceiveURLs.isEmpty else {
-            return
+            return false
         }
 
         showLatestMacReceiveStatus(pendingLatestMacReceiveURLs)
+        return true
     }
 
     private func showLatestMacReceiveStatus(_ urls: [URL], totalCount: Int? = nil) {
@@ -933,15 +942,15 @@ exit "${status}"
     }
 
     private func startLatestWindowsReceiveMonitor() {
-        updateLatestWindowsReceiveStatus()
+        updateLatestWindowsReceiveStatus(initial: true)
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updateLatestWindowsReceiveStatus()
+            self?.updateLatestWindowsReceiveStatus(initial: false)
         }
         latestWindowsReceiveTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func updateLatestWindowsReceiveStatus() {
+    private func updateLatestWindowsReceiveStatus(initial: Bool) {
         let stateURL = latestWindowsReceiveStateURL()
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
               let modifiedAt = attributes[.modificationDate] as? Date else {
@@ -949,6 +958,8 @@ exit "${status}"
             latestWindowsReceiveID = ""
             latestWindowsReceiveSummary = ""
             latestWindowsReceivePaths = []
+            pendingLatestWindowsReceiveSummary = ""
+            pendingLatestWindowsReceivePathCount = 0
             updateLatestWindowsReceiveButtonState()
             return
         }
@@ -959,7 +970,23 @@ exit "${status}"
             return
         }
         latestWindowsReceiveStateSignature = signature
+        let previousID = latestWindowsReceiveID
         loadLatestWindowsReceiveState()
+        guard !initial,
+              !latestWindowsReceiveID.isEmpty,
+              latestWindowsReceiveID != previousID else {
+            return
+        }
+
+        if isBusy || transferProcess != nil {
+            pendingLatestWindowsReceiveSummary = latestWindowsReceiveSummary
+            pendingLatestWindowsReceivePathCount = latestWindowsReceivePaths.count
+        } else {
+            showLatestWindowsReceiveStatus(
+                summary: latestWindowsReceiveSummary,
+                pathCount: latestWindowsReceivePaths.count
+            )
+        }
     }
 
     private func loadLatestWindowsReceiveState() {
@@ -1016,6 +1043,8 @@ exit "${status}"
         latestWindowsReceiveID = ""
         latestWindowsReceiveSummary = ""
         latestWindowsReceivePaths = []
+        pendingLatestWindowsReceiveSummary = ""
+        pendingLatestWindowsReceivePathCount = 0
         latestWindowsReceiveStateSignature = ""
         try? FileManager.default.removeItem(at: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
@@ -1066,6 +1095,38 @@ exit "${status}"
 
     private func updateLatestWindowsReceiveButtonState() {
         revealWindowsReceiveButton?.isEnabled = !isBusy && !latestWindowsReceiveID.isEmpty
+    }
+
+    @discardableResult
+    private func showPendingLatestWindowsReceiveIfIdle() -> Bool {
+        guard !isBusy,
+              transferProcess == nil,
+              !pendingLatestWindowsReceiveSummary.isEmpty || pendingLatestWindowsReceivePathCount > 0 else {
+            return false
+        }
+
+        showLatestWindowsReceiveStatus(
+            summary: pendingLatestWindowsReceiveSummary,
+            pathCount: pendingLatestWindowsReceivePathCount
+        )
+        return true
+    }
+
+    private func showLatestWindowsReceiveStatus(summary: String, pathCount: Int) {
+        pendingLatestWindowsReceiveSummary = ""
+        pendingLatestWindowsReceivePathCount = 0
+        statusLabel.stringValue = "Windows Files Received"
+        if summary.isEmpty {
+            if pathCount == 1 {
+                detailLabel.stringValue = "1 item is ready in the Windows receive folder."
+            } else if pathCount > 1 {
+                detailLabel.stringValue = "\(pathCount) items are ready in the Windows receive folder."
+            } else {
+                detailLabel.stringValue = "The latest files are ready in the Windows receive folder."
+            }
+        } else {
+            detailLabel.stringValue = "Ready in the Windows receive folder: \(summary)"
+        }
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
