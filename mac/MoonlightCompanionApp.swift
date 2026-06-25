@@ -19,6 +19,7 @@ struct CompanionSettings {
         "MOONLIGHT_ABSOLUTE_MOUSE",
         "MOONLIGHT_QUIT_EXISTING",
         "MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH",
+        "MOONLIGHT_ACTIVATE_ON_LAUNCH",
         "MOONLIGHT_CAPSLOCK_HANGUL",
         "MOONLIGHT_SHORTCUT_REMAP",
         "MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT",
@@ -316,6 +317,7 @@ exit "${status}"
         form.addArrangedSubview(check("MOONLIGHT_ABSOLUTE_MOUSE", title: "Absolute mouse"))
         form.addArrangedSubview(check("MOONLIGHT_QUIT_EXISTING", title: "Quit existing Moonlight before launch"))
         form.addArrangedSubview(check("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH", title: "Bring Companion window forward on launch"))
+        form.addArrangedSubview(check("MOONLIGHT_ACTIVATE_ON_LAUNCH", title: "Bring Moonlight forward after launch"))
         form.addArrangedSubview(check("MOONLIGHT_CAPSLOCK_HANGUL", title: "Caps Lock toggles Windows Han/Eng"))
         form.addArrangedSubview(check("MOONLIGHT_SHORTCUT_REMAP", title: "Map Command shortcuts to Windows Control shortcuts"))
         form.addArrangedSubview(check("MOONLIGHT_CLIPBOARD_TCP", title: "Use TCP clipboard channels"))

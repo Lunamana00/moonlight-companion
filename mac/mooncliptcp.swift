@@ -281,6 +281,38 @@ func boolEnv(_ key: String, defaultValue: Bool) -> Bool {
     }
 }
 
+func stateValue(_ key: String, in path: String) -> String? {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        return nil
+    }
+
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        if parts.count == 2, parts[0] == key {
+            return String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+        }
+    }
+    return nil
+}
+
+func transferUIQuiet(runtimeDir: String) -> Bool {
+    let envPath = ProcessInfo.processInfo.environment["MOONLIGHT_TRANSFER_QUIET_STATE"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = envPath?.isEmpty == false ? envPath! : "\(runtimeDir)/transfer-quiet-state.txt"
+    guard fm.fileExists(atPath: path),
+          let attributes = try? fm.attributesOfItem(atPath: path),
+          let modified = attributes[.modificationDate] as? Date,
+          Date().timeIntervalSince(modified) < 600 else {
+        return false
+    }
+
+    guard let pidText = stateValue("pid", in: path),
+          let pid = Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        return true
+    }
+    return Darwin.kill(pid, 0) == 0 || errno == EPERM
+}
+
 func importedFilePaths(_ imported: [String: String]) -> [String] {
     let count = Int(imported["file_paths"] ?? "") ?? 0
     guard count > 0 else {
@@ -358,8 +390,11 @@ func revealReceivedFiles(_ imported: [String: String]) {
     }
 }
 
-func notifyWindowsFilesReceived(_ imported: [String: String]) {
+func notifyWindowsFilesReceived(_ imported: [String: String], runtimeDir: String) {
     guard imported["kind"] == "files" else {
+        return
+    }
+    if transferUIQuiet(runtimeDir: runtimeDir) {
         return
     }
 
@@ -468,7 +503,7 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
             windowsID: winID
         )
     )
-    notifyWindowsFilesReceived(imported)
+    notifyWindowsFilesReceived(imported, runtimeDir: runtimeDir)
     if imported["kind"] == "files" {
         log("Windows -> Mac TCP files \(receivedFileDetail(imported))", to: logPath)
     } else {

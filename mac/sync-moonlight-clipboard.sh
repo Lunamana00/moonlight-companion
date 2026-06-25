@@ -35,6 +35,7 @@ tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
 mac_suspend_state="${MOONLIGHT_CLIPBOARD_MAC_SUSPEND_STATE:-${runtime_dir}/clipboard-mac-suspend-state.txt}"
+transfer_quiet_state="${MOONLIGHT_TRANSFER_QUIET_STATE:-${runtime_dir}/transfer-quiet-state.txt}"
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
@@ -304,6 +305,22 @@ mac_clipboard_sync_suspended() {
   return 0
 }
 
+transfer_ui_quiet() {
+  [[ -f "$transfer_quiet_state" ]] || return 1
+
+  local now mtime pid
+  now="$(date +%s)"
+  mtime="$(stat -f "%m" "$transfer_quiet_state" 2>/dev/null || printf '0')"
+  (( now - mtime < 600 )) || return 1
+
+  pid="$(awk -F= '$1 == "pid" {print $2; exit}' "$transfer_quiet_state" 2>/dev/null || true)"
+  if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  return 0
+}
+
 tcp_receive_in_progress() {
   [[ "$tcp_enabled" == "yes" && -f "$tcp_receive_lock" ]] || return 1
 
@@ -319,6 +336,7 @@ notify_windows_files_received() {
 
   kind="$(payload_kind "$meta_path")"
   [[ "$kind" == "files" ]] || return 0
+  transfer_ui_quiet && return 0
 
   detail="$(received_file_detail "$meta_path")"
   reveal_enabled="$(normalize_yes_no "$transfer_reveal_mac_dir")"

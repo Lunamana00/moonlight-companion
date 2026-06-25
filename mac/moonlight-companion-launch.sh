@@ -27,6 +27,7 @@ MOONLIGHT_VIDEO_CODEC="${MOONLIGHT_VIDEO_CODEC:-HEVC}"
 MOONLIGHT_CAPTURE_SYSTEM_KEYS="${MOONLIGHT_CAPTURE_SYSTEM_KEYS:-always}"
 MOONLIGHT_ABSOLUTE_MOUSE="${MOONLIGHT_ABSOLUTE_MOUSE:-yes}"
 MOONLIGHT_QUIT_EXISTING="${MOONLIGHT_QUIT_EXISTING:-yes}"
+MOONLIGHT_ACTIVATE_ON_LAUNCH="${MOONLIGHT_ACTIVATE_ON_LAUNCH:-no}"
 MOONLIGHT_CAPSLOCK_HANGUL="${MOONLIGHT_CAPSLOCK_HANGUL:-yes}"
 MOONLIGHT_SHORTCUT_REMAP="${MOONLIGHT_SHORTCUT_REMAP:-yes}"
 MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
@@ -48,6 +49,17 @@ log_path="${log_dir}/moonlight-companion-launch.log"
 
 log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_path"
+}
+
+normalize_yes_no() {
+  case "${1:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      printf 'yes\n'
+      ;;
+    *)
+      printf 'no\n'
+      ;;
+  esac
 }
 
 ssh_opts=(
@@ -100,6 +112,7 @@ position_moonlight_window() {
   MOONLIGHT_DISPLAY_INDEX="$MOONLIGHT_DISPLAY_INDEX" \
     MOONLIGHT_DISPLAY_MODE="$MOONLIGHT_DISPLAY_MODE" \
     MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="$timeout" \
+    MOONLIGHT_ACTIVATE_ON_LAUNCH="$(normalize_yes_no "$MOONLIGHT_ACTIVATE_ON_LAUNCH")" \
     osascript -l JavaScript <<'JXA' 2>&1 | while IFS= read -r line; do
 ObjC.import('AppKit')
 
@@ -130,6 +143,7 @@ function arrayString(value) {
 const selected = envString('MOONLIGHT_DISPLAY_INDEX', 'default')
 const mode = envString('MOONLIGHT_DISPLAY_MODE', 'unknown')
 const timeoutSeconds = Math.max(1, integer(envString('MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS', '180'), 180))
+const activateOnLaunch = envString('MOONLIGHT_ACTIVATE_ON_LAUNCH', 'no').toLowerCase() === 'yes'
 const screenIndex = Number.parseInt(selected, 10)
 if (!Number.isFinite(screenIndex) || screenIndex < 0) {
   throw new Error('invalid display index')
@@ -210,10 +224,12 @@ while (Date.now() < deadline) {
   const window = windows[0]
   output(`window-found attempt=${attempts} count=${windows.length}`)
   output(`before position=${arrayString(() => window.position())} size=${arrayString(() => window.size())}`)
-  try {
-    Application('Moonlight').activate()
-  } catch (error) {
-    output(`activate-skipped=${error.message}`)
+  if (activateOnLaunch) {
+    try {
+      Application('Moonlight').activate()
+    } catch (error) {
+      output(`activate-skipped=${error.message}`)
+    }
   }
   window.position = [x, y]
   delay(0.2)
@@ -283,7 +299,11 @@ launch_moonlight() {
   args+=(stream "$MOONLIGHT_HOST" "$MOONLIGHT_STREAM_APP")
 
   log "launching Moonlight: ${args[*]}"
-  open -na "$MOONLIGHT_APP" --args "${args[@]}"
+  if [[ "$(normalize_yes_no "$MOONLIGHT_ACTIVATE_ON_LAUNCH")" == "yes" ]]; then
+    open -n "$MOONLIGHT_APP" --args "${args[@]}"
+  else
+    open -g -n "$MOONLIGHT_APP" --args "${args[@]}"
+  fi
   position_moonlight_window &
 }
 

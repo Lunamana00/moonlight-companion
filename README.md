@@ -62,7 +62,7 @@ When the app opens, adjust the settings and click `Start Moonlight`. The app the
 3. Starts the macOS clipboard sync and Moonlight keyboard agents.
 4. Launches Moonlight with the configured stream settings.
 
-The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. By default the Companion window does not force itself to the foreground when launched; enable `Bring Companion window forward on launch` if you prefer the old foreground behavior.
+The GUI writes user settings to `~/Library/Application Support/MoonlightCompanion/moonlight-companion.conf`. Use `Stop Moonlight` to quit the Moonlight stream without stopping the clipboard and keyboard sidecars. Use `Launch Display` to choose the Mac display where Moonlight should be placed after launch. By default neither the Companion window nor the Moonlight launch/placement helper forces itself to the foreground; enable `Bring Companion window forward on launch` or `Bring Moonlight forward after launch` if you prefer the old foreground behavior.
 
 Inside the Moonlight session, use Windows shortcuts:
 
@@ -191,6 +191,10 @@ MOONLIGHT_DISPLAY_MODE="windowed"
 MOONLIGHT_DISPLAY_INDEX="default"
 MOONLIGHT_DISPLAY_PLACEMENT_TIMEOUT_SECONDS="180"
 MOONLIGHT_VIDEO_CODEC="HEVC"
+MOONLIGHT_ABSOLUTE_MOUSE="yes"
+MOONLIGHT_QUIT_EXISTING="yes"
+MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH="no"
+MOONLIGHT_ACTIVATE_ON_LAUNCH="no"
 MOONLIGHT_CAPSLOCK_HANGUL="yes"
 MOONLIGHT_SHORTCUT_REMAP="yes"
 MOONLIGHT_CLIPBOARD_TCP="yes"

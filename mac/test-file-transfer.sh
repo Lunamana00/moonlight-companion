@@ -27,6 +27,7 @@ tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
 mac_suspend_state="${MOONLIGHT_CLIPBOARD_MAC_SUSPEND_STATE:-${runtime_dir}/clipboard-mac-suspend-state.txt}"
+transfer_quiet_state="${MOONLIGHT_TRANSFER_QUIET_STATE:-${runtime_dir}/transfer-quiet-state.txt}"
 source_helper="${script_dir}/moonclipctl.swift"
 source_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
@@ -365,6 +366,18 @@ write_mac_clipboard_suspend_state() {
   mv "$tmp_state" "$mac_suspend_state"
 }
 
+write_transfer_quiet_state() {
+  local state_dir tmp_state
+  state_dir="$(dirname "$transfer_quiet_state")"
+  tmp_state="${transfer_quiet_state}.tmp"
+  mkdir -p "$state_dir"
+  {
+    printf 'reason=file-transfer-test\n'
+    printf 'pid=%s\n' "$$"
+  } > "$tmp_state"
+  mv "$tmp_state" "$transfer_quiet_state"
+}
+
 save_clipboard_snapshot() {
   clipboard_snapshot_saved="no"
   clipboard_snapshot_payload="${tmp_dir}/clipboard-snapshot-payload"
@@ -426,6 +439,7 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-transfer-test.XXXXXX")"
 cleanup_self_test_artifacts() {
   restore_clipboard_snapshot
   rm -f "$mac_suspend_state"
+  rm -f "$transfer_quiet_state"
   rm -rf "$tmp_dir"
   cleanup_mac_self_test_files "$transfer_mac_dir"
   cleanup_windows_self_test_files
@@ -435,6 +449,7 @@ trap cleanup_self_test_artifacts EXIT
 
 save_clipboard_snapshot
 write_mac_clipboard_suspend_state
+write_transfer_quiet_state
 
 if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   echo "Refreshing Windows agent..."
