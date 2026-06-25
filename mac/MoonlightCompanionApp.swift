@@ -1186,6 +1186,7 @@ exit "${status}"
               let modifiedAt = attributes[.modificationDate] as? Date else {
             macFileClipboardFailureStateSignature = ""
             pendingMacFileClipboardFailureDetail = ""
+            clearResolvedMacFileClipboardFailureIfVisible(initial: initial)
             return
         }
 
@@ -1202,6 +1203,7 @@ exit "${status}"
         let state = SettingsFile.parse(url: stateURL)
         guard let detail = macFileClipboardFailureDetail(from: state) else {
             pendingMacFileClipboardFailureDetail = ""
+            clearResolvedMacFileClipboardFailureIfVisible(initial: initial)
             return
         }
 
@@ -1243,6 +1245,18 @@ exit "${status}"
         detailLabel.stringValue = "Could not send Mac file clipboard: \(detail)"
     }
 
+    private func clearResolvedMacFileClipboardFailureIfVisible(initial: Bool) {
+        guard !initial,
+              !isBusy,
+              transferProcess == nil,
+              statusLabel.stringValue == "Mac Clipboard File Missing" else {
+            return
+        }
+
+        statusLabel.stringValue = "Ready"
+        detailLabel.stringValue = "Mac file clipboard issue cleared."
+    }
+
     private func startWindowsFileClipboardFailureMonitor() {
         updateWindowsFileClipboardFailureStatus(initial: true)
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -1258,6 +1272,7 @@ exit "${status}"
               let modifiedAt = attributes[.modificationDate] as? Date else {
             windowsFileClipboardFailureStateSignature = ""
             pendingWindowsFileClipboardFailureDetail = ""
+            clearResolvedWindowsFileClipboardFailureIfVisible(initial: initial)
             return
         }
 
@@ -1274,6 +1289,7 @@ exit "${status}"
         let state = SettingsFile.parse(url: stateURL)
         guard let detail = windowsFileClipboardFailureDetail(from: state) else {
             pendingWindowsFileClipboardFailureDetail = ""
+            clearResolvedWindowsFileClipboardFailureIfVisible(initial: initial)
             return
         }
 
@@ -1313,6 +1329,18 @@ exit "${status}"
         pendingWindowsFileClipboardFailureDetail = ""
         statusLabel.stringValue = "Windows Clipboard File Missing"
         detailLabel.stringValue = "Could not receive Windows file clipboard: \(detail)"
+    }
+
+    private func clearResolvedWindowsFileClipboardFailureIfVisible(initial: Bool) {
+        guard !initial,
+              !isBusy,
+              transferProcess == nil,
+              statusLabel.stringValue == "Windows Clipboard File Missing" else {
+            return
+        }
+
+        statusLabel.stringValue = "Ready"
+        detailLabel.stringValue = "Windows file clipboard issue cleared."
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {

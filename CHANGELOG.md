@@ -29,6 +29,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The Companion GUI now watches stale Mac file clipboard export state and surfaces missing or unreadable Mac clipboard file paths in the status line while it is open.
 - Stale Mac file clipboard export failures now also use the existing transfer notification setting, so missing or unreadable copied files are visible even when the Companion window is closed.
 - Stale Windows-to-Mac file clipboard export failures are now mirrored back to macOS notifications and the Companion status line, making missing or unreadable Windows copied files visible from the Mac side.
+- The Companion status line now clears stale Mac and Windows file clipboard failure notices after the underlying clipboard issue is resolved, avoiding lingering false failure states.
 - Background Mac-to-Windows file clipboard sync now records confirmed TCP receive paths for the GUI's latest Windows receive action, and the open GUI watches that state so files copied from Finder are easier to reveal later.
 - The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
