@@ -25,6 +25,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
 - Oversized direct Mac-to-Windows transfers now ask the Windows GUI agent to put the received file paths onto the Windows clipboard after the receive-folder copy, so large drops can still be pasted when clipboard handoff succeeds.
+- Oversized direct Mac-to-Windows clipboard handoff now updates the Windows agent's echo-prevention state, so received large files are not immediately exported back to Mac as a new Windows-to-Mac copy.
 - Oversized background direct Mac-to-Windows file clipboard sends now leave the clipboard item retryable after a transient direct-transfer failure, so a temporary SSH/SCP hiccup does not require copying the file again.
 - The file transfer self-test now verifies the background Mac-to-Windows file clipboard path, including the Windows receive-folder copy and latest Windows receive state written from the TCP acknowledgement.
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.

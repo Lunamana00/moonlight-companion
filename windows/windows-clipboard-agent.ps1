@@ -814,9 +814,17 @@ function Invoke-DirectClipboardRequest {
 
     $ready = "no"
     $reason = ""
+    $normalizedId = ""
     try {
         if ($paths.Count -eq $pathCount -and $paths.Count -gt 0 -and (Set-FileDropClipboardPaths @($paths))) {
-            $ready = "yes"
+            $normalizedId = Get-FileDropIdFromPaths @($paths)
+            if (-not [string]::IsNullOrWhiteSpace($normalizedId)) {
+                $script:lastMacId = $requestId
+                $script:lastWindowsId = $normalizedId
+                $ready = "yes"
+            } else {
+                $reason = "clipboard-id-unavailable"
+            }
         } else {
             $reason = "clipboard-readback-mismatch"
         }
@@ -829,6 +837,9 @@ function Invoke-DirectClipboardRequest {
         "clipboard_ready=$ready",
         "imported_paths=$($paths.Count)"
     )
+    if (-not [string]::IsNullOrWhiteSpace($normalizedId)) {
+        $lines += "normalized_id=$normalizedId"
+    }
     if (-not [string]::IsNullOrWhiteSpace($reason)) {
         $lines += "reason=$reason"
     }

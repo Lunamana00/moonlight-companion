@@ -855,6 +855,17 @@ wait_for_mac_path() {
   return 1
 }
 
+assert_mac_path_absent() {
+  local directory="$1"
+  local relative_path="$2"
+  local path_type="${3:-Any}"
+  local attempts="${4:-16}"
+  if wait_for_mac_path "$directory" "$relative_path" "$path_type" "$attempts"; then
+    echo "Unexpected Mac receive-folder echo: ${relative_path}" >&2
+    return 1
+  fi
+}
+
 wait_for_mac_receive_state_id() {
   local expected_id="$1"
   local attempts="${2:-80}"
@@ -1496,6 +1507,7 @@ if [[ "$direct_temp_count" != "0" ]]; then
   cat "$limit_out" >&2
   exit 1
 fi
+assert_mac_path_absent "$transfer_mac_dir" "$limit_name" "File" 16
 remove_windows_file "$limit_name"
 echo "Mac -> Windows oversized direct transfer ok."
 
@@ -1571,6 +1583,8 @@ if [[ "$direct_temp_count" != "0" ]]; then
   cat "$limit_multi_out" >&2
   exit 1
 fi
+assert_mac_path_absent "$transfer_mac_dir" "$limit_multi_file_name" "File" 16
+assert_mac_path_absent "$transfer_mac_dir" "$limit_multi_dir_name" "Directory" 4
 remove_windows_file "$limit_multi_file_name"
 remove_windows_path "$limit_multi_dir_name"
 echo "Mac -> Windows oversized direct multi-item ok."
@@ -1812,6 +1826,11 @@ if [[ -z "$m2w_clipboard_limit_state_path_b64" || "$(decode_b64_value "$m2w_clip
   refresh_mac_transfer_services_with_config "$config"
   echo "Mac -> Windows oversized background file clipboard sync did not record a decodable imported Windows receive path." >&2
   cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if ! assert_mac_path_absent "$transfer_mac_dir" "$m2w_clipboard_limit_name" "File" 16; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
   exit 1
 fi
 write_mac_clipboard_suspend_state
