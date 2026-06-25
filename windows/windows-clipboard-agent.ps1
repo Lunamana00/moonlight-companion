@@ -865,6 +865,68 @@ function Copy-ItemUnique($source, $destDir) {
     return Copy-ItemUniqueNamed $source $destDir (Split-Path -Leaf $source)
 }
 
+function Get-UniqueDestinationPath($destDir, $name, $usedNames) {
+    $normalizedName = Get-NormalizedFileName $name
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($normalizedName)
+    $ext = [System.IO.Path]::GetExtension($normalizedName)
+    $candidate = $normalizedName
+    $index = 2
+    while ((Test-Path -LiteralPath (Join-Path $destDir $candidate)) -or $usedNames.Contains($candidate.ToLowerInvariant())) {
+        $candidate = if ([string]::IsNullOrEmpty($ext)) { "$stem-$index" } else { "$stem-$index$ext" }
+        $index++
+    }
+    [void]$usedNames.Add($candidate.ToLowerInvariant())
+    return Join-Path $destDir $candidate
+}
+
+function Copy-PayloadFilesAtomically($payloadDir, $items, $destDir) {
+    New-Item -ItemType Directory -Force -Path $destDir -ErrorAction Stop | Out-Null
+    $usedNames = New-Object 'System.Collections.Generic.HashSet[string]'
+    $planned = @()
+    foreach ($item in $items) {
+        $sourcePath = Join-Path $payloadDir $item.path
+        $targetPath = Get-UniqueDestinationPath $destDir $item.name $usedNames
+        $planned += [pscustomobject]@{
+            Source = $sourcePath
+            Target = $targetPath
+            Name = Split-Path -Leaf $targetPath
+        }
+    }
+
+    $stagingDir = Join-Path $destDir (".moonlight-companion-import-" + [guid]::NewGuid().ToString("N"))
+    $staged = @()
+    $moved = @()
+    New-Item -ItemType Directory -Path $stagingDir -ErrorAction Stop | Out-Null
+    try {
+        foreach ($entry in $planned) {
+            $stagedPath = Join-Path $stagingDir $entry.Name
+            Copy-Item -LiteralPath $entry.Source -Destination $stagedPath -Recurse -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $stagedPath)) {
+                throw "copy did not create staging destination: $stagedPath"
+            }
+            $stagedPath = Normalize-PathTreeNames $stagedPath
+            $staged += [pscustomobject]@{
+                Path = $stagedPath
+                Target = $entry.Target
+            }
+        }
+
+        foreach ($entry in $staged) {
+            Move-Item -LiteralPath $entry.Path -Destination $entry.Target -ErrorAction Stop
+            $moved += $entry.Target
+        }
+
+        Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $moved
+    } catch {
+        foreach ($path in $moved) {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
     $fileDropPaths = @($fileDropPaths)
     $filesDir = Join-Path $payloadDir "files"
@@ -1010,15 +1072,16 @@ function Import-ClipboardPayload($payloadDir) {
         "files" {
             $collection = New-Object System.Collections.Specialized.StringCollection
             $useTransferDir = -not [string]::IsNullOrWhiteSpace($script:transferWindowsDir)
-            if ($useTransferDir) {
-                New-Item -ItemType Directory -Force -Path $script:transferWindowsDir | Out-Null
-            }
             $targetPaths = @()
-            foreach ($item in $manifest.files) {
-                $sourcePath = Join-Path $payloadDir $item.path
-                $targetPath = if ($useTransferDir) { Copy-ItemUniqueNamed $sourcePath $script:transferWindowsDir $item.name } else { $sourcePath }
+            if ($useTransferDir) {
+                $targetPaths = @(Copy-PayloadFilesAtomically $payloadDir @($manifest.files) $script:transferWindowsDir)
+            } else {
+                foreach ($item in $manifest.files) {
+                    $targetPaths += (Join-Path $payloadDir $item.path)
+                }
+            }
+            foreach ($targetPath in $targetPaths) {
                 [void]$collection.Add($targetPath)
-                $targetPaths += $targetPath
             }
             [System.Windows.Forms.Clipboard]::SetFileDropList($collection)
             $manifest | Add-Member -NotePropertyName importedPaths -NotePropertyValue $targetPaths -Force

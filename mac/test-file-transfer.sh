@@ -243,6 +243,25 @@ verify_windows_agent_file_drop_export_guard() {
   fi
 }
 
+verify_windows_agent_file_import_guard() {
+  local script encoded output
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'; . \$agent; \$ErrorActionPreference = 'Stop'; \$root = Join-Path \$dir ('agent-import-guard-' + [guid]::NewGuid().ToString('N')); \$receive = Join-Path \$root 'receive'; New-Item -ItemType Directory -Force -Path \$root, \$receive | Out-Null; try { \$fileA = Join-Path \$root 'partial-a.txt'; \$fileB = Join-Path \$root 'partial-b.txt'; \$payload = Join-Path \$root 'payload'; Set-Content -LiteralPath \$fileA -Value 'partial import first file' -Encoding UTF8; Set-Content -LiteralPath \$fileB -Value 'partial import second file' -Encoding UTF8; New-Item -ItemType Directory -Force -Path \$payload | Out-Null; \$manifest = Export-FileDropPathsPayload \$payload @(\$fileA, \$fileB); if (\$null -eq \$manifest) { Write-Output 'export_missing'; exit 1 }; Remove-Item -LiteralPath (Join-Path (Join-Path \$payload 'files') 'partial-b.txt') -Force; \$script:transferWindowsDir = \$receive; \$failed = \$false; try { Import-ClipboardPayload \$payload | Out-Null } catch { \$failed = \$true }; if (-not \$failed) { Write-Output 'broken_import_succeeded'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$receive 'partial-a.txt')) { Write-Output 'partial_file_left'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$receive 'partial-b.txt')) { Write-Output 'missing_file_left'; exit 1 }; if (@(Get-ChildItem -LiteralPath \$receive -Force -Directory -Filter '.moonlight-companion-import-*' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'staging_left'; exit 1 }; Write-Output 'file_import_guard=ok' } finally { Remove-Item -LiteralPath \$root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue }"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent file import guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"file_import_guard=ok"* ]]; then
+    echo "Windows agent file import guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 write_windows_file() {
   local file_name="$1"
   local content="$2"
@@ -563,6 +582,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   MOONLIGHT_COMPANION_CONFIG="$config" "$deploy_agent" >/dev/null
   verify_windows_agent_settings
   verify_windows_agent_file_drop_export_guard
+  verify_windows_agent_file_import_guard
   echo "Windows agent ready."
 fi
 
