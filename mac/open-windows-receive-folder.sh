@@ -100,7 +100,11 @@ cleanup_stale_remote_scripts() {
 transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
 select_latest_import_literal="$(ps_single_quoted "$select_latest_import")"
 expected_id_literal="$(ps_single_quoted "$expected_id")"
-select_paths_literal="$(ps_array_literal "${select_paths[@]}")"
+if ((${#select_paths[@]} > 0)); then
+  select_paths_literal="$(ps_array_literal "${select_paths[@]}")"
+else
+  select_paths_literal="$(ps_array_literal)"
+fi
 dry_run_literal="$(ps_single_quoted "$dry_run")"
 read -r -d '' script <<POWERSHELL || true
 \$ErrorActionPreference = "Stop"
@@ -117,6 +121,15 @@ New-Item -ItemType Directory -Force -Path \$dir | Out-Null
 \$targetPath = \$dir
 \$selectedLatestImport = \$false
 \$openResult = "folder"
+
+function Decode-StateBase64([string]\$value) {
+  if ([string]::IsNullOrWhiteSpace(\$value)) { return "" }
+  try {
+    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\$value))
+  } catch {
+    return ""
+  }
+}
 
 if (\$explicitPaths.Count -gt 0) {
   \$validPaths = @()
@@ -165,7 +178,10 @@ if (\$explicitPaths.Count -gt 0) {
     \$importedCount = 0
     [void][int]::TryParse([string]\$state["imported_paths"], [ref]\$importedCount)
     \$stateId = [string]\$state["id"]
-    \$candidate = [string]\$state["imported_path_1"]
+    \$candidate = Decode-StateBase64 ([string]\$state["imported_path_1_b64"])
+    if ([string]::IsNullOrWhiteSpace(\$candidate)) {
+      \$candidate = [string]\$state["imported_path_1"]
+    }
     \$idMatches = [string]::IsNullOrWhiteSpace(\$expectedId) -or \$stateId -eq \$expectedId
     if (\$idMatches -and \$importedCount -eq 1 -and -not [string]::IsNullOrWhiteSpace(\$candidate) -and (Test-Path -LiteralPath \$candidate)) {
       \$targetPath = \$candidate

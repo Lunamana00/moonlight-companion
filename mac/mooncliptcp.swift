@@ -571,6 +571,10 @@ func writeState(path: String, values: [String: String]) throws {
     try fm.moveItem(atPath: tmp, toPath: path)
 }
 
+func base64StateValue(_ value: String) -> String {
+    Data(value.utf8).base64EncodedString()
+}
+
 func receiveStateValues(
     imported: [String: String],
     archiveHash: String,
@@ -588,7 +592,13 @@ func receiveStateValues(
     ]
 
     for (key, value) in imported {
-        if key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
+        if key.hasPrefix("file_path_"), !key.hasSuffix("_b64") {
+            values[key] = value
+            values["\(key)_b64"] = base64StateValue(value)
+        } else if key.hasPrefix("file_name_"), !key.hasSuffix("_b64") {
+            values[key] = value
+            values["\(key)_b64"] = base64StateValue(value)
+        } else if key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
             values[key] = value
         }
     }

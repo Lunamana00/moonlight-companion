@@ -974,6 +974,7 @@ exit "${status}"
         ]
         for (index, path) in latestWindowsReceivePaths.enumerated() {
             values["imported_path_\(index + 1)"] = path
+            values["imported_path_\(index + 1)_b64"] = base64StateValue(path)
         }
         writeSimpleState(values, to: latestWindowsReceiveStateURL())
         updateLatestWindowsReceiveButtonState()
@@ -993,7 +994,8 @@ exit "${status}"
 
         var paths: [String] = []
         for index in 1...importedPaths {
-            let path = state["imported_path_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let path = decodedStateValue(state["imported_path_\(index)_b64"]) ??
+                state["imported_path_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !path.isEmpty {
                 paths.append(path)
             }
@@ -1485,10 +1487,25 @@ exit "${status}"
         }
 
         return (1...count).compactMap { index in
-            let rawPath = state["file_path_\(index)"] ?? ""
-            let path = expandedUserPath(rawPath.trimmingCharacters(in: .whitespacesAndNewlines))
+            let rawPath = decodedStateValue(state["file_path_\(index)_b64"]) ??
+                state["file_path_\(index)"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let path = expandedUserPath(rawPath)
             return path.isEmpty ? nil : URL(fileURLWithPath: path)
         }
+    }
+
+    private func base64StateValue(_ value: String) -> String {
+        Data(value.utf8).base64EncodedString()
+    }
+
+    private func decodedStateValue(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              let data = Data(base64Encoded: value),
+              let decoded = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return decoded
     }
 
     private func existingFileURLs(from urls: [URL]) -> [URL] {

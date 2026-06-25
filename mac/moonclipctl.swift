@@ -654,8 +654,12 @@ func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {
     if !fileURLs.isEmpty {
         print("file_paths=\(fileURLs.count)")
         for (index, url) in fileURLs.enumerated() {
-            print("file_path_\(index + 1)=\(url.path)")
-            print("file_name_\(index + 1)=\(url.lastPathComponent.precomposedStringWithCanonicalMapping)")
+            let path = url.path
+            let name = url.lastPathComponent.precomposedStringWithCanonicalMapping
+            print("file_path_\(index + 1)=\(path)")
+            print("file_path_\(index + 1)_b64=\(Data(path.utf8).base64EncodedString())")
+            print("file_name_\(index + 1)=\(name)")
+            print("file_name_\(index + 1)_b64=\(Data(name.utf8).base64EncodedString())")
         }
     }
 }

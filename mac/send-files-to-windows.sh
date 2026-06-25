@@ -193,6 +193,37 @@ decode_imported_names_b64() {
   printf '%s' "$encoded" | /usr/bin/base64 -D 2>/dev/null | tr '\037' '\n' || true
 }
 
+base64_state_value() {
+  /usr/bin/base64 | tr -d '\n'
+}
+
+decode_state_b64() {
+  local encoded="$1"
+  [[ -n "$encoded" ]] || return 0
+  printf '%s' "$encoded" | /usr/bin/base64 -D 2>/dev/null || true
+}
+
+state_text_value() {
+  local state="$1"
+  local key="$2"
+  printf '%s\n' "$state" | state_value "$key"
+}
+
+state_path_value() {
+  local state="$1"
+  local key="$2"
+  local encoded value
+  encoded="$(state_text_value "$state" "${key}_b64")"
+  if [[ -n "$encoded" ]]; then
+    value="$(decode_state_b64 "$encoded")"
+    if [[ -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+  state_text_value "$state" "$key"
+}
+
 imported_path_names_from_state() {
   awk -F= '$1 ~ /^imported_path_[0-9]+$/ {
     value = substr($0, length($1) + 2)
@@ -292,9 +323,10 @@ write_transfer_result_state() {
     printf 'clipboard_ready=%s\n' "${clipboard_ready:-yes}"
     if [[ "${imported_paths:-0}" =~ ^[0-9]+$ ]]; then
       for ((index = 1; index <= imported_paths; index++)); do
-        imported_path="$(printf '%s\n' "${windows_import_state:-}" | state_value "imported_path_${index}")"
+        imported_path="$(state_path_value "${windows_import_state:-}" "imported_path_${index}")"
         if [[ -n "$imported_path" ]]; then
           printf 'imported_path_%s=%s\n' "$index" "$imported_path"
+          printf 'imported_path_%s_b64=%s\n' "$index" "$(printf '%s' "$imported_path" | base64_state_value)"
         fi
       done
     fi
@@ -583,6 +615,11 @@ function Write-KeyValueState(\$path, [string[]]\$lines) {
   Move-Item -LiteralPath \$tmpPath -Destination \$path -Force
 }
 
+function ConvertTo-StateBase64([string]\$value) {
+  if (\$null -eq \$value) { return "" }
+  return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$value))
+}
+
 \$remoteDir = Join-Path \$env:USERPROFILE ".moonlight-clipboard-sync"
 \$zipPath = Join-Path \$remoteDir "mac-to-windows-direct.zip"
 \$tmpZipPath = Join-Path \$remoteDir "mac-to-windows-direct.zip.tmp"
@@ -631,6 +668,7 @@ try {
 
   for (\$i = 0; \$i -lt \$targetPaths.Count; \$i++) {
     \$lines += "imported_path_\$(\$i + 1)=\$(\$targetPaths[\$i])"
+    \$lines += "imported_path_\$(\$i + 1)_b64=\$(ConvertTo-StateBase64 \$targetPaths[\$i])"
   }
 
   \$names = @()

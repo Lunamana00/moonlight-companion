@@ -600,6 +600,19 @@ remove_windows_receive_opener_test_script() {
     "cmd.exe /c del /Q \"${remote_dir}\\moonlight-open-windows-receive-stale-test.ps1\" 2>nul" >/dev/null 2>&1 || true
 }
 
+write_windows_import_state_with_b64_path() {
+  local import_id="$1"
+  local imported_path="$2"
+  local encoded_path script encoded import_id_literal encoded_path_literal
+  encoded_path="$(printf '%s' "$imported_path" | /usr/bin/base64 | tr -d '\n')"
+  import_id_literal="$(ps_single_quoted "$import_id")"
+  encoded_path_literal="$(ps_single_quoted "$encoded_path")"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; \$statePath = Join-Path \$dir 'mac-to-windows-import-state.txt'; \$lines = @(); \$lines += ('id=' + ${import_id_literal}); \$lines += 'kind=files'; \$lines += 'bytes=1'; \$lines += 'files=1'; \$lines += 'imported_paths=1'; \$lines += 'imported_path_1=C:\\MoonlightCompanion\\missing-path-for-b64-priority.txt'; \$lines += ('imported_path_1_b64=' + ${encoded_path_literal}); Set-Content -LiteralPath \$statePath -Value \$lines -Encoding UTF8"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
 create_windows_blocking_transfer_dir() {
   local script encoded
   script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$path = Join-Path \$env:TEMP ('moonlight-direct-blocker-' + [guid]::NewGuid().ToString('N')); Set-Content -LiteralPath \$path -Value 'moonlight direct transfer blocker' -Encoding UTF8; Write-Output \$path"
@@ -752,6 +765,12 @@ meta_value() {
   local key="$1"
   local path="$2"
   awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
+}
+
+decode_b64_value() {
+  local value="$1"
+  [[ -n "$value" ]] || return 0
+  printf '%s' "$value" | /usr/bin/base64 -D 2>/dev/null || true
 }
 
 update_receive_state_normalized_id() {
@@ -1200,8 +1219,14 @@ if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "dir
   exit 1
 fi
 limit_state_path="$(meta_value imported_path_1 "$limit_state")"
+limit_state_path_b64="$(meta_value imported_path_1_b64 "$limit_state")"
 if [[ "$limit_state_path" != *"$limit_name"* ]]; then
   echo "Mac -> Windows oversized payload did not write the imported Windows receive path to the GUI state." >&2
+  [[ -f "$limit_state" ]] && cat "$limit_state" >&2
+  exit 1
+fi
+if [[ -z "$limit_state_path_b64" || "$(decode_b64_value "$limit_state_path_b64")" != "$limit_state_path" ]]; then
+  echo "Mac -> Windows oversized payload did not write a decodable imported Windows receive path to the GUI state." >&2
   [[ -f "$limit_state" ]] && cat "$limit_state" >&2
   exit 1
 fi
@@ -1344,6 +1369,7 @@ if [[ ! -f "$m2w_state" || "$(meta_value id "$m2w_state")" != files:* ]]; then
   [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
   exit 1
 fi
+m2w_state_id="$(meta_value id "$m2w_state")"
 m2w_state_names_b64="$(meta_value imported_names_b64 "$m2w_state")"
 m2w_state_names="$(printf '%s' "$m2w_state_names_b64" | /usr/bin/base64 -D 2>/dev/null | tr '\037' '\n' || true)"
 if [[ -z "$m2w_state_names_b64" || "$m2w_state_names" != *"$m2w_collision_name"* ]]; then
@@ -1352,8 +1378,14 @@ if [[ -z "$m2w_state_names_b64" || "$m2w_state_names" != *"$m2w_collision_name"*
   exit 1
 fi
 m2w_state_path="$(meta_value imported_path_1 "$m2w_state")"
+m2w_state_path_b64="$(meta_value imported_path_1_b64 "$m2w_state")"
 if [[ "$m2w_state_path" != *"$m2w_collision_name"* ]]; then
   echo "Mac -> Windows transfer did not write the imported Windows receive path to the GUI result state." >&2
+  [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
+  exit 1
+fi
+if [[ -z "$m2w_state_path_b64" || "$(decode_b64_value "$m2w_state_path_b64")" != "$m2w_state_path" ]]; then
+  echo "Mac -> Windows transfer did not write a decodable imported Windows receive path to the GUI result state." >&2
   [[ -f "$m2w_state" ]] && cat "$m2w_state" >&2
   exit 1
 fi
@@ -1370,6 +1402,16 @@ windows_reveal_out="$(
 if ! grep -Fq "asked Windows to select the received item" <<<"$windows_reveal_out"; then
   echo "Windows receive reveal did not select the explicit imported path." >&2
   printf '%s\n' "$windows_reveal_out" >&2
+  exit 1
+fi
+write_windows_import_state_with_b64_path "$m2w_state_id" "$m2w_state_path"
+windows_latest_b64_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --latest-import --expected-id "$m2w_state_id"
+)"
+if ! grep -Fq "asked Windows to select the latest received item" <<<"$windows_latest_b64_reveal_out"; then
+  echo "Windows latest receive reveal did not select the b64 imported path when the plain path was stale." >&2
+  printf '%s\n' "$windows_latest_b64_reveal_out" >&2
   exit 1
 fi
 if windows_receive_opener_test_script_exists; then
@@ -1633,6 +1675,12 @@ if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_collision_name"; then
 fi
 if ! grep -Fqx "file_path_1=${transfer_mac_dir}/${w2m_collision_name}" "$tcp_state"; then
   echo "Windows -> Mac transfer did not record the latest received Mac file path." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+w2m_state_path_b64="$(meta_value file_path_1_b64 "$tcp_state")"
+if [[ -z "$w2m_state_path_b64" || "$(decode_b64_value "$w2m_state_path_b64")" != "${transfer_mac_dir}/${w2m_collision_name}" ]]; then
+  echo "Windows -> Mac transfer did not record a decodable latest received Mac file path." >&2
   [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
   exit 1
 fi

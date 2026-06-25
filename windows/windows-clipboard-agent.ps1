@@ -733,6 +733,11 @@ function Write-KeyValueState($path, [string[]]$lines) {
     Move-Item -LiteralPath $tmpPath -Destination $path -Force
 }
 
+function ConvertTo-StateBase64([string]$value) {
+    if ($null -eq $value) { return "" }
+    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($value))
+}
+
 function Write-MacImportState($manifest, $archiveHash) {
     if ($null -eq $manifest) { return }
 
@@ -757,6 +762,7 @@ function Write-MacImportState($manifest, $archiveHash) {
 
     for ($i = 0; $i -lt $paths.Count; $i++) {
         $lines += "imported_path_$($i + 1)=$($paths[$i])"
+        $lines += "imported_path_$($i + 1)_b64=$(ConvertTo-StateBase64 $paths[$i])"
     }
     $names = @()
     foreach ($path in $paths) {
