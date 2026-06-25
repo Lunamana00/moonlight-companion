@@ -365,6 +365,71 @@ verify_windows_agent_file_drop_export_guard() {
   fi
 }
 
+verify_windows_agent_file_drop_failure_state() {
+  local script encoded output
+  script="$(cat <<'POWERSHELL'
+$ErrorActionPreference = 'Stop'
+$dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
+$agent = Join-Path $dir 'windows-clipboard-agent.ps1'
+$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'
+. $agent
+$ErrorActionPreference = 'Stop'
+$root = Join-Path $dir ('agent-export-failure-state-' + [guid]::NewGuid().ToString('N'))
+$statePath = Join-Path $dir 'windows-file-clipboard-failure-state.txt'
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+try {
+    Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$statePath.tmp" -Force -ErrorAction SilentlyContinue
+    $script:lastWindowsExportFailure = ''
+    $valid = Join-Path $root 'valid.txt'
+    $missing = Join-Path $root 'missing.txt'
+    $payload = Join-Path $root 'broken-payload'
+    $validPayload = Join-Path $root 'valid-payload'
+    Set-Content -LiteralPath $valid -Value 'valid windows failure state item' -Encoding UTF8
+    New-Item -ItemType Directory -Force -Path $payload, $validPayload | Out-Null
+    $brokenResult = Export-FileDropPathsPayload $payload @($valid, $missing)
+    if ($null -ne $brokenResult) { Write-Output 'broken_result_not_null'; exit 1 }
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { Write-Output 'failure_state_missing'; exit 1 }
+    $state = Read-KeyValueState $statePath
+    $message = ConvertFrom-StateBase64 ([string]$state['message_b64'])
+    $sourcePath = ConvertFrom-StateBase64 ([string]$state['source_path_b64'])
+    if ([string]$state['status'] -ne 'stale-windows-file-clipboard') { Write-Output 'failure_state_bad_status'; exit 1 }
+    if ($message -notlike '*source unavailable*' -or $message -notlike "*$missing*" -or $message -notlike '*source path is missing*') { Write-Output 'failure_state_bad_message'; exit 1 }
+    if ($sourcePath -ne $missing) { Write-Output 'failure_state_bad_source'; exit 1 }
+    $updatedAt = [string]$state['updated_at']
+    Start-Sleep -Milliseconds 1200
+    $secondResult = Export-FileDropPathsPayload $payload @($valid, $missing)
+    if ($null -ne $secondResult) { Write-Output 'second_broken_result_not_null'; exit 1 }
+    $secondState = Read-KeyValueState $statePath
+    if ([string]$secondState['updated_at'] -ne $updatedAt) { Write-Output 'failure_state_duplicate_rewrite'; exit 1 }
+    $validResult = Export-FileDropPathsPayload $validPayload @($valid)
+    if ($null -eq $validResult) { Write-Output 'valid_result_missing'; exit 1 }
+    if (Test-Path -LiteralPath $statePath) { Write-Output 'failure_state_not_cleared'; exit 1 }
+    Write-Output 'file_drop_failure_state=ok'
+} finally {
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$statePath.tmp" -Force -ErrorAction SilentlyContinue
+    Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue
+}
+POWERSHELL
+)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent file-drop failure state check failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"file_drop_failure_state=ok"* ]]; then
+    echo "Windows agent file-drop failure state output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 verify_windows_agent_file_import_guard() {
   local script encoded output
   script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'; . \$agent; \$ErrorActionPreference = 'Stop'; \$root = Join-Path \$dir ('agent-import-guard-' + [guid]::NewGuid().ToString('N')); \$receive = Join-Path \$root 'receive'; New-Item -ItemType Directory -Force -Path \$root, \$receive | Out-Null; try { \$fileA = Join-Path \$root 'partial-a.txt'; \$fileB = Join-Path \$root 'partial-b.txt'; \$payload = Join-Path \$root 'payload'; Set-Content -LiteralPath \$fileA -Value 'partial import first file' -Encoding UTF8; Set-Content -LiteralPath \$fileB -Value 'partial import second file' -Encoding UTF8; New-Item -ItemType Directory -Force -Path \$payload | Out-Null; \$manifest = Export-FileDropPathsPayload \$payload @(\$fileA, \$fileB); if (\$null -eq \$manifest) { Write-Output 'export_missing'; exit 1 }; Remove-Item -LiteralPath (Join-Path (Join-Path \$payload 'files') 'partial-b.txt') -Force; \$script:transferWindowsDir = \$receive; \$failed = \$false; try { Import-ClipboardPayload \$payload | Out-Null } catch { \$failed = \$true }; if (-not \$failed) { Write-Output 'broken_import_succeeded'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$receive 'partial-a.txt')) { Write-Output 'partial_file_left'; exit 1 }; if (Test-Path -LiteralPath (Join-Path \$receive 'partial-b.txt')) { Write-Output 'missing_file_left'; exit 1 }; if (@(Get-ChildItem -LiteralPath \$receive -Force -Directory -Filter '.moonlight-companion-import-*' -ErrorAction SilentlyContinue).Count -gt 0) { Write-Output 'staging_left'; exit 1 }; Write-Output 'file_import_guard=ok' } finally { Remove-Item -LiteralPath \$root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue }"
@@ -1172,6 +1237,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   MOONLIGHT_COMPANION_CONFIG="$config" "$deploy_agent" >/dev/null
   verify_windows_agent_settings
   verify_windows_agent_file_drop_export_guard
+  verify_windows_agent_file_drop_failure_state
   verify_windows_agent_file_import_guard
   verify_windows_agent_receive_staging_cleanup
   verify_windows_agent_tcp_receive_timeout

@@ -28,6 +28,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Background Mac-to-Windows clipboard sync now logs stale Mac file clipboard source failures once per distinct failure, making missing or unreadable Finder clipboard paths easier to diagnose without flooding the log.
 - The Companion GUI now watches stale Mac file clipboard export state and surfaces missing or unreadable Mac clipboard file paths in the status line while it is open.
 - Stale Mac file clipboard export failures now also use the existing transfer notification setting, so missing or unreadable copied files are visible even when the Companion window is closed.
+- Stale Windows-to-Mac file clipboard export failures are now mirrored back to macOS notifications and the Companion status line, making missing or unreadable Windows copied files visible from the Mac side.
 - Background Mac-to-Windows file clipboard sync now records confirmed TCP receive paths for the GUI's latest Windows receive action, and the open GUI watches that state so files copied from Finder are easier to reveal later.
 - The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
@@ -38,6 +39,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
 - The file transfer self-test now verifies that multi-item Windows receive clipboard restore puts all latest Mac-to-Windows received paths back onto the Windows clipboard.
 - The file transfer self-test now verifies Windows-to-Mac SSH fallback multi-item pulls, including folder contents, empty nested folders, latest receive state, and loop-prevention.
+- The file transfer self-test now verifies stale Windows file clipboard failure state, including base64 state fields, duplicate suppression, and clearing after a valid file export.
 - Oversized direct Mac-to-Windows sends now clean stale direct-transfer artifacts before upload and after upload/setup failures, making immediate retry safer after an interrupted SSH/SCP step.
 - The file transfer self-test now verifies that multi-item Windows-to-Mac receives can be restored to the Mac clipboard without copying received files into temporary payloads or echoing them back to Windows.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.

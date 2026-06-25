@@ -11,6 +11,7 @@ $windowsTmpZip = Join-Path $dir "windows-to-mac.tmp.zip"
 $macImportState = Join-Path $dir "mac-to-windows-import-state.txt"
 $directClipboardRequest = Join-Path $dir "direct-clipboard-request.txt"
 $directClipboardResponse = Join-Path $dir "direct-clipboard-response.txt"
+$windowsFileClipboardFailureState = Join-Path $dir "windows-file-clipboard-failure-state.txt"
 $exportRoot = Join-Path $dir "windows-payloads"
 $importDir = Join-Path $dir "imported-mac-payload"
 $normalizedDir = Join-Path $dir "windows-normalized-payload"
@@ -763,6 +764,33 @@ function ConvertFrom-StateBase64([string]$value) {
     }
 }
 
+function Clear-WindowsFileClipboardFailureState {
+    $script:lastWindowsExportFailure = ""
+    Remove-Item -LiteralPath $windowsFileClipboardFailureState -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$windowsFileClipboardFailureState.tmp" -Force -ErrorAction SilentlyContinue
+}
+
+function Write-WindowsFileClipboardFailureState([string]$message, [string]$sourcePath) {
+    $message = if ($null -eq $message) { "" } else { $message.Trim() }
+    if ([string]::IsNullOrWhiteSpace($message)) { return }
+
+    $signature = "$sourcePath`n$message"
+    if ($script:lastWindowsExportFailure -eq $signature) {
+        return
+    }
+
+    $script:lastWindowsExportFailure = $signature
+    $lines = @(
+        "status=stale-windows-file-clipboard",
+        "message=$message",
+        "message_b64=$(ConvertTo-StateBase64 $message)",
+        "source_path=$sourcePath",
+        "source_path_b64=$(ConvertTo-StateBase64 $sourcePath)",
+        "updated_at=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+    )
+    Write-KeyValueState $windowsFileClipboardFailureState $lines
+}
+
 function Set-FileDropClipboardPaths([string[]]$paths) {
     if ($null -eq $paths -or $paths.Count -le 0) { return $false }
 
@@ -1140,6 +1168,7 @@ function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
     }
 
     if ($completeFileDrop -and $items.Count -eq $fileDropPaths.Count -and $items.Count -gt 0) {
+        Clear-WindowsFileClipboardFailureState
         $id = "files:" + (Get-StringHash (($hashLines | Sort-Object) -join "`n"))
         $manifest = [pscustomobject]@{
             version = 2
@@ -1156,10 +1185,13 @@ function Export-FileDropPathsPayload($payloadDir, $fileDropPaths) {
     }
 
     if ([string]::IsNullOrWhiteSpace($failedFileDropPath)) {
+        $failureMessage = "no readable file-drop items were available"
         Write-AgentLog "skip Windows -> Mac file clipboard; no readable file-drop items were available"
     } else {
+        $failureMessage = "source unavailable '$failedFileDropPath': $failedFileDropReason"
         Write-AgentLog ("skip Windows -> Mac file clipboard; source unavailable '{0}': {1}" -f $failedFileDropPath, $failedFileDropReason)
     }
+    Write-WindowsFileClipboardFailureState $failureMessage $failedFileDropPath
     Remove-Item -LiteralPath $filesDir -Recurse -Force -ErrorAction SilentlyContinue
     return $null
 }
@@ -1173,6 +1205,7 @@ function Export-ClipboardPayload($payloadDir) {
     }
 
     if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
+        Clear-WindowsFileClipboardFailureState
         $imagePath = Join-Path $payloadDir "image.png"
         $image = [System.Windows.Forms.Clipboard]::GetImage()
         if ($null -ne $image) {
@@ -1195,6 +1228,7 @@ function Export-ClipboardPayload($payloadDir) {
     }
 
     if ([System.Windows.Forms.Clipboard]::ContainsText()) {
+        Clear-WindowsFileClipboardFailureState
         $text = [System.Windows.Forms.Clipboard]::GetText()
         if (-not [string]::IsNullOrEmpty($text)) {
             $textPath = Join-Path $payloadDir "text.txt"
@@ -1216,6 +1250,7 @@ function Export-ClipboardPayload($payloadDir) {
         }
     }
 
+    Clear-WindowsFileClipboardFailureState
     return $null
 }
 

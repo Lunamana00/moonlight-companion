@@ -49,6 +49,7 @@ transfer_oversize_direct="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 latest_windows_receive_state="${MOONLIGHT_LATEST_WINDOWS_RECEIVE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt}"
 mac_file_clipboard_failure_state="${MOONLIGHT_MAC_FILE_CLIPBOARD_FAILURE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/mac-file-clipboard-failure-state.txt}"
+windows_file_clipboard_failure_state="${MOONLIGHT_WINDOWS_FILE_CLIPBOARD_FAILURE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/windows-file-clipboard-failure-state.txt}"
 
 remote_dir=".moonlight-clipboard-sync"
 remote_mac_zip="${remote_dir}/mac-to-windows.zip"
@@ -56,6 +57,7 @@ remote_mac_tmp="${remote_dir}/mac-to-windows.zip.tmp"
 remote_mac_zip_cmd="${remote_dir}\\mac-to-windows.zip"
 remote_mac_tmp_cmd="${remote_dir}\\mac-to-windows.zip.tmp"
 remote_windows_zip="${remote_dir}/windows-to-mac.zip"
+remote_windows_file_clipboard_failure_state="${remote_dir}/windows-file-clipboard-failure-state.txt"
 
 ssh_opts=(
   -q
@@ -690,6 +692,26 @@ end run
 ' "$subtitle" "$body" >/dev/null 2>&1 || true
 }
 
+sync_windows_file_clipboard_failure_state() {
+  local state_dir tmp_state new_hash old_hash
+  state_dir="$(dirname "$windows_file_clipboard_failure_state")"
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  tmp_state="${windows_file_clipboard_failure_state}.tmp"
+
+  if scp "${scp_opts[@]}" "${remote}:${remote_windows_file_clipboard_failure_state}" "$tmp_state" >/dev/null 2>&1; then
+    new_hash="$(file_hash "$tmp_state" 2>/dev/null || true)"
+    old_hash="$(file_hash "$windows_file_clipboard_failure_state" 2>/dev/null || true)"
+    if [[ -n "$new_hash" && "$new_hash" != "$old_hash" ]]; then
+      mv "$tmp_state" "$windows_file_clipboard_failure_state"
+      notify_windows_file_clipboard_failure "$windows_file_clipboard_failure_state"
+    else
+      rm -f "$tmp_state"
+    fi
+  else
+    rm -f "$tmp_state" "$windows_file_clipboard_failure_state"
+  fi
+}
+
 notify_windows_files_received() {
   local meta_path="$1"
   local kind detail reveal_enabled notification_body
@@ -728,6 +750,15 @@ notify_mac_file_clipboard_failure() {
   local message="$1"
   transfer_ui_quiet && return 0
   display_macos_notification "Mac file clipboard was not sent" "$message"
+}
+
+notify_windows_file_clipboard_failure() {
+  local state_path="$1"
+  local message
+  transfer_ui_quiet && return 0
+  message="$(payload_state_value message "$state_path")"
+  [[ -n "$message" ]] || return 0
+  display_macos_notification "Windows file clipboard was not received" "$message"
 }
 
 run_helper() {
@@ -1005,6 +1036,7 @@ while true; do
   now="$(date +%s)"
   if awk "BEGIN { exit !(($now - $last_windows_poll) >= $windows_interval) }"; then
     last_windows_poll="$now"
+    sync_windows_file_clipboard_failure_state
     if download_from_windows "$windows_zip" 2>/dev/null; then
       archive_hash="$(file_hash "$windows_zip")"
       if [[ "$archive_hash" != "$last_windows_archive_hash" ]]; then

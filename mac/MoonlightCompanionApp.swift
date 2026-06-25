@@ -223,6 +223,7 @@ exit "${status}"
     private var pendingLatestWindowsReceiveSummary = ""
     private var pendingLatestWindowsReceivePathCount = 0
     private var pendingMacFileClipboardFailureDetail = ""
+    private var pendingWindowsFileClipboardFailureDetail = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -235,9 +236,11 @@ exit "${status}"
     private var latestMacReceiveTimer: Timer?
     private var latestWindowsReceiveTimer: Timer?
     private var macFileClipboardFailureTimer: Timer?
+    private var windowsFileClipboardFailureTimer: Timer?
     private var latestMacReceiveStateSignature = ""
     private var latestWindowsReceiveStateSignature = ""
     private var macFileClipboardFailureStateSignature = ""
+    private var windowsFileClipboardFailureStateSignature = ""
     private var dropOverlayManuallyShown = false
     private var dropOverlayMouseDownLocation: NSPoint?
     private var dropOverlayLastDragLocation: NSPoint?
@@ -292,6 +295,7 @@ exit "${status}"
         updateDropOverlayMonitor()
         startLatestMacReceiveMonitor()
         startMacFileClipboardFailureMonitor()
+        startWindowsFileClipboardFailureMonitor()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -733,7 +737,8 @@ exit "${status}"
         startQueuedDropsWhenIdle: Bool = true,
         showPendingMacReceiveWhenIdle: Bool = true,
         showPendingWindowsReceiveWhenIdle: Bool = true,
-        showPendingMacFileClipboardFailureWhenIdle: Bool = true
+        showPendingMacFileClipboardFailureWhenIdle: Bool = true,
+        showPendingWindowsFileClipboardFailureWhenIdle: Bool = true
     ) {
         isBusy = busy
         progressIndicator.isHidden = !busy
@@ -763,7 +768,8 @@ exit "${status}"
             startQueuedDropsWhenIdle ||
             showPendingMacReceiveWhenIdle ||
             showPendingWindowsReceiveWhenIdle ||
-            showPendingMacFileClipboardFailureWhenIdle
+            showPendingMacFileClipboardFailureWhenIdle ||
+            showPendingWindowsFileClipboardFailureWhenIdle
         ) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
@@ -779,7 +785,12 @@ exit "${status}"
                     return
                 }
                 if showPendingMacFileClipboardFailureWhenIdle {
-                    self.showPendingMacFileClipboardFailureIfIdle()
+                    if self.showPendingMacFileClipboardFailureIfIdle() {
+                        return
+                    }
+                }
+                if showPendingWindowsFileClipboardFailureWhenIdle {
+                    self.showPendingWindowsFileClipboardFailureIfIdle()
                 }
             }
         }
@@ -1155,6 +1166,11 @@ exit "${status}"
             .appendingPathComponent("Library/Application Support/MoonlightCompanion/mac-file-clipboard-failure-state.txt")
     }
 
+    private func windowsFileClipboardFailureStateURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MoonlightCompanion/windows-file-clipboard-failure-state.txt")
+    }
+
     private func startMacFileClipboardFailureMonitor() {
         updateMacFileClipboardFailureStatus(initial: true)
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -1225,6 +1241,78 @@ exit "${status}"
         pendingMacFileClipboardFailureDetail = ""
         statusLabel.stringValue = "Mac Clipboard File Missing"
         detailLabel.stringValue = "Could not send Mac file clipboard: \(detail)"
+    }
+
+    private func startWindowsFileClipboardFailureMonitor() {
+        updateWindowsFileClipboardFailureStatus(initial: true)
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateWindowsFileClipboardFailureStatus(initial: false)
+        }
+        windowsFileClipboardFailureTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func updateWindowsFileClipboardFailureStatus(initial: Bool) {
+        let stateURL = windowsFileClipboardFailureStateURL()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            windowsFileClipboardFailureStateSignature = ""
+            pendingWindowsFileClipboardFailureDetail = ""
+            return
+        }
+
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let signature = "\(modifiedAt.timeIntervalSince1970):\(size)"
+        guard signature != windowsFileClipboardFailureStateSignature else {
+            if !initial {
+                showPendingWindowsFileClipboardFailureIfIdle()
+            }
+            return
+        }
+        windowsFileClipboardFailureStateSignature = signature
+
+        let state = SettingsFile.parse(url: stateURL)
+        guard let detail = windowsFileClipboardFailureDetail(from: state) else {
+            pendingWindowsFileClipboardFailureDetail = ""
+            return
+        }
+
+        if !initial {
+            if isBusy || transferProcess != nil {
+                pendingWindowsFileClipboardFailureDetail = detail
+            } else {
+                showWindowsFileClipboardFailureStatus(detail)
+            }
+        }
+    }
+
+    private func windowsFileClipboardFailureDetail(from state: [String: String]) -> String? {
+        let status = state["status"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard status == "stale-windows-file-clipboard" else {
+            return nil
+        }
+
+        let detail = decodedStateValue(state["message_b64"]) ??
+            state["message"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return detail.isEmpty ? nil : detail
+    }
+
+    @discardableResult
+    private func showPendingWindowsFileClipboardFailureIfIdle() -> Bool {
+        guard !isBusy,
+              transferProcess == nil,
+              !pendingWindowsFileClipboardFailureDetail.isEmpty else {
+            return false
+        }
+
+        showWindowsFileClipboardFailureStatus(pendingWindowsFileClipboardFailureDetail)
+        return true
+    }
+
+    private func showWindowsFileClipboardFailureStatus(_ detail: String) {
+        pendingWindowsFileClipboardFailureDetail = ""
+        statusLabel.stringValue = "Windows Clipboard File Missing"
+        detailLabel.stringValue = "Could not receive Windows file clipboard: \(detail)"
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
@@ -2910,6 +2998,7 @@ exit "${status}"
         latestMacReceiveTimer?.invalidate()
         latestWindowsReceiveTimer?.invalidate()
         macFileClipboardFailureTimer?.invalidate()
+        windowsFileClipboardFailureTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()
         dropStripWindow?.close()
