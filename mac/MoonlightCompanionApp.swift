@@ -165,6 +165,7 @@ enum SettingsFile {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static let transferProgressPrefix = "__MOONLIGHT_COMPANION_PROGRESS__ "
+    private static let queuedDropDetailMarker = " Queued drop: "
     private static let cancellableShellWrapper = #"""
 set -m
 child_pid=
@@ -779,9 +780,25 @@ exit "${status}"
         let queueText = queuedFileDrops.count == 1
             ? "1 drop queued"
             : "\(queuedFileDrops.count) drops queued"
-        statusLabel.stringValue = "Files Queued"
-        detailLabel.stringValue = "\(summary.detail) queued. \(queueText); it will send after the current operation."
+        appendQueuedDropNotice("\(summary.detail) queued. \(queueText); it will send after the current operation.")
         return true
+    }
+
+    private func appendQueuedDropNotice(_ notice: String) {
+        let currentDetail = detailWithoutQueuedDropNotice()
+        if currentDetail.isEmpty {
+            detailLabel.stringValue = notice
+        } else {
+            detailLabel.stringValue = "\(currentDetail)\(Self.queuedDropDetailMarker)\(notice)"
+        }
+    }
+
+    private func detailWithoutQueuedDropNotice() -> String {
+        let detail = detailLabel.stringValue
+        guard let markerRange = detail.range(of: Self.queuedDropDetailMarker) else {
+            return detail
+        }
+        return String(detail[..<markerRange.lowerBound])
     }
 
     @discardableResult
@@ -2250,12 +2267,10 @@ exit "${status}"
         }
 
         let wasAlreadyBusy = isBusy || transferProcess != nil
+        let itemText = receivers.count == 1 ? "1 promised item" : "\(receivers.count) promised items"
         if wasAlreadyBusy {
-            let itemText = receivers.count == 1 ? "1 promised item" : "\(receivers.count) promised items"
-            statusLabel.stringValue = "Files Queued"
-            detailLabel.stringValue = "Preparing \(itemText) from the drop; it will send after the current operation."
+            appendQueuedDropNotice("Preparing \(itemText) from the drop; it will send after the current operation.")
         } else {
-            let itemText = receivers.count == 1 ? "1 promised item" : "\(receivers.count) promised items"
             setBusy(true, status: "Preparing Drop", detail: "Receiving \(itemText) from the source app.")
         }
 
