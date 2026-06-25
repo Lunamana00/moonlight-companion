@@ -609,6 +609,13 @@ cleanup_mac_self_test_files() {
     -exec rm -rf {} + 2>/dev/null || true
 }
 
+cleanup_mac_receive_staging_test_dirs() {
+  local directory="$1"
+  find "$directory" -maxdepth 1 \
+    -name '.moonlight-companion-import-test-*' \
+    -exec rm -rf {} + 2>/dev/null || true
+}
+
 wait_for_mac_file() {
   local directory="$1"
   local file_name="$2"
@@ -848,6 +855,7 @@ cleanup_self_test_artifacts() {
   rm -f "$transfer_quiet_state"
   rm -rf "$tmp_dir"
   cleanup_mac_self_test_files "$transfer_mac_dir"
+  cleanup_mac_receive_staging_test_dirs "$transfer_mac_dir"
   remove_windows_fallback_zip
   remove_windows_mac_upload_artifacts
   remove_windows_receive_opener_test_script
@@ -898,6 +906,7 @@ fi
 
 mkdir -p "$transfer_mac_dir"
 cleanup_mac_self_test_files "$transfer_mac_dir"
+cleanup_mac_receive_staging_test_dirs "$transfer_mac_dir"
 cleanup_windows_self_test_files
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -919,6 +928,41 @@ if [[ -z "$metadata_path" || ! -f "$metadata_path" || "$(basename "$metadata_pat
 fi
 rm -f "$metadata_path" "${transfer_mac_dir}/${metadata_name}"
 echo "Received file metadata ok."
+
+echo "Testing Mac receive staging cleanup..."
+mac_staging_src="${tmp_dir}/moonlight-companion-transfer-test-mac-staging-cleanup-${stamp}.txt"
+mac_staging_payload="${tmp_dir}/mac-staging-cleanup-payload"
+mac_staging_out="${tmp_dir}/mac-staging-cleanup.txt"
+mac_staging_stale="${transfer_mac_dir}/.moonlight-companion-import-test-stale-${stamp}"
+mac_staging_fresh="${transfer_mac_dir}/.moonlight-companion-import-test-fresh-${stamp}"
+printf 'Moonlight Companion Mac receive staging cleanup test %s\n' "$stamp" > "$mac_staging_src"
+rm -rf "$mac_staging_stale" "$mac_staging_fresh"
+mkdir -p "$mac_staging_stale" "$mac_staging_fresh"
+printf 'old interrupted Mac receive staging %s\n' "$stamp" > "${mac_staging_stale}/partial.txt"
+printf 'fresh active Mac receive staging %s\n' "$stamp" > "${mac_staging_fresh}/partial.txt"
+touch -t 202401010101 "$mac_staging_stale"
+touch "$mac_staging_fresh"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$mac_staging_payload" "$mac_staging_src" >/dev/null
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" import "$mac_staging_payload" > "$mac_staging_out"
+mac_staging_imported="$(meta_value "file_path_1" "$mac_staging_out")"
+if [[ -z "$mac_staging_imported" || ! -f "$mac_staging_imported" ]]; then
+  echo "Mac receive staging cleanup import did not create the received file." >&2
+  cat "$mac_staging_out" >&2
+  exit 1
+fi
+if [[ -e "$mac_staging_stale" ]]; then
+  echo "Mac receive staging cleanup left an old interrupted staging folder." >&2
+  ls -la "$transfer_mac_dir" >&2
+  exit 1
+fi
+if [[ ! -d "$mac_staging_fresh" ]]; then
+  echo "Mac receive staging cleanup removed a fresh staging folder unexpectedly." >&2
+  ls -la "$transfer_mac_dir" >&2
+  exit 1
+fi
+rm -f "$mac_staging_imported"
+rm -rf "$mac_staging_fresh"
+echo "Mac receive staging cleanup ok."
 
 echo "Testing Windows -> Mac partial import rejection..."
 partial_import_file_a="${tmp_dir}/moonlight-companion-transfer-test-partial-import-a-${stamp}.txt"

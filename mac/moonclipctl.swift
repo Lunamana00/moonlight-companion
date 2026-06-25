@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Dispatch
 import Foundation
 
 struct Manifest: Codable {
@@ -59,6 +60,7 @@ let urlPasteboardTypes: [NSPasteboard.PasteboardType] = [
     .fileURL,
     .URL
 ]
+let staleReceiveStagingAge: TimeInterval = 6 * 60 * 60
 
 func sha256Hex(_ data: Data) -> String {
     hexString(SHA256.hash(data: data))
@@ -576,6 +578,7 @@ func transferMacDirectory() -> URL? {
 
 func copyFiles(_ urls: [URL], to directory: URL) throws -> [URL] {
     try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    removeStaleReceiveStagingDirectories(in: directory)
     var used = Set<String>()
     let destinations = urls.map { source in
         uniqueDestination(for: source, in: directory, used: &used)
@@ -608,6 +611,37 @@ func copyFiles(_ urls: [URL], to directory: URL) throws -> [URL] {
     }
 
     return destinations.map(\.standardizedFileURL)
+}
+
+func removeStaleReceiveStagingDirectories(in directory: URL, olderThan maxAge: TimeInterval = staleReceiveStagingAge) {
+    let minutes = max(Int(max(maxAge, 60) / 60), 1)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/find")
+    process.arguments = [
+        directory.path,
+        "-maxdepth", "1",
+        "-type", "d",
+        "-name", ".moonlight-companion-import-*",
+        "-mmin", "+\(minutes)",
+        "-exec", "/bin/rm", "-rf", "{}", "+"
+    ]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in
+        finished.signal()
+    }
+
+    do {
+        try process.run()
+    } catch {
+        return
+    }
+
+    if finished.wait(timeout: .now() + 2) == .timedOut {
+        process.terminate()
+    }
 }
 
 func printManifest(_ manifest: Manifest, fileURLs: [URL] = []) {

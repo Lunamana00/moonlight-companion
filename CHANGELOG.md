@@ -17,6 +17,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Queued promised-file drop failures no longer overwrite the status of the transfer, reveal, or test that is already running.
 - Windows-to-Mac file clipboard exports now fail as a whole when any source path is missing or unreadable, instead of falling through to another clipboard format or leaving partial payload files behind.
 - Windows-to-Mac Mac receive-folder imports now stage received files before moving them into place, so a broken payload cannot leave only some files in the receive folder.
+- Windows-to-Mac Mac receive-folder imports now remove stale hidden staging folders left by interrupted older receives when the next Mac receive-folder import begins.
 - Mac-to-Windows Windows receive-folder imports now stage received files before moving them into place, preventing broken payloads from leaving partial files on Windows.
 - Windows receive-folder imports now remove stale hidden staging folders left by interrupted older transfers when the Windows agent starts or the next receive-folder import begins.
 - Oversized Mac-to-Windows direct receive-folder transfers now stage payloads in a hidden Windows folder before moving them into place, so large direct copies do not expose partial results.
