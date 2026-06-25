@@ -179,6 +179,7 @@ exit "${status}"
     private var queuedFileDrops: [QueuedFileDrop] = []
     private var latestMacReceiveURLs: [URL] = []
     private var pendingLatestMacReceiveURLs: [URL] = []
+    private var latestWindowsReceiveID = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -225,6 +226,7 @@ exit "${status}"
         self.resourceURL = resourceURL
         settings = SettingsFile.load(resourceURL: resourceURL)
         buildWindow()
+        loadLatestWindowsReceiveState()
         updateDropOverlayMonitor()
         startLatestMacReceiveMonitor()
     }
@@ -323,6 +325,7 @@ exit "${status}"
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealWindowsReceiveButton = NSButton(title: "Reveal Last Windows Receive", target: self, action: #selector(revealLatestWindowsReceive))
         revealWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        revealWindowsReceiveButton.isEnabled = false
         cancelTransferButton = NSButton(title: "Cancel", target: self, action: #selector(cancelTransferOperation))
         cancelTransferButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton.isEnabled = false
@@ -622,7 +625,7 @@ exit "${status}"
         openMacReceiveButton?.isEnabled = !busy
         revealMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
         openWindowsReceiveButton?.isEnabled = !busy
-        revealWindowsReceiveButton?.isEnabled = !busy
+        revealWindowsReceiveButton?.isEnabled = !busy && !latestWindowsReceiveID.isEmpty
         cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
@@ -736,6 +739,68 @@ exit "${status}"
 
     private func updateLatestMacReceiveButtonState() {
         revealMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
+    }
+
+    private func latestWindowsReceiveStateURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt")
+    }
+
+    private func loadLatestWindowsReceiveState() {
+        let state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
+        let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
+        latestWindowsReceiveID = (!id.isEmpty && confirmation != "pending" && importedPaths > 0) ? id : ""
+        updateLatestWindowsReceiveButtonState()
+    }
+
+    private func recordLatestWindowsReceiveState(_ state: [String: String]) {
+        let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
+        guard !id.isEmpty,
+              confirmation != "pending",
+              importedPaths > 0 else {
+            clearLatestWindowsReceiveState()
+            return
+        }
+
+        latestWindowsReceiveID = id
+        let values = [
+            "bytes": state["bytes"] ?? "",
+            "confirmation": confirmation,
+            "id": id,
+            "imported_paths": "\(importedPaths)",
+            "kind": state["kind"] ?? ""
+        ]
+        writeSimpleState(values, to: latestWindowsReceiveStateURL())
+        updateLatestWindowsReceiveButtonState()
+    }
+
+    private func clearLatestWindowsReceiveState() {
+        latestWindowsReceiveID = ""
+        try? FileManager.default.removeItem(at: latestWindowsReceiveStateURL())
+        updateLatestWindowsReceiveButtonState()
+    }
+
+    private func writeSimpleState(_ values: [String: String], to url: URL) {
+        let text = values.keys.sorted()
+            .map { key in "\(key)=\(values[key] ?? "")" }
+            .joined(separator: "\n") + "\n"
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            detailLabel.stringValue = "Could not save latest Windows receive state: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateLatestWindowsReceiveButtonState() {
+        revealWindowsReceiveButton?.isEnabled = !isBusy && !latestWindowsReceiveID.isEmpty
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
@@ -998,15 +1063,25 @@ exit "${status}"
 
     @objc private func revealLatestWindowsReceive() {
         guard saveSettings() else { return }
+        let expectedImportID = latestWindowsReceiveID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !expectedImportID.isEmpty else {
+            clearLatestWindowsReceiveState()
+            statusLabel.stringValue = "No Windows Receive"
+            detailLabel.stringValue = "No confirmed latest Windows receive state is available yet."
+            return
+        }
 
         setBusy(true, status: "Revealing Windows Files", detail: "Asking Windows to select the latest received item.")
-        requestWindowsReceiveFolderOpen(selectLatestImport: true) { [weak self] succeeded, detail in
+        requestWindowsReceiveFolderOpen(selectLatestImport: true, expectedImportID: expectedImportID) { [weak self] succeeded, detail in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
                 return
             }
             if succeeded {
+                if self?.windowsReceiveRevealStateExpired(detail) == true {
+                    self?.clearLatestWindowsReceiveState()
+                }
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
                 self?.setBusy(false, status: status, detail: detail)
             } else {
@@ -1015,6 +1090,12 @@ exit "${status}"
                 self?.showFailure("Windows receive reveal failed.")
             }
         }
+    }
+
+    private func windowsReceiveRevealStateExpired(_ detail: String) -> Bool {
+        detail.contains("did not match") ||
+            detail.contains("state was unavailable") ||
+            detail.contains("item was unavailable")
     }
 
     private func requestWindowsReceiveFolderOpen(
@@ -1631,6 +1712,7 @@ exit "${status}"
                 if task.terminationStatus == 0 {
                     let transferResult = SettingsFile.parse(url: transferResultStateURL)
                     try? FileManager.default.removeItem(at: transferResultStateURL)
+                    self?.recordLatestWindowsReceiveState(transferResult)
                     var detail = text?.isEmpty == false ? text! : "\(summary.detail) sent to Windows."
                     var pasteSummary = "Ready on the Windows clipboard."
                     if pasteAfterSend {
@@ -1649,6 +1731,19 @@ exit "${status}"
                                 self?.clearQueuedFileDrops()
                                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
                                 return
+                            }
+                            if self?.windowsReceiveRevealStateExpired(openDetail) == true {
+                                self?.clearLatestWindowsReceiveState()
+                            } else if succeeded {
+                                var revealedResult = transferResult
+                                if (Int(revealedResult["imported_paths"] ?? "") ?? 0) <= 0 {
+                                    revealedResult["imported_paths"] = "1"
+                                }
+                                let revealConfirmation = revealedResult["confirmation"] ?? ""
+                                if revealConfirmation.isEmpty || revealConfirmation == "pending" {
+                                    revealedResult["confirmation"] = "windows-reveal"
+                                }
+                                self?.recordLatestWindowsReceiveState(revealedResult)
                             }
                             let suffix = succeeded
                                 ? " \(openDetail)."
