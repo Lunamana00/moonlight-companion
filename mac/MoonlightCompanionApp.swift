@@ -18,6 +18,7 @@ struct CompanionSettings {
         "MOONLIGHT_CAPTURE_SYSTEM_KEYS",
         "MOONLIGHT_ABSOLUTE_MOUSE",
         "MOONLIGHT_QUIT_EXISTING",
+        "MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH",
         "MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH",
         "MOONLIGHT_ACTIVATE_ON_LAUNCH",
         "MOONLIGHT_CAPSLOCK_HANGUL",
@@ -86,6 +87,7 @@ enum SettingsFile {
             let userValues = parse(url: userURL)
             values.merge(userValues) { _, new in new }
             applyQuietDefaultMigration(userValues: userValues, values: &values)
+            applyWindowVisibilityMigration(userValues: userValues, values: &values)
         }
         return CompanionSettings(values: values)
     }
@@ -100,6 +102,12 @@ enum SettingsFile {
             .lowercased()
         if revealMacDir == "yes" {
             values["MOONLIGHT_TRANSFER_REVEAL_MAC_DIR"] = "no"
+        }
+    }
+
+    private static func applyWindowVisibilityMigration(userValues: [String: String], values: inout [String: String]) {
+        if userValues["MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH"] == nil {
+            values["MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH"] = "no"
         }
     }
 
@@ -258,6 +266,13 @@ exit "${status}"
         true
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showMainWindow(activate: true)
+        }
+        return true
+    }
+
     private func buildWindow() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 880, height: 640),
@@ -317,6 +332,7 @@ exit "${status}"
         form.addArrangedSubview(sectionTitle("Controls"))
         form.addArrangedSubview(check("MOONLIGHT_ABSOLUTE_MOUSE", title: "Absolute mouse"))
         form.addArrangedSubview(check("MOONLIGHT_QUIT_EXISTING", title: "Quit existing Moonlight before launch"))
+        form.addArrangedSubview(check("MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH", title: "Show Companion window on launch"))
         form.addArrangedSubview(check("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH", title: "Bring Companion window forward on launch"))
         form.addArrangedSubview(check("MOONLIGHT_ACTIVATE_ON_LAUNCH", title: "Bring Moonlight forward after launch"))
         form.addArrangedSubview(check("MOONLIGHT_CAPSLOCK_HANGUL", title: "Caps Lock toggles Windows Han/Eng"))
@@ -462,7 +478,15 @@ exit "${status}"
         ])
 
         self.window = window
-        if settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH") {
+        if settings.bool("MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH") ||
+            settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH") {
+            showMainWindow(activate: settings.bool("MOONLIGHT_COMPANION_ACTIVATE_ON_LAUNCH"))
+        }
+    }
+
+    private func showMainWindow(activate: Bool) {
+        guard let window else { return }
+        if activate {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else {
@@ -952,6 +976,9 @@ exit "${status}"
     }
 
     private func showFailure(_ message: String) {
+        guard NSApp.isActive, window?.isVisible == true else {
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Moonlight Companion failed"
         alert.informativeText = failureDetails(prefix: message)
@@ -1703,7 +1730,6 @@ exit "${status}"
             )
             panel.title = "Moonlight Drop Overlay"
             panel.isFloatingPanel = true
-            panel.level = .statusBar
             panel.hidesOnDeactivate = false
             panel.isReleasedWhenClosed = false
             panel.isOpaque = false
@@ -1719,7 +1745,12 @@ exit "${status}"
         }
 
         positionDropOverlay(frame: moonlightFrame)
-        dropOverlayWindow?.orderFrontRegardless()
+        dropOverlayWindow?.level = manual ? .statusBar : .floating
+        if manual {
+            dropOverlayWindow?.orderFrontRegardless()
+        } else {
+            dropOverlayWindow?.orderFront(nil)
+        }
         dropOverlayButton.title = "Hide Moonlight Drop Overlay"
     }
 
@@ -1776,7 +1807,7 @@ exit "${status}"
         }
 
         positionDropStrip()
-        dropStripWindow?.orderFrontRegardless()
+        dropStripWindow?.orderFront(nil)
         dropStripButton.title = "Hide Moonlight Drop Strip"
     }
 
