@@ -719,6 +719,25 @@ for pasteboard_type in "public.url" "public.file-url"; do
 done
 echo "Helper URL pasteboard variants ok."
 
+echo "Testing Mac -> Windows unreadable source rejection..."
+unreadable_file="${tmp_dir}/moonlight-companion-transfer-test-unreadable-${stamp}.txt"
+unreadable_out="${tmp_dir}/mac-to-windows-unreadable-send.txt"
+printf 'Moonlight Companion unreadable source test %s\n' "$stamp" > "$unreadable_file"
+chmod 000 "$unreadable_file"
+if "${script_dir}/send-files-to-windows.sh" "$unreadable_file" > "$unreadable_out" 2>&1; then
+  chmod 600 "$unreadable_file"
+  echo "Mac -> Windows unreadable source was not rejected before transfer." >&2
+  cat "$unreadable_out" >&2
+  exit 1
+fi
+chmod 600 "$unreadable_file"
+if ! grep -Fq "cannot read dropped item:" "$unreadable_out" || ! grep -Fq "Check file permissions" "$unreadable_out"; then
+  echo "Mac -> Windows unreadable source rejection did not explain the permission issue." >&2
+  cat "$unreadable_out" >&2
+  exit 1
+fi
+echo "Mac -> Windows unreadable source rejection ok."
+
 echo "Testing Mac -> Windows oversized direct transfer..."
 limit_file="${tmp_dir}/moonlight-companion-transfer-test-limit-${stamp}.txt"
 limit_name="$(basename "$limit_file")"

@@ -128,6 +128,38 @@ source_payload_bytes() {
   printf '%s\n' "$total"
 }
 
+first_unreadable_path() {
+  local path="$1"
+  find "$path" \
+    \( ! -exec test -r {} \; -o \( -type d ! -exec test -x {} \; \) \) \
+    -print -quit 2>/dev/null || true
+}
+
+validate_source_paths() {
+  local path blocked
+  for path in "$@"; do
+    if [[ ! -e "$path" ]]; then
+      echo "missing dropped item: $path" >&2
+      exit 1
+    fi
+    if [[ ! -r "$path" ]]; then
+      echo "cannot read dropped item: $path. Check file permissions and try again." >&2
+      exit 1
+    fi
+    if [[ -d "$path" && ! -x "$path" ]]; then
+      echo "cannot open dropped folder: $path. Check folder permissions and try again." >&2
+      exit 1
+    fi
+    if [[ -d "$path" ]]; then
+      blocked="$(first_unreadable_path "$path")"
+      if [[ -n "$blocked" ]]; then
+        echo "cannot read item inside dropped folder: $blocked. Check file permissions and try again." >&2
+        exit 1
+      fi
+    fi
+  done
+}
+
 reject_oversized_payload() {
   local payload_bytes="$1"
   local bytes_text max_bytes_text
@@ -530,12 +562,7 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
-for path in "$@"; do
-  if [[ ! -e "$path" ]]; then
-    echo "missing path: $path" >&2
-    exit 1
-  fi
-done
+validate_source_paths "$@"
 
 MOONLIGHT_CLIPBOARD_MAX_BYTES="$(normalize_positive_int "$MOONLIGHT_CLIPBOARD_MAX_BYTES" 52428800)"
 progress "Checking transfer size."
