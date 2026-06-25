@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
 ssh_alias_exists() {
   [[ -f "${HOME}/.ssh/config" ]] && awk '
     /^[[:space:]]*Host[[:space:]]/ {
@@ -24,6 +26,7 @@ fi
 
 runtime_dir="${MOONLIGHT_CLIPBOARD_RUNTIME_DIR:-${HOME}/Library/Application Support/MoonlightClipboardSync}"
 helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
+file_sender="${MOONLIGHT_FILE_SENDER:-${script_dir}/send-files-to-windows.sh}"
 interval="${MOONLIGHT_CLIPBOARD_INTERVAL:-0.8}"
 windows_interval="${MOONLIGHT_CLIPBOARD_WINDOWS_INTERVAL:-2.0}"
 max_bytes="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
@@ -41,6 +44,7 @@ transfer_quiet_state="${MOONLIGHT_TRANSFER_QUIET_STATE:-${runtime_dir}/transfer-
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
+transfer_oversize_direct="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 latest_windows_receive_state="${MOONLIGHT_LATEST_WINDOWS_RECEIVE_STATE:-${HOME}/Library/Application Support/MoonlightCompanion/latest-windows-receive-state.txt}"
 
@@ -317,6 +321,25 @@ write_latest_windows_receive_state_from_ack() {
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$latest_windows_receive_state" 2>/dev/null || rm -f "$tmp_path"
 }
 
+write_latest_windows_receive_state_from_transfer_result() {
+  local state_path="$1"
+  local state state_id state_kind confirmation imported_paths state_dir tmp_path
+
+  [[ -f "$state_path" ]] || return 0
+  state="$(cat "$state_path")"
+  state_id="$(state_text_value "$state" id)"
+  state_kind="$(state_text_value "$state" kind)"
+  confirmation="$(state_text_value "$state" confirmation)"
+  imported_paths="$(state_text_value "$state" imported_paths)"
+  [[ -n "$state_id" && "$state_kind" == "files" && -n "$confirmation" && "$confirmation" != "pending" &&
+     "$imported_paths" =~ ^[0-9]+$ && "$imported_paths" -gt 0 ]] || return 0
+
+  state_dir="$(dirname "$latest_windows_receive_state")"
+  tmp_path="${latest_windows_receive_state}.tmp"
+  mkdir -p "$state_dir" 2>/dev/null || return 0
+  cp "$state_path" "$tmp_path" 2>/dev/null && mv "$tmp_path" "$latest_windows_receive_state" 2>/dev/null || rm -f "$tmp_path"
+}
+
 run_latest_windows_receive_ack_state_self_test() {
   local self_test_dir self_test_state meta_path expected_path expected_path_b64 ack_state actual_path actual_path_b64
   self_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-sync-latest-windows.XXXXXX")"
@@ -352,6 +375,44 @@ META
   fi
 
   echo "latest_windows_ack_state=ok"
+}
+
+send_oversized_files_direct_to_windows() {
+  local meta_path="$1"
+  local state_path output
+  local source_paths=()
+  local file_path
+
+  [[ "$(normalize_yes_no "$transfer_oversize_direct")" == "yes" ]] || return 2
+  [[ -x "$file_sender" ]] || {
+    log "skip Mac -> Windows files ($(payload_bytes "$meta_path")B); missing direct sender: $file_sender"
+    return 1
+  }
+
+  while IFS= read -r file_path || [[ -n "$file_path" ]]; do
+    [[ -n "$file_path" ]] && source_paths+=("$file_path")
+  done < <(payload_file_paths "$meta_path")
+  ((${#source_paths[@]} > 0)) || {
+    log "skip Mac -> Windows files ($(payload_bytes "$meta_path")B); no source paths for direct transfer"
+    return 1
+  }
+
+  state_path="${tmp_dir}/mac-to-windows-direct-state.txt"
+  rm -f "$state_path" "${state_path}.tmp"
+  if output="$(
+    MOONLIGHT_TRANSFER_RESULT_STATE="$state_path" \
+      MOONLIGHT_TRANSFER_PROGRESS_EVENTS=no \
+      "$file_sender" "${source_paths[@]}" 2>&1
+  )"; then
+    write_latest_windows_receive_state_from_transfer_result "$state_path"
+    log "Mac -> Windows files ($(payload_bytes "$meta_path")B) via ssh-direct; direct receive-folder copy"
+    [[ -n "$output" ]] && log "$output"
+    return 0
+  fi
+
+  log "Mac -> Windows oversized file clipboard direct transfer failed"
+  [[ -n "$output" ]] && log "$output"
+  return 1
 }
 
 dir_size_bytes() {
@@ -675,8 +736,12 @@ while true; do
       elif [[ "$mac_id" == "$last_windows_id" || "$mac_id" == "$last_mac_id" ]]; then
         last_mac_id="$mac_id"
       elif (( mac_bytes > max_bytes )); then
-        log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"
-        last_mac_id="$mac_id"
+        if [[ "$mac_kind" == "files" ]] && send_oversized_files_direct_to_windows "$mac_meta"; then
+          last_mac_id="$mac_id"
+        else
+          log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"
+          last_mac_id="$mac_id"
+        fi
       else
         zip_payload "$mac_payload" "$mac_zip"
         if upload_to_windows "$mac_zip"; then

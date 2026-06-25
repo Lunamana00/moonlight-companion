@@ -919,6 +919,15 @@ refresh_mac_transfer_services() {
   fi
 }
 
+refresh_mac_transfer_services_with_config() {
+  local config_path="$1"
+  MOONLIGHT_COMPANION_CONFIG="$config_path" "$start_services" >/dev/null
+  if ! mac_transfer_services_ready; then
+    echo "Mac transfer TCP receiver did not become ready." >&2
+    exit 1
+  fi
+}
+
 meta_value() {
   local key="$1"
   local path="$2"
@@ -1726,6 +1735,74 @@ fi
 write_mac_clipboard_suspend_state
 remove_windows_file "$m2w_clipboard_name"
 echo "Mac -> Windows background file clipboard sync ok."
+
+echo "Testing Mac -> Windows oversized background file clipboard sync..."
+m2w_clipboard_limit_file="${tmp_dir}/moonlight-companion-transfer-test-mac-clipboard-limit-${stamp}.txt"
+m2w_clipboard_limit_name="$(basename "$m2w_clipboard_limit_file")"
+m2w_clipboard_limit_payload="${tmp_dir}/mac-to-windows-clipboard-limit-payload"
+m2w_clipboard_limit_meta="${tmp_dir}/mac-to-windows-clipboard-limit-meta.txt"
+m2w_clipboard_limit_config="${tmp_dir}/moonlight-companion-background-limit.conf"
+printf 'Moonlight Companion Mac oversized clipboard sync test %s\n' "$stamp" > "$m2w_clipboard_limit_file"
+m2w_clipboard_limit_hash="$(mac_file_sha256 "$m2w_clipboard_limit_file")"
+printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\nMOONLIGHT_TRANSFER_OVERSIZE_DIRECT="yes"\n' "$config" > "$m2w_clipboard_limit_config"
+write_mac_clipboard_suspend_state
+refresh_mac_transfer_services_with_config "$m2w_clipboard_limit_config"
+rm -f "$latest_windows_receive_state" "${latest_windows_receive_state}.tmp"
+rm -f "$mac_suspend_state"
+rm -f "$mac_ignore_state"
+"$helper" set-files "$m2w_clipboard_limit_payload" "$m2w_clipboard_limit_file" > "$m2w_clipboard_limit_meta"
+m2w_clipboard_limit_id="$(meta_value id "$m2w_clipboard_limit_meta")"
+if ! wait_for_windows_file "$m2w_clipboard_limit_name" 120; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync did not create the file in the Windows receive folder." >&2
+  [[ -f "$m2w_clipboard_limit_meta" ]] && cat "$m2w_clipboard_limit_meta" >&2
+  [[ -f "$latest_windows_receive_state" ]] && cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if [[ "$(windows_file_sha256 "$m2w_clipboard_limit_name")" != "$m2w_clipboard_limit_hash" ]]; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync changed the file bytes." >&2
+  exit 1
+fi
+if ! wait_for_latest_windows_receive_state_id "$m2w_clipboard_limit_id"; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync did not record the latest Windows receive state." >&2
+  [[ -f "$latest_windows_receive_state" ]] && cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if [[ "$(meta_value kind "$latest_windows_receive_state")" != "files" ||
+      "$(meta_value confirmation "$latest_windows_receive_state")" != "direct-ssh" ||
+      "$(meta_value clipboard_ready "$latest_windows_receive_state")" != "no" ||
+      "$(meta_value imported_paths "$latest_windows_receive_state")" != "1" ]]; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync recorded incomplete direct-transfer state." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+m2w_clipboard_limit_state_path="$(meta_value imported_path_1 "$latest_windows_receive_state")"
+m2w_clipboard_limit_state_path_b64="$(meta_value imported_path_1_b64 "$latest_windows_receive_state")"
+if [[ "$m2w_clipboard_limit_state_path" != *"$m2w_clipboard_limit_name" ]]; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync did not record the imported Windows receive path." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+if [[ -z "$m2w_clipboard_limit_state_path_b64" || "$(decode_b64_value "$m2w_clipboard_limit_state_path_b64")" != "$m2w_clipboard_limit_state_path" ]]; then
+  write_mac_clipboard_suspend_state
+  refresh_mac_transfer_services_with_config "$config"
+  echo "Mac -> Windows oversized background file clipboard sync did not record a decodable imported Windows receive path." >&2
+  cat "$latest_windows_receive_state" >&2
+  exit 1
+fi
+write_mac_clipboard_suspend_state
+refresh_mac_transfer_services_with_config "$config"
+remove_windows_file "$m2w_clipboard_limit_name"
+echo "Mac -> Windows oversized background file clipboard sync ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"

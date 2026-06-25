@@ -4,11 +4,13 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
 source_sync_script="${script_dir}/sync-moonlight-clipboard.sh"
+source_send_files_script="${script_dir}/send-files-to-windows.sh"
 source_helper="${script_dir}/moonclipctl.swift"
 source_clip_tcp_helper="${script_dir}/mooncliptcp.swift"
 source_caps_helper="${script_dir}/mooncapsync.swift"
 runtime_dir="${HOME}/Library/Application Support/MoonlightClipboardSync"
 sync_script="${runtime_dir}/sync-moonlight-clipboard.sh"
+send_files_script="${runtime_dir}/send-files-to-windows.sh"
 helper="${runtime_dir}/moonclipctl"
 clip_tcp_helper="${runtime_dir}/mooncliptcp"
 caps_app="${HOME}/Applications/Moonlight Caps Lock Hangul.app"
@@ -62,6 +64,8 @@ fi
 mkdir -p "${HOME}/Library/LaunchAgents" "$log_dir" "$runtime_dir"
 cp "$source_sync_script" "$sync_script"
 chmod 700 "$sync_script"
+cp "$source_send_files_script" "$send_files_script"
+chmod 700 "$send_files_script"
 
 normalize_yes_no() {
   case "${1:-}" in
@@ -318,6 +322,10 @@ cat > "$plist" <<EOF
     <string>${runtime_dir}</string>
     <key>MOONLIGHT_CLIPBOARD_HELPER</key>
     <string>${helper}</string>
+    <key>MOONLIGHT_FILE_SENDER</key>
+    <string>${send_files_script}</string>
+    <key>MOONLIGHT_COMPANION_CONFIG</key>
+    <string>${config}</string>
     <key>WINDOWS_SSH</key>
     <string>${remote}</string>
     <key>MOONLIGHT_CLIPBOARD_MAX_BYTES</key>
@@ -332,10 +340,18 @@ cat > "$plist" <<EOF
     <string>127.0.0.1</string>
     <key>MOONLIGHT_CLIPBOARD_TCP_SEND_PORT</key>
     <string>${clip_m2w_local_port}</string>
+    <key>MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT</key>
+    <string>${clip_m2w_local_port}</string>
     <key>MOONLIGHT_CLIPBOARD_TCP_STATE</key>
     <string>${runtime_dir}/clipboard-tcp-windows-state.txt</string>
     <key>MOONLIGHT_TRANSFER_MAC_DIR</key>
     <string>${transfer_mac_dir}</string>
+    <key>MOONLIGHT_TRANSFER_WINDOWS_DIR</key>
+    <string>${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}</string>
+    <key>MOONLIGHT_TRANSFER_OVERSIZE_DIRECT</key>
+    <string>$(normalize_yes_no "${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}")</string>
+    <key>MOONLIGHT_CLIPBOARD_LOG</key>
+    <string>${log_dir}/moonlight-clipboard-sync.log</string>
     <key>MOONLIGHT_TRANSFER_NOTIFY</key>
     <string>${transfer_notify}</string>
     <key>MOONLIGHT_TRANSFER_REVEAL_MAC_DIR</key>
