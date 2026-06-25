@@ -107,6 +107,10 @@ enum SettingsFile {
             return [:]
         }
 
+        return parse(text: text)
+    }
+
+    static func parse(text: String) -> [String: String] {
         var values: [String: String] = [:]
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
@@ -822,7 +826,7 @@ exit "${status}"
             )
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            detailLabel.stringValue = "Could not save latest Windows receive state: \(error.localizedDescription)"
+            detailLabel.stringValue = "Could not save receive state: \(error.localizedDescription)"
         }
     }
 
@@ -1058,6 +1062,8 @@ exit "${status}"
             return
         }
 
+        markLatestMacReceiveRestoredToClipboard(existingURLs)
+
         if writeFileURLsToPasteboard(existingURLs) {
             latestMacReceiveURLs = existingURLs
             updateLatestMacReceiveButtonState()
@@ -1077,9 +1083,82 @@ exit "${status}"
         return wroteObjects || wroteLegacyPaths
     }
 
+    private func markLatestMacReceiveRestoredToClipboard(_ urls: [URL]) {
+        guard let restoredID = payloadIDForFileURLs(urls) else {
+            return
+        }
+
+        var state = SettingsFile.parse(url: latestMacReceiveStateURL())
+        guard !state.isEmpty else {
+            return
+        }
+
+        state["normalized_id"] = restoredID
+        if (state["windows_id"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state["windows_id"] = restoredID
+        }
+        writeSimpleState(state, to: latestMacReceiveStateURL())
+    }
+
+    private func payloadIDForFileURLs(_ urls: [URL]) -> String? {
+        let helperURL = clipboardHelperURL()
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            return nil
+        }
+
+        let payloadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moonlight-companion-restore-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: payloadURL)
+        }
+
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = helperURL
+        task.arguments = ["export-paths", payloadURL.path] + urls.map(\.path)
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard task.terminationStatus == 0 else {
+            return nil
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return SettingsFile.parse(text: text)["id"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func clipboardHelperURL() -> URL {
+        let configuredHelper = settings["MOONLIGHT_CLIPBOARD_HELPER"]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredHelper.isEmpty {
+            return URL(fileURLWithPath: expandedUserPath(configuredHelper))
+        }
+
+        return clipboardRuntimeDirectory().appendingPathComponent("moonclipctl")
+    }
+
+    private func clipboardRuntimeDirectory() -> URL {
+        let configuredRuntime = settings["MOONLIGHT_CLIPBOARD_RUNTIME_DIR"]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredRuntime.isEmpty {
+            return URL(fileURLWithPath: expandedUserPath(configuredRuntime), isDirectory: true)
+        }
+
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MoonlightClipboardSync", isDirectory: true)
+    }
+
     private func latestMacReceiveStateURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/MoonlightClipboardSync/clipboard-tcp-windows-state.txt")
+        clipboardRuntimeDirectory().appendingPathComponent("clipboard-tcp-windows-state.txt")
     }
 
     private func latestMacReceiveFileURLs(from state: [String: String]) -> [URL] {
