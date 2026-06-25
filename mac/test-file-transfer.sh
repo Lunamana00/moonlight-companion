@@ -135,6 +135,19 @@ verify_mac_sync_temp_cleanup() {
   rm -rf "$fresh_dir"
 }
 
+verify_mac_helper_timeout() {
+  local out
+  if ! out="$(
+    MOONLIGHT_CLIPBOARD_SYNC_HELPER_TIMEOUT_SELF_TEST=yes \
+      MOONLIGHT_CLIPBOARD_LOG="${tmp_dir:-${TMPDIR:-/tmp}}/moonlight-helper-timeout-self-test.log" \
+      "${script_dir}/sync-moonlight-clipboard.sh" 2>&1
+  )"; then
+    echo "Mac clipboard helper timeout self-test failed." >&2
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+}
+
 zip_payload() {
   local payload_dir="$1"
   local zip_path="$2"
@@ -865,6 +878,7 @@ cleanup_self_test_artifacts() {
 
 trap cleanup_self_test_artifacts EXIT
 
+verify_mac_helper_timeout
 save_clipboard_snapshot
 write_mac_clipboard_suspend_state
 write_transfer_quiet_state

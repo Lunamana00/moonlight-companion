@@ -81,6 +81,7 @@ clip_w2m_remote_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_PORT:-47332}"
 clip_w2m_local_port="${MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT:-$clip_w2m_remote_port}"
 caps_tcp_remote_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_PORT:-47321}"
 caps_tcp_local_port="${MOONLIGHT_CAPSLOCK_HANGUL_TCP_LOCAL_PORT:-$caps_tcp_remote_port}"
+helper_timeout_seconds="${MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS:-20}"
 transfer_mac_dir="${MOONLIGHT_TRANSFER_MAC_DIR:-${HOME}/Downloads/Moonlight Companion}"
 transfer_notify="$(normalize_yes_no "${MOONLIGHT_TRANSFER_NOTIFY:-yes}")"
 transfer_reveal_mac_dir="$(normalize_yes_no "${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}")"
@@ -220,6 +221,8 @@ if [[ "$clip_tcp_enabled" == "yes" ]]; then
     <string>${transfer_notify}</string>
     <key>MOONLIGHT_TRANSFER_REVEAL_MAC_DIR</key>
     <string>${transfer_reveal_mac_dir}</string>
+    <key>MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS</key>
+    <string>${helper_timeout_seconds}</string>
   </dict>
 </dict>
 </plist>
@@ -319,6 +322,8 @@ cat > "$plist" <<EOF
     <string>${remote}</string>
     <key>MOONLIGHT_CLIPBOARD_MAX_BYTES</key>
     <string>${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}</string>
+    <key>MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS</key>
+    <string>${helper_timeout_seconds}</string>
     <key>MOONLIGHT_CLIPBOARD_TCP_ENABLED</key>
     <string>${clip_tcp_enabled}</string>
     <key>MOONLIGHT_CLIPBOARD_TCP_HELPER</key>

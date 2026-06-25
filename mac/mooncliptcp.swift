@@ -1,5 +1,6 @@
 import CryptoKit
 import Darwin
+import Dispatch
 import Foundation
 
 enum ClipTcpError: Error, CustomStringConvertible {
@@ -350,6 +351,48 @@ func run(_ executable: String, _ arguments: [String]) throws -> String {
     return out
 }
 
+func positiveIntEnv(_ key: String, fallback: Int) -> Int {
+    guard let raw = ProcessInfo.processInfo.environment[key],
+          let value = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+          value > 0 else {
+        return fallback
+    }
+    return value
+}
+
+func runWithTimeout(_ executable: String, _ arguments: [String], timeoutSeconds: Int) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in
+        finished.signal()
+    }
+
+    try process.run()
+    if finished.wait(timeout: .now() + .seconds(max(timeoutSeconds, 1))) == .timedOut {
+        process.terminate()
+        if finished.wait(timeout: .now() + .seconds(1)) == .timedOut {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+            _ = finished.wait(timeout: .now() + .seconds(1))
+        }
+        throw ClipTcpError.commandFailed("timed out after \(timeoutSeconds)s: \(URL(fileURLWithPath: executable).lastPathComponent) \(arguments.joined(separator: " "))")
+    }
+
+    let out = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    guard process.terminationStatus == 0 else {
+        throw ClipTcpError.commandFailed(err.isEmpty ? out : err)
+    }
+    return out
+}
+
 func parseMeta(_ output: String) -> [String: String] {
     var result: [String: String] = [:]
     for line in output.split(separator: "\n") {
@@ -583,12 +626,13 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
     try cleanDirectory(payloadDir)
     _ = try run("/usr/bin/ditto", ["-x", "-k", "--noqtn", zipPath, payloadDir])
 
+    let helperTimeout = positiveIntEnv("MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS", fallback: 20)
     receiveLock.setPhase("importing")
-    let imported = parseMeta(try run(helper, ["import", payloadDir]))
+    let imported = parseMeta(try runWithTimeout(helper, ["import", payloadDir], timeoutSeconds: helperTimeout))
     let winID = imported["id"] ?? ""
     receiveLock.setPhase("normalizing")
     try? cleanDirectory(normalizedDir)
-    let normalizedOutput = try? run(helper, ["export", normalizedDir])
+    let normalizedOutput = try? runWithTimeout(helper, ["export", normalizedDir], timeoutSeconds: helperTimeout)
     let normalized = normalizedOutput.map(parseMeta) ?? [:]
 
     let normalizedID = normalized["id"] ?? winID

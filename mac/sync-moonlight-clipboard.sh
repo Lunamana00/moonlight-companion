@@ -27,6 +27,7 @@ helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
 interval="${MOONLIGHT_CLIPBOARD_INTERVAL:-0.8}"
 windows_interval="${MOONLIGHT_CLIPBOARD_WINDOWS_INTERVAL:-2.0}"
 max_bytes="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
+helper_timeout_seconds="${MOONLIGHT_CLIPBOARD_HELPER_TIMEOUT_SECONDS:-20}"
 windows_fallback_max_failures="${MOONLIGHT_WINDOWS_FALLBACK_MAX_FAILURES:-3}"
 log_path="${MOONLIGHT_CLIPBOARD_LOG:-${HOME}/Library/Logs/moonlight-clipboard-sync.log}"
 tcp_enabled="${MOONLIGHT_CLIPBOARD_TCP_ENABLED:-${MOONLIGHT_CLIPBOARD_TCP:-yes}}"
@@ -411,11 +412,67 @@ end run
   fi
 }
 
+run_helper() {
+  local output_path="$1"
+  shift
+
+  local err_path timeout_path pid watchdog status
+  err_path="${output_path}.err"
+  timeout_path="${output_path}.timeout"
+  rm -f "$output_path" "$err_path" "$timeout_path"
+
+  "$helper" "$@" > "$output_path" 2> "$err_path" &
+  pid="$!"
+
+  (
+    sleep "$helper_timeout_seconds"
+    if kill -0 "$pid" 2>/dev/null; then
+      printf 'timed out\n' > "$timeout_path"
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  ) &
+  watchdog="$!"
+
+  set +e
+  wait "$pid" 2>/dev/null
+  status="$?"
+  set -e
+
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+
+  if [[ -f "$timeout_path" ]]; then
+    log "helper timed out after ${helper_timeout_seconds}s: $*"
+    return 124
+  fi
+
+  return "$status"
+}
+
 tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
+helper_timeout_seconds="$(normalize_positive_int "$helper_timeout_seconds" 20)"
 windows_fallback_max_failures="$(normalize_positive_int "$windows_fallback_max_failures" 3)"
 
 cleanup_stale_sync_tmp_dirs
 if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_CLEANUP_ONLY:-no}")" == "yes" ]]; then
+  exit 0
+fi
+
+if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_HELPER_TIMEOUT_SELF_TEST:-no}")" == "yes" ]]; then
+  test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-helper-timeout.XXXXXX")"
+  trap 'rm -rf "$test_dir"' EXIT
+  helper="/bin/sleep"
+  helper_timeout_seconds=1
+  if run_helper "${test_dir}/helper.out" 5; then
+    echo "helper timeout self-test unexpectedly succeeded" >&2
+    exit 1
+  fi
+  if [[ ! -f "${test_dir}/helper.out.timeout" ]]; then
+    echo "helper timeout self-test did not write the timeout marker" >&2
+    exit 1
+  fi
   exit 0
 fi
 
@@ -448,7 +505,7 @@ while true; do
 
   if mac_clipboard_sync_suspended; then
     :
-  elif ! tcp_receive_in_progress && "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
+  elif ! tcp_receive_in_progress && run_helper "$mac_meta" export "$mac_payload"; then
     sleep 0.05
     if tcp_receive_in_progress; then
       read_tcp_state
@@ -489,13 +546,13 @@ while true; do
       archive_hash="$(file_hash "$windows_zip")"
       if [[ "$archive_hash" != "$last_windows_archive_hash" ]]; then
         if unzip_payload "$windows_zip" "$windows_payload" &&
-          "$helper" import "$windows_payload" > "${tmp_dir}/windows-meta.txt" 2>/dev/null; then
+          run_helper "${tmp_dir}/windows-meta.txt" import "$windows_payload"; then
           win_id="$(payload_id "${tmp_dir}/windows-meta.txt")"
           win_kind="$(payload_kind "${tmp_dir}/windows-meta.txt")"
           win_bytes="$(payload_bytes "${tmp_dir}/windows-meta.txt")"
           notify_windows_files_received "${tmp_dir}/windows-meta.txt"
           normalized_id="$win_id"
-          if "$helper" export "$mac_normalized_payload" > "$mac_normalized_meta" 2>/dev/null; then
+          if run_helper "$mac_normalized_meta" export "$mac_normalized_payload"; then
             normalized_id="$(payload_id "$mac_normalized_meta")"
           fi
           write_windows_receive_state "${tmp_dir}/windows-meta.txt" "$archive_hash" "$normalized_id"
