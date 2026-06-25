@@ -9,6 +9,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The Moonlight file drop overlay now briefly latches ray-hits on the stream window and stays magnetically captured for the active file drag, reducing missed drops and flicker while dragging across or just past Moonlight.
 - The GUI now offers a Cancel action for in-progress file sends, transfer tests, and Windows receive-folder reveal requests.
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
+- Oversized Mac-to-Windows file drops now report human-readable sizes and suggest splitting the transfer or using a file sync tool.
 - Mac-to-Windows GUI sends now show live transfer phases such as metadata collection, packaging, TCP/SSH send, and Windows receive confirmation.
 - Moonlight window and strip drops now send automatic `Ctrl+V` only after Windows import confirmation, avoiding stale pastes when a fallback transfer is still pending.
 - Windows-to-Mac receives now record the latest imported Mac file paths, and the GUI can reveal the last received Mac files directly in Finder.

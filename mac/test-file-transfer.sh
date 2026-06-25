@@ -558,6 +558,24 @@ if [[ "$(meta_value kind "$empty_snapshot_meta")" != "empty" || "$(meta_value id
 fi
 echo "Helper empty clipboard snapshot ok."
 
+echo "Testing Mac -> Windows payload size limit message..."
+limit_file="${tmp_dir}/moonlight-companion-transfer-test-limit-${stamp}.txt"
+limit_out="${tmp_dir}/mac-to-windows-limit-send.txt"
+limit_config="${tmp_dir}/moonlight-companion-limit.conf"
+printf 'Moonlight Companion payload limit test %s\n' "$stamp" > "$limit_file"
+printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\n' "$config" > "$limit_config"
+if MOONLIGHT_COMPANION_CONFIG="$limit_config" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_out" 2>&1; then
+  echo "Mac -> Windows payload size limit did not reject an oversized payload." >&2
+  cat "$limit_out" >&2
+  exit 1
+fi
+if ! grep -Fq "payload too large:" "$limit_out" || ! grep -Fq "clipboard transfer limit" "$limit_out" || ! grep -Fq "file sync tool" "$limit_out"; then
+  echo "Mac -> Windows payload size limit did not explain the oversized payload clearly." >&2
+  cat "$limit_out" >&2
+  exit 1
+fi
+echo "Mac -> Windows payload size limit message ok."
+
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"

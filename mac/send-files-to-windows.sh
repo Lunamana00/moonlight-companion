@@ -77,6 +77,29 @@ normalize_positive_int() {
   fi
 }
 
+format_bytes() {
+  local bytes="${1:-0}"
+  awk -v bytes="$bytes" '
+    function human(value, unit) {
+      if (value == int(value)) {
+        return sprintf("%d %s", value, unit)
+      }
+      return sprintf("%.1f %s", value, unit)
+    }
+    BEGIN {
+      if (bytes < 1024) {
+        printf "%d B", bytes
+      } else if (bytes < 1048576) {
+        printf "%s", human(bytes / 1024, "KiB")
+      } else if (bytes < 1073741824) {
+        printf "%s", human(bytes / 1048576, "MiB")
+      } else {
+        printf "%s", human(bytes / 1073741824, "GiB")
+      }
+    }
+  '
+}
+
 payload_value() {
   local key="$1"
   local path="$2"
@@ -324,7 +347,9 @@ if [[ -z "$bytes" ]]; then
 fi
 
 if (( bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
-  echo "payload too large: ${bytes}B > ${MOONLIGHT_CLIPBOARD_MAX_BYTES}B" >&2
+  bytes_text="$(format_bytes "$bytes")"
+  max_bytes_text="$(format_bytes "$MOONLIGHT_CLIPBOARD_MAX_BYTES")"
+  echo "payload too large: ${bytes_text} exceeds the ${max_bytes_text} clipboard transfer limit. Split the transfer or use a file sync tool for large files." >&2
   log "skip File drop Mac -> Windows ${kind:-files} (${bytes}B); limit is ${MOONLIGHT_CLIPBOARD_MAX_BYTES}B"
   exit 1
 fi
