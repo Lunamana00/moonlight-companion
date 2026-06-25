@@ -29,6 +29,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Oversized background direct Mac-to-Windows file clipboard sends now leave the clipboard item retryable after a transient direct-transfer failure, so a temporary SSH/SCP hiccup does not require copying the file again.
 - The file transfer self-test now verifies the background Mac-to-Windows file clipboard path, including the Windows receive-folder copy and latest Windows receive state written from the TCP acknowledgement.
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
+- The file transfer self-test now verifies that multi-item Windows receive clipboard restore puts all latest Mac-to-Windows received paths back onto the Windows clipboard.
 - The file transfer self-test now verifies Windows-to-Mac SSH fallback multi-item pulls, including folder contents, empty nested folders, latest receive state, and loop-prevention.
 - Oversized direct Mac-to-Windows sends now clean stale direct-transfer artifacts before upload and after upload/setup failures, making immediate retry safer after an interrupted SSH/SCP step.
 - The file transfer self-test now verifies that multi-item Windows-to-Mac receives can be restored to the Mac clipboard without copying received files into temporary payloads or echoing them back to Windows.

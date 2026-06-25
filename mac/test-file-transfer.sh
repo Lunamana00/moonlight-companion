@@ -1581,6 +1581,18 @@ if ! grep -Fq "asked Windows to open the containing folder for multiple received
   printf '%s\n' "$limit_multi_reveal_out" >&2
   exit 1
 fi
+limit_multi_copy_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" \
+    "${script_dir}/copy-windows-receive-to-clipboard.sh" \
+      --expected-id "$(meta_value id "$limit_multi_state")" \
+      --select-path "$limit_multi_path_1" \
+      --select-path "$limit_multi_path_2"
+)"
+if ! grep -Fq "asked Windows to put the latest received item on the clipboard" <<<"$limit_multi_copy_out"; then
+  echo "Windows receive clipboard restore did not copy multiple explicit imported paths." >&2
+  printf '%s\n' "$limit_multi_copy_out" >&2
+  exit 1
+fi
 if ! assert_windows_receive_staging_absent; then
   echo "Mac -> Windows oversized multi-item direct transfer left a staging folder in the Windows receive folder." >&2
   exit 1
