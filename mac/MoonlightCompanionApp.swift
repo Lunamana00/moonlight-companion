@@ -3,6 +3,54 @@ import CoreGraphics
 import Darwin
 import Foundation
 
+private func moonlightSummarizedNames(_ names: [String], emptySummary: String = "files") -> String {
+    guard !names.isEmpty else {
+        return emptySummary
+    }
+    let visibleNames = names.prefix(2).joined(separator: ", ")
+    let remaining = names.count - min(names.count, 2)
+    if remaining > 0 {
+        return "\(visibleNames), +\(remaining) more"
+    }
+    return visibleNames
+}
+
+private func moonlightPathDisplayName(_ path: String) -> String {
+    let separators = CharacterSet(charactersIn: "\\/")
+    let trimmed = path
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: separators)
+    guard !trimmed.isEmpty else {
+        return ""
+    }
+    return trimmed
+        .split { character in
+            character == "\\" || character == "/"
+        }
+        .last
+        .map(String.init) ?? trimmed
+}
+
+private func moonlightWindowsImportSummary(importedNamesB64: String, importedPaths: [String]) -> String {
+    let encoded = importedNamesB64.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !encoded.isEmpty,
+       let data = Data(base64Encoded: encoded),
+       let text = String(data: data, encoding: .utf8) {
+        let names = text
+            .split(separator: "\u{1f}", omittingEmptySubsequences: true)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !names.isEmpty {
+            return moonlightSummarizedNames(names, emptySummary: "")
+        }
+    }
+
+    let fallbackNames = importedPaths
+        .map(moonlightPathDisplayName)
+        .filter { !$0.isEmpty }
+    return moonlightSummarizedNames(fallbackNames, emptySummary: "")
+}
+
 struct CompanionSettings {
     static let orderedKeys = [
         "WINDOWS_SSH",
@@ -1106,16 +1154,10 @@ exit "${status}"
     }
 
     private func windowsImportSummary(_ state: [String: String]) -> String {
-        let encoded = state["imported_names_b64"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !encoded.isEmpty,
-              let data = Data(base64Encoded: encoded),
-              let text = String(data: data, encoding: .utf8) else {
-            return ""
-        }
-        let names = text
-            .split(separator: "\u{1f}", omittingEmptySubsequences: true)
-            .map(String.init)
-        return summarizedNames(names)
+        moonlightWindowsImportSummary(
+            importedNamesB64: state["imported_names_b64"] ?? "",
+            importedPaths: latestWindowsImportedPaths(from: state)
+        )
     }
 
     private func writeSimpleState(_ values: [String: String], to url: URL) {
@@ -2965,15 +3007,7 @@ exit "${status}"
     }
 
     private func summarizedNames(_ names: [String]) -> String {
-        guard !names.isEmpty else {
-            return "files"
-        }
-        let visibleNames = names.prefix(2).joined(separator: ", ")
-        let remaining = names.count - min(names.count, 2)
-        if remaining > 0 {
-            return "\(visibleNames), +\(remaining) more"
-        }
-        return visibleNames
+        moonlightSummarizedNames(names)
     }
 
     private func formattedByteCount(_ bytes: UInt64) -> String {
@@ -3667,6 +3701,57 @@ private func runFileDropReaderSelfTest() -> Int32 {
 
 if CommandLine.arguments.contains("--self-test-file-drop-reader") {
     exit(runFileDropReaderSelfTest())
+}
+
+private func runWindowsReceiveSummarySelfTest() -> Int32 {
+    func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+        if !condition() {
+            throw NSError(domain: "MoonlightWindowsReceiveSummarySelfTest", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: message
+            ])
+        }
+    }
+
+    do {
+        let encodedNames = Data("alpha.txt\u{1f}beta folder\u{1f}gamma.png".utf8).base64EncodedString()
+        try expect(
+            moonlightWindowsImportSummary(
+                importedNamesB64: encodedNames,
+                importedPaths: ["C:\\Ignored\\fallback.txt"]
+            ) == "alpha.txt, beta folder, +1 more",
+            "encoded imported names were not summarized first"
+        )
+        try expect(
+            moonlightWindowsImportSummary(
+                importedNamesB64: "",
+                importedPaths: [
+                    "C:\\Users\\moon\\Downloads\\file one.txt",
+                    "D:/Receive/folder"
+                ]
+            ) == "file one.txt, folder",
+            "Windows path basename fallback did not summarize imported paths"
+        )
+        try expect(
+            moonlightWindowsImportSummary(
+                importedNamesB64: "not-base64",
+                importedPaths: ["C:\\Temp\\fallback.txt"]
+            ) == "fallback.txt",
+            "invalid imported names did not fall back to path names"
+        )
+        try expect(
+            moonlightWindowsImportSummary(importedNamesB64: "", importedPaths: []) == "",
+            "empty import state should not produce a summary"
+        )
+        print("windows-receive-summary self-test ok")
+        return 0
+    } catch {
+        fputs("windows-receive-summary self-test failed: \(error.localizedDescription)\n", stderr)
+        return 1
+    }
+}
+
+if CommandLine.arguments.contains("--self-test-windows-receive-summary") {
+    exit(runWindowsReceiveSummarySelfTest())
 }
 
 let app = NSApplication.shared
