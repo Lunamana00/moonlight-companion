@@ -1858,6 +1858,71 @@ remove_windows_fallback_zip
 rm -f "${transfer_mac_dir}/${w2m_fallback_name}"
 echo "Windows -> Mac SSH fallback file ok."
 
+echo "Testing Windows -> Mac SSH fallback multi-item transfer..."
+w2m_fallback_multi_file="${tmp_dir}/moonlight-companion-transfer-test-windows-fallback-multi-file-${stamp}.txt"
+w2m_fallback_multi_file_name="$(basename "$w2m_fallback_multi_file")"
+w2m_fallback_multi_dir="${tmp_dir}/moonlight-companion-transfer-test-windows-fallback-multi-folder-${stamp}"
+w2m_fallback_multi_dir_name="$(basename "$w2m_fallback_multi_dir")"
+w2m_fallback_multi_nested_path="nested/from-windows-fallback-multi.txt"
+w2m_fallback_multi_empty_dir_path="nested/empty-from-windows-fallback-multi"
+w2m_fallback_multi_payload="${tmp_dir}/w2m-fallback-multi-payload"
+w2m_fallback_multi_meta="${tmp_dir}/w2m-fallback-multi-meta.txt"
+w2m_fallback_multi_zip="${tmp_dir}/windows-to-mac-fallback-multi.zip"
+mkdir -p "${w2m_fallback_multi_dir}/nested" "${w2m_fallback_multi_dir}/${w2m_fallback_multi_empty_dir_path}"
+printf 'Moonlight Companion Windows -> Mac SSH fallback multi file test %s\n' "$stamp" > "$w2m_fallback_multi_file"
+printf 'Moonlight Companion Windows -> Mac SSH fallback multi folder test %s\n' "$stamp" > "${w2m_fallback_multi_dir}/${w2m_fallback_multi_nested_path}"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_fallback_multi_payload" "$w2m_fallback_multi_file" "$w2m_fallback_multi_dir" > "$w2m_fallback_multi_meta"
+w2m_fallback_multi_id="$(meta_value id "$w2m_fallback_multi_meta")"
+zip_payload "$w2m_fallback_multi_payload" "$w2m_fallback_multi_zip"
+remove_windows_fallback_zip
+upload_windows_fallback_zip "$w2m_fallback_multi_zip"
+if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_fallback_multi_file_name" 80; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not preserve the top-level file." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_fallback_multi_dir_name}/${w2m_fallback_multi_nested_path}" "File" 80; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not preserve the folder item." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_fallback_multi_dir_name}/${w2m_fallback_multi_empty_dir_path}" "Directory" 80; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not preserve the empty nested folder." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! wait_for_mac_receive_state_id "$w2m_fallback_multi_id" 80; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not update the latest receive state." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if [[ "$(meta_value file_paths "$tcp_state")" != "2" ]]; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not record both latest received Mac paths." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+w2m_fallback_multi_path_1="${transfer_mac_dir}/${w2m_fallback_multi_file_name}"
+w2m_fallback_multi_path_2="${transfer_mac_dir}/${w2m_fallback_multi_dir_name}"
+w2m_fallback_multi_state_path_1_b64="$(meta_value file_path_1_b64 "$tcp_state")"
+w2m_fallback_multi_state_path_2_b64="$(meta_value file_path_2_b64 "$tcp_state")"
+if [[ -z "$w2m_fallback_multi_state_path_1_b64" || "$(decode_b64_value "$w2m_fallback_multi_state_path_1_b64")" != "$w2m_fallback_multi_path_1" ||
+      -z "$w2m_fallback_multi_state_path_2_b64" || "$(decode_b64_value "$w2m_fallback_multi_state_path_2_b64")" != "$w2m_fallback_multi_path_2" ]]; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not record decodable latest received Mac paths." >&2
+  [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
+  exit 1
+fi
+if ! wait_for_windows_fallback_zip_absent 80; then
+  echo "Windows -> Mac SSH fallback multi-item transfer did not consume the remote fallback ZIP." >&2
+  exit 1
+fi
+sleep 3
+assert_windows_path_absent "$w2m_fallback_multi_file_name" "Leaf"
+assert_windows_path_absent "$w2m_fallback_multi_dir_name" "Container"
+remove_windows_fallback_zip
+rm -f "${transfer_mac_dir}/${w2m_fallback_multi_file_name}"
+rm -rf "${transfer_mac_dir:?}/${w2m_fallback_multi_dir_name}"
+echo "Windows -> Mac SSH fallback multi-item ok."
+
 echo "Testing Windows -> Mac stale fallback cleanup..."
 bad_fallback_zip="${tmp_dir}/windows-to-mac-bad-fallback.zip"
 printf 'not a zip %s\n' "$stamp" > "$bad_fallback_zip"
