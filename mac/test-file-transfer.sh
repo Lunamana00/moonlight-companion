@@ -543,6 +543,21 @@ if [[ -e "${helper_snapshot_payload}/files" ]]; then
 fi
 echo "Helper set-files metadata id ok."
 
+echo "Testing helper empty clipboard snapshot..."
+empty_payload="${tmp_dir}/empty-clipboard-payload"
+empty_snapshot_payload="${tmp_dir}/empty-clipboard-snapshot-payload"
+empty_snapshot_meta="${tmp_dir}/empty-clipboard-snapshot-meta.txt"
+mkdir -p "$empty_payload"
+printf '{\n  "bytes" : 0,\n  "id" : "empty",\n  "kind" : "empty",\n  "origin" : "mac",\n  "version" : 2\n}\n' > "${empty_payload}/manifest.json"
+"$helper" import "$empty_payload" >/dev/null
+"$helper" snapshot "$empty_snapshot_payload" > "$empty_snapshot_meta"
+if [[ "$(meta_value kind "$empty_snapshot_meta")" != "empty" || "$(meta_value id "$empty_snapshot_meta")" != "empty" ]]; then
+  echo "Helper empty clipboard snapshot did not preserve the empty clipboard state." >&2
+  cat "$empty_snapshot_meta" >&2
+  exit 1
+fi
+echo "Helper empty clipboard snapshot ok."
+
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
 m2w_name="$(basename "$m2w_file")"

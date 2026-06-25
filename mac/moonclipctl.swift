@@ -387,6 +387,10 @@ func exportText(_ text: String, to dir: URL) throws -> Manifest {
     return Manifest(version: 2, origin: "mac", kind: "text", id: "text:\(hash)", bytes: UInt64(data.count), textFile: textFile, imageFile: nil, files: nil)
 }
 
+func exportEmptyClipboardSnapshot() -> Manifest {
+    Manifest(version: 2, origin: "mac", kind: "empty", id: "empty", bytes: 0, textFile: nil, imageFile: nil, files: nil)
+}
+
 func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
     var fileURLs: [URL] = []
 
@@ -467,6 +471,10 @@ func snapshotClipboard(to dir: URL) throws -> ExportResult {
         return ExportResult(manifest: try exportText(text, to: dir), fileURLs: [])
     }
 
+    if pasteboard.types?.isEmpty != false {
+        return ExportResult(manifest: exportEmptyClipboardSnapshot(), fileURLs: [])
+    }
+
     throw ClipError.unsupported
 }
 
@@ -490,6 +498,8 @@ func importClipboard(from dir: URL) throws -> ImportResult {
         if !pasteboard.writeObjects([image]) {
             throw ClipError.importFailed("image")
         }
+    case "empty":
+        pasteboard.clearContents()
     case "files":
         guard let files = manifest.files else { throw ClipError.invalidManifest }
         var urls = files.map { dir.appendingPathComponent($0.path).standardizedFileURL }
