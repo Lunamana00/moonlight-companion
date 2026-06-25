@@ -34,6 +34,7 @@ tcp_send_host="${MOONLIGHT_CLIPBOARD_TCP_SEND_HOST:-127.0.0.1}"
 tcp_send_port="${MOONLIGHT_CLIPBOARD_TCP_SEND_PORT:-47331}"
 tcp_state="${MOONLIGHT_CLIPBOARD_TCP_STATE:-${runtime_dir}/clipboard-tcp-windows-state.txt}"
 mac_ignore_state="${MOONLIGHT_CLIPBOARD_MAC_IGNORE_STATE:-${runtime_dir}/clipboard-mac-ignore-state.txt}"
+mac_suspend_state="${MOONLIGHT_CLIPBOARD_MAC_SUSPEND_STATE:-${runtime_dir}/clipboard-mac-suspend-state.txt}"
 tcp_receive_lock="${tcp_state}.lock"
 transfer_notify="${MOONLIGHT_TRANSFER_NOTIFY:-yes}"
 transfer_reveal_mac_dir="${MOONLIGHT_TRANSFER_REVEAL_MAC_DIR:-no}"
@@ -289,6 +290,20 @@ consume_mac_ignore_id() {
   return 0
 }
 
+mac_clipboard_sync_suspended() {
+  [[ -f "$mac_suspend_state" ]] || return 1
+
+  local now suspend_mtime
+  now="$(date +%s)"
+  suspend_mtime="$(stat -f "%m" "$mac_suspend_state" 2>/dev/null || printf '0')"
+  if (( now - suspend_mtime > 600 )); then
+    rm -f "$mac_suspend_state"
+    return 1
+  fi
+
+  return 0
+}
+
 tcp_receive_in_progress() {
   [[ "$tcp_enabled" == "yes" && -f "$tcp_receive_lock" ]] || return 1
 
@@ -363,7 +378,9 @@ require_ready
 while true; do
   read_tcp_state
 
-  if ! tcp_receive_in_progress && "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
+  if mac_clipboard_sync_suspended; then
+    :
+  elif ! tcp_receive_in_progress && "$helper" export "$mac_payload" > "$mac_meta" 2>/dev/null; then
     sleep 0.05
     if tcp_receive_in_progress; then
       read_tcp_state

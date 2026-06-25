@@ -29,7 +29,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - `set-files` now uses metadata-only payload id calculation for already Windows-safe file trees, avoiding temporary file copies when restoring received files to the Mac clipboard.
 - Folder payload hashing now resolves source-relative paths, so `/var` and `/private/var` aliases do not leak into payload ids or make metadata-only restores diverge from normal exports.
 - The file transfer self-test now compares metadata-only `set-files` payload ids against normal `export-paths` ids for duplicate file names and folders, keeping the fast path byte-compatible with existing sends.
-- The file transfer self-test now snapshots supported Mac clipboard contents before it runs and restores them during cleanup, including original file clipboard paths, while marking that restore so the background sync does not resend it to Windows.
+- The file transfer self-test now snapshots supported Mac clipboard contents before it runs, pauses background Mac-to-Windows clipboard polling while the test is active, and restores the original clipboard during cleanup without resending that restore to Windows.
 - The Mac clipboard sync loop now rechecks for in-flight TCP receives after exporting the local clipboard, closing a race that could echo a just-received Windows file back to Windows.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
