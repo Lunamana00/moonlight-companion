@@ -262,6 +262,62 @@ verify_windows_agent_file_import_guard() {
   fi
 }
 
+verify_windows_agent_compress_cleanup() {
+  local script encoded output
+  script="$(cat <<'POWERSHELL'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dir = Join-Path $env:USERPROFILE '.moonlight-clipboard-sync'
+$agent = Join-Path $dir 'windows-clipboard-agent.ps1'
+$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'
+. $agent
+$ErrorActionPreference = 'Stop'
+$root = Join-Path $dir ('agent-compress-cleanup-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+try {
+    $zip = Join-Path $root 'windows-to-mac.zip'
+    $tmp = Join-Path $root 'windows-to-mac.tmp.zip'
+    $payload = Join-Path $root 'payload'
+    $missing = Join-Path $root 'missing-payload'
+    New-Item -ItemType Directory -Force -Path $payload | Out-Null
+    Set-Content -LiteralPath (Join-Path $payload 'item.txt') -Value 'compress cleanup payload' -Encoding UTF8
+    Set-Content -LiteralPath $zip -Value 'existing fallback zip should stay until replacement is ready' -Encoding UTF8
+    Set-Content -LiteralPath $tmp -Value 'stale tmp zip' -Encoding UTF8
+    $failed = $false
+    try {
+        Compress-Payload $missing $zip $tmp
+    } catch {
+        $failed = $true
+    }
+    if (-not $failed) { Write-Output 'missing_payload_compress_succeeded'; exit 1 }
+    if (Test-Path -LiteralPath $tmp) { Write-Output 'tmp_left_after_failure'; exit 1 }
+    if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { Write-Output 'existing_zip_removed_on_failure'; exit 1 }
+    Compress-Payload $payload $zip $tmp
+    if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { Write-Output 'zip_missing_after_success'; exit 1 }
+    if (Test-Path -LiteralPath $tmp) { Write-Output 'tmp_left_after_success'; exit 1 }
+    Write-Output 'compress_cleanup=ok'
+} finally {
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue
+}
+POWERSHELL
+)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent compression cleanup guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"compress_cleanup=ok"* ]]; then
+    echo "Windows agent compression cleanup guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 write_windows_file() {
   local file_name="$1"
   local content="$2"
@@ -653,6 +709,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   verify_windows_agent_settings
   verify_windows_agent_file_drop_export_guard
   verify_windows_agent_file_import_guard
+  verify_windows_agent_compress_cleanup
   echo "Windows agent ready."
 fi
 

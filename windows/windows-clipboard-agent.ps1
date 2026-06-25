@@ -1103,13 +1103,18 @@ function Import-ClipboardPayload($payloadDir) {
 
 function Compress-Payload($payloadDir, $zipPath, $tmpZipPath) {
     Remove-Item -LiteralPath $tmpZipPath -Force -ErrorAction SilentlyContinue
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $payloadDir,
-        $tmpZipPath,
-        [System.IO.Compression.CompressionLevel]::Optimal,
-        $false
-    )
-    Move-Item -LiteralPath $tmpZipPath -Destination $zipPath -Force
+    try {
+        [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $payloadDir,
+            $tmpZipPath,
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $false
+        )
+        Move-Item -LiteralPath $tmpZipPath -Destination $zipPath -Force -ErrorAction Stop
+    } catch {
+        Remove-Item -LiteralPath $tmpZipPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 
 function Expand-Payload($zipPath, $payloadDir) {
