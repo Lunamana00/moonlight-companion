@@ -186,6 +186,7 @@ exit "${status}"
     private var testTransferButton: NSButton!
     private var openMacReceiveButton: NSButton!
     private var revealMacReceiveButton: NSButton!
+    private var copyMacReceiveButton: NSButton!
     private var openWindowsReceiveButton: NSButton!
     private var revealWindowsReceiveButton: NSButton!
     private var cancelTransferButton: NSButton!
@@ -338,6 +339,9 @@ exit "${status}"
         revealMacReceiveButton = NSButton(title: "Reveal Last Mac Receive", target: self, action: #selector(revealLatestMacReceive))
         revealMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealMacReceiveButton.isEnabled = false
+        copyMacReceiveButton = NSButton(title: "Copy Last Mac Receive", target: self, action: #selector(copyLatestMacReceive))
+        copyMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        copyMacReceiveButton.isEnabled = false
         openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealWindowsReceiveButton = NSButton(title: "Reveal Last Windows Receive", target: self, action: #selector(revealLatestWindowsReceive))
@@ -352,7 +356,7 @@ exit "${status}"
         transferDropButtons.spacing = 10
         transferDropButtons.translatesAutoresizingMaskIntoConstraints = false
         form.addArrangedSubview(row("Drop Actions", transferDropButtons))
-        let transferMacFolderButtons = NSStackView(views: [openMacReceiveButton, revealMacReceiveButton])
+        let transferMacFolderButtons = NSStackView(views: [openMacReceiveButton, revealMacReceiveButton, copyMacReceiveButton])
         transferMacFolderButtons.orientation = .horizontal
         transferMacFolderButtons.alignment = .centerY
         transferMacFolderButtons.spacing = 10
@@ -645,6 +649,7 @@ exit "${status}"
         testTransferButton?.isEnabled = !busy
         openMacReceiveButton?.isEnabled = !busy
         revealMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
+        copyMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
         openWindowsReceiveButton?.isEnabled = !busy
         revealWindowsReceiveButton?.isEnabled = !busy && !latestWindowsReceiveID.isEmpty
         cancelTransferButton?.isEnabled = transferProcess != nil
@@ -760,6 +765,7 @@ exit "${status}"
 
     private func updateLatestMacReceiveButtonState() {
         revealMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
+        copyMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
     }
 
     private func latestWindowsReceiveStateURL() -> URL {
@@ -1038,6 +1044,37 @@ exit "${status}"
         NSWorkspace.shared.activateFileViewerSelecting(existingURLs)
         statusLabel.stringValue = "Mac Files Revealed"
         detailLabel.stringValue = FileDropReader.dropSummary(for: existingURLs)
+    }
+
+    @objc private func copyLatestMacReceive() {
+        let state = SettingsFile.parse(url: latestMacReceiveStateURL())
+        let urls = latestMacReceiveFileURLs(from: state)
+        let existingURLs = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !existingURLs.isEmpty else {
+            statusLabel.stringValue = "Copy Failed"
+            detailLabel.stringValue = urls.isEmpty
+                ? "No latest received Mac file state was found yet."
+                : "The latest received file was no longer found."
+            return
+        }
+
+        if writeFileURLsToPasteboard(existingURLs) {
+            latestMacReceiveURLs = existingURLs
+            updateLatestMacReceiveButtonState()
+            statusLabel.stringValue = "Mac Files Copied"
+            detailLabel.stringValue = "\(FileDropReader.dropSummary(for: existingURLs)) is ready to paste."
+        } else {
+            statusLabel.stringValue = "Copy Failed"
+            detailLabel.stringValue = "Could not put the latest received files on the Mac clipboard."
+        }
+    }
+
+    private func writeFileURLsToPasteboard(_ urls: [URL]) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let wroteObjects = pasteboard.writeObjects(urls.map { $0 as NSURL })
+        let wroteLegacyPaths = pasteboard.setPropertyList(urls.map(\.path), forType: FileDropReader.filenamesPasteboardType)
+        return wroteObjects || wroteLegacyPaths
     }
 
     private func latestMacReceiveStateURL() -> URL {
