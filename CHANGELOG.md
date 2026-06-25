@@ -13,6 +13,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Moonlight window and strip drops now send automatic `Ctrl+V` only after Windows import confirmation, avoiding stale pastes when a fallback transfer is still pending.
 - Windows-to-Mac receives now record the latest imported Mac file paths, and the GUI can reveal the last received Mac files directly in Finder.
 - The GUI can now ask Windows to reveal the latest received Windows item on demand, mirroring the Mac-side latest receive reveal action.
+- Automatic Windows receive-result reveal now waits for Windows import confirmation instead of opening Explorer while a fallback transfer is still pending.
 - The GUI now watches the latest Windows-to-Mac receive state and updates its status line when new Mac files arrive while Companion is open.
 - The GUI file transfer test now streams its current step into the status line, so long end-to-end checks no longer look idle.
 - File drops made while a transfer, reveal, or transfer test is already running are now queued and sent after the current operation instead of starting overlapping transfer scripts.

@@ -1957,7 +1957,7 @@ exit "${status}"
                         detail += " Skipped Ctrl+V because Windows import confirmation is pending."
                     }
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
-                    if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
+                    if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true && importConfirmed {
                         self?.setBusy(true, status: "Opening Windows Folder", detail: "\(detail) Opening Windows receive result.")
                         self?.requestWindowsReceiveFolderOpen(
                             selectLatestImport: true,
@@ -1987,6 +1987,9 @@ exit "${status}"
                             self?.setBusy(false, status: "Files Sent", detail: detail + suffix)
                         }
                     } else {
+                        if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
+                            detail += " Skipped Windows reveal because import confirmation is pending."
+                        }
                         self?.setBusy(false, status: "Files Sent", detail: detail)
                     }
                 } else {
