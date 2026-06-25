@@ -66,11 +66,23 @@ private func moonlightMacReceiveAvailabilityDetail(availableCount: Int, totalCou
 }
 
 private func moonlightMacReceiveCopyDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
+    let names = moonlightMacReceiveSummaryNames(summary, count: availableCount)
     if totalCount > availableCount {
-        let verb = availableCount == 1 ? "is" : "are"
-        return "\(availableCount) of \(totalCount) received items \(verb) ready to paste; some received items were unavailable."
+        let itemText = availableCount == 1 ? "1 received item is" : "\(availableCount) received items are"
+        return "\(itemText) ready to paste: \(names). Some received items were unavailable."
     }
-    return "\(summary) is ready to paste."
+    if availableCount == 1 {
+        return "\(names) is ready to paste."
+    }
+    return "\(availableCount) received items are ready to paste: \(names)."
+}
+
+private func moonlightMacReceiveSummaryNames(_ summary: String, count: Int) -> String {
+    let prefix = count == 1 ? "1 item: " : "\(count) items: "
+    guard summary.hasPrefix(prefix) else {
+        return summary
+    }
+    return String(summary.dropFirst(prefix.count))
 }
 
 struct CompanionSettings {
@@ -3876,26 +3888,34 @@ private func runMacReceiveAvailabilitySelfTest() -> Int32 {
         )
         try expect(
             moonlightMacReceiveCopyDetail(
+                availableCount: 1,
+                totalCount: 1,
+                summary: "1 item: alpha.txt"
+            ) == "alpha.txt is ready to paste.",
+            "singular complete receive copy summary was changed"
+        )
+        try expect(
+            moonlightMacReceiveCopyDetail(
                 availableCount: 2,
                 totalCount: 2,
-                summary: "alpha.txt, beta folder"
-            ) == "alpha.txt, beta folder is ready to paste.",
-            "complete receive copy summary was changed"
+                summary: "2 items: alpha.txt, beta folder"
+            ) == "2 received items are ready to paste: alpha.txt, beta folder.",
+            "plural complete receive copy summary was not natural"
         )
         try expect(
             moonlightMacReceiveCopyDetail(
                 availableCount: 1,
                 totalCount: 2,
-                summary: "alpha.txt"
-            ) == "1 of 2 received items is ready to paste; some received items were unavailable.",
+                summary: "1 item: alpha.txt"
+            ) == "1 received item is ready to paste: alpha.txt. Some received items were unavailable.",
             "singular partial receive copy summary was not explicit"
         )
         try expect(
             moonlightMacReceiveCopyDetail(
                 availableCount: 2,
                 totalCount: 3,
-                summary: "alpha.txt, beta folder"
-            ) == "2 of 3 received items are ready to paste; some received items were unavailable.",
+                summary: "2 items: alpha.txt, beta folder"
+            ) == "2 received items are ready to paste: alpha.txt, beta folder. Some received items were unavailable.",
             "plural partial receive copy summary was not explicit"
         )
         print("mac-receive-availability self-test ok")
