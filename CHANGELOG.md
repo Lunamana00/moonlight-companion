@@ -13,6 +13,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Promised file drops can now be cancelled while the source app is still materializing files, and their temporary staging folders are cleaned up with other queued transfer work.
 - The automatic Moonlight screen drop overlay now detects file-promise drags too, so source apps that create files on drop can still use the whole stream window as the drop target.
 - Mac-to-Windows sends now reject missing or unreadable dropped items before packaging or opening network transfer paths, with clearer permission guidance in the GUI output.
+- The GUI no longer recursively measures dropped folders on the main thread before sending; folder sizes are measured by the background transfer path so large folder drops stay responsive.
 - The GUI now offers a Cancel action for in-progress file sends, transfer tests, and Windows receive-folder reveal requests.
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
 - Existing user settings now keep the Companion control window hidden on launch unless `MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH` is enabled, and background failures no longer raise modal alerts over the current workspace.

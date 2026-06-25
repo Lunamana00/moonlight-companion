@@ -2302,14 +2302,27 @@ exit "${status}"
             url.lastPathComponent.isEmpty ? "file" : url.lastPathComponent
         }
         let itemText = itemNames.count == 1 ? "1 item" : "\(itemNames.count) items"
-        let bytes = urls.reduce(UInt64(0)) { partial, url in
-            partial + pathByteCount(url)
-        }
-        let sizeText = formattedByteCount(bytes)
+        let sizeText = quickTransferSizeText(for: urls)
         let namesText = summarizedNames(itemNames)
-        let detail = "\(itemText) (\(sizeText)): \(namesText)"
-        let notification = "\(itemText) (\(sizeText))"
+        let detail = sizeText.map { "\(itemText) (\($0)): \(namesText)" }
+            ?? "\(itemText): \(namesText)"
+        let notification = sizeText.map { "\(itemText) (\($0))" } ?? itemText
         return TransferSummary(detail: detail, notification: notification)
+    }
+
+    private func quickTransferSizeText(for urls: [URL]) -> String? {
+        var total: UInt64 = 0
+        for url in urls {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                return nil
+            }
+            if isDirectory.boolValue {
+                return nil
+            }
+            total += fileByteCount(url)
+        }
+        return formattedByteCount(total)
     }
 
     private func summarizedNames(_ names: [String]) -> String {
@@ -2329,40 +2342,9 @@ exit "${status}"
         return ByteCountFormatter.string(fromByteCount: Int64(cappedBytes), countStyle: .file)
     }
 
-    private func pathByteCount(_ url: URL) -> UInt64 {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-            return 0
-        }
-
-        if isDirectory.boolValue {
-            return directoryByteCount(url)
-        }
-        return fileByteCount(url)
-    }
-
     private func fileByteCount(_ url: URL) -> UInt64 {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         return UInt64(values?.fileSize ?? 0)
-    }
-
-    private func directoryByteCount(_ url: URL) -> UInt64 {
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: []
-        ) else {
-            return 0
-        }
-
-        var total: UInt64 = 0
-        for case let item as URL in enumerator {
-            let values = try? item.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            if values?.isRegularFile == true {
-                total += UInt64(values?.fileSize ?? 0)
-            }
-        }
-        return total
     }
 
     private func shouldPasteAfterSend(for source: FileDropSource) -> Bool {
