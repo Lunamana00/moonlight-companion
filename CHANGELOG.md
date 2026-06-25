@@ -30,6 +30,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Folder payload hashing now resolves source-relative paths, so `/var` and `/private/var` aliases do not leak into payload ids or make metadata-only restores diverge from normal exports.
 - The file transfer self-test now compares metadata-only `set-files` payload ids against normal `export-paths` ids for duplicate file names and folders, keeping the fast path byte-compatible with existing sends.
 - The file transfer self-test now snapshots supported Mac clipboard contents before it runs, pauses background Mac-to-Windows clipboard polling while the test is active, and restores the original clipboard during cleanup without resending that restore to Windows.
+- Clipboard snapshots used by the file transfer self-test now avoid copying Windows-safe file clipboards into temporary payload directories, making tests lighter when the current Mac clipboard already contains large files.
 - GUI `Copy Last Mac Receive` restores now also write a one-shot Mac clipboard ignore marker, matching the self-test restore path and further reducing accidental resend windows.
 - Moonlight launch and display placement no longer force Moonlight to the foreground by default; `MOONLIGHT_ACTIVATE_ON_LAUNCH` can opt back into the old behavior.
 - The file transfer self-test now writes a temporary quiet-state marker so Windows-to-Mac receive notifications and Finder reveal actions do not interrupt the current Mac workspace while tests run.

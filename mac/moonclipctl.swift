@@ -40,7 +40,7 @@ enum ClipError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: moonclipctl export|import|info <payload-dir> | export-paths|set-files <payload-dir> <path>..."
+            return "usage: moonclipctl export|snapshot|import|info <payload-dir> | export-paths|set-files <payload-dir> <path>..."
         case .unsupported:
             return "unsupported-or-empty-clipboard"
         case .missingManifest:
@@ -450,6 +450,26 @@ func exportClipboard(to dir: URL) throws -> ExportResult {
     throw ClipError.unsupported
 }
 
+func snapshotClipboard(to dir: URL) throws -> ExportResult {
+    try ensureCleanDirectory(dir)
+    let pasteboard = NSPasteboard.general
+
+    let fileURLs = fileURLs(from: pasteboard)
+    if !fileURLs.isEmpty {
+        return ExportResult(manifest: try exportFilesForClipboardSet(fileURLs, to: dir), fileURLs: fileURLs)
+    }
+
+    if let image = NSImage(pasteboard: pasteboard) {
+        return ExportResult(manifest: try exportImage(image, to: dir), fileURLs: [])
+    }
+
+    if let text = pasteboard.string(forType: .string), !text.isEmpty {
+        return ExportResult(manifest: try exportText(text, to: dir), fileURLs: [])
+    }
+
+    throw ClipError.unsupported
+}
+
 func importClipboard(from dir: URL) throws -> ImportResult {
     let manifest = try readManifest(from: dir)
     let pasteboard = NSPasteboard.general
@@ -552,6 +572,11 @@ do {
     case "export":
         guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let result = try exportClipboard(to: dir)
+        try writeJSON(result.manifest, to: dir.appendingPathComponent("manifest.json"))
+        printManifest(result.manifest, fileURLs: result.fileURLs)
+    case "snapshot":
+        guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
+        let result = try snapshotClipboard(to: dir)
         try writeJSON(result.manifest, to: dir.appendingPathComponent("manifest.json"))
         printManifest(result.manifest, fileURLs: result.fileURLs)
     case "export-paths":
