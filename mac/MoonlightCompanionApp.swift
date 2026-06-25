@@ -176,6 +176,7 @@ exit "${status}"
     private var output = Data()
     private var transferProgressLineBuffer = ""
     private var testTransferLineBuffer = ""
+    private var queuedFileDrops: [QueuedFileDrop] = []
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -206,6 +207,11 @@ exit "${status}"
     private var popups: [String: NSPopUpButton] = [:]
     private var popupValues: [String: [String]] = [:]
     private var checks: [String: NSButton] = [:]
+
+    private struct QueuedFileDrop {
+        let urls: [URL]
+        let source: FileDropSource
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -611,6 +617,38 @@ exit "${status}"
         cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
+
+        if !busy {
+            DispatchQueue.main.async { [weak self] in
+                self?.startNextQueuedFileDropIfIdle()
+            }
+        }
+    }
+
+    private func queueFileDropIfBusy(_ urls: [URL], source: FileDropSource) -> Bool {
+        guard isBusy || transferProcess != nil else {
+            return false
+        }
+
+        queuedFileDrops.append(QueuedFileDrop(urls: urls, source: source))
+        let summary = fileTransferSummary(for: urls)
+        let queueText = queuedFileDrops.count == 1
+            ? "1 drop queued"
+            : "\(queuedFileDrops.count) drops queued"
+        statusLabel.stringValue = "Files Queued"
+        detailLabel.stringValue = "\(summary.detail) queued. \(queueText); it will send after the current operation."
+        return true
+    }
+
+    private func startNextQueuedFileDropIfIdle() {
+        guard !isBusy,
+              transferProcess == nil,
+              !queuedFileDrops.isEmpty else {
+            return
+        }
+
+        let nextDrop = queuedFileDrops.removeFirst()
+        sendFilesToWindows(nextDrop.urls, source: nextDrop.source)
     }
 
     private func startLatestMacReceiveMonitor() {
@@ -1742,6 +1780,9 @@ exit "${status}"
 extension AppDelegate: FileDropViewDelegate {
     func fileDropViewDidReceive(_ urls: [URL], source: FileDropSource) {
         hideMoonlightDropOverlay()
+        if queueFileDropIfBusy(urls, source: source) {
+            return
+        }
         sendFilesToWindows(urls, source: source)
     }
 }
