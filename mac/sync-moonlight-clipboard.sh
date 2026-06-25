@@ -386,7 +386,7 @@ send_oversized_files_direct_to_windows() {
   [[ "$(normalize_yes_no "$transfer_oversize_direct")" == "yes" ]] || return 2
   [[ -x "$file_sender" ]] || {
     log "skip Mac -> Windows files ($(payload_bytes "$meta_path")B); missing direct sender: $file_sender"
-    return 1
+    return 2
   }
 
   while IFS= read -r file_path || [[ -n "$file_path" ]]; do
@@ -394,7 +394,7 @@ send_oversized_files_direct_to_windows() {
   done < <(payload_file_paths "$meta_path")
   ((${#source_paths[@]} > 0)) || {
     log "skip Mac -> Windows files ($(payload_bytes "$meta_path")B); no source paths for direct transfer"
-    return 1
+    return 2
   }
 
   state_path="${tmp_dir}/mac-to-windows-direct-state.txt"
@@ -413,6 +413,93 @@ send_oversized_files_direct_to_windows() {
   log "Mac -> Windows oversized file clipboard direct transfer failed"
   [[ -n "$output" ]] && log "$output"
   return 1
+}
+
+run_oversized_direct_retry_self_test() {
+  local self_test_dir self_test_state fake_sender meta_path source_path source_path_b64 actual_path status
+  self_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-sync-direct-retry.XXXXXX")"
+  self_test_state="${self_test_dir}/latest-windows-receive-state.txt"
+  fake_sender="${self_test_dir}/fake-send-files-to-windows.sh"
+  meta_path="${self_test_dir}/meta.txt"
+  source_path="${self_test_dir}/oversized clipboard file.txt"
+  source_path_b64="$(printf '%s' "$source_path" | base64_state_value)"
+  tmp_dir="$self_test_dir"
+  latest_windows_receive_state="$self_test_state"
+  file_sender="$fake_sender"
+  transfer_oversize_direct="yes"
+  printf 'oversized retry self-test\n' > "$source_path"
+  cat > "$meta_path" <<META
+id=files:oversized-direct-retry-self-test
+kind=files
+bytes=2
+files=1
+file_paths=1
+file_path_1=${source_path}
+file_path_1_b64=${source_path_b64}
+file_name_1=oversized clipboard file.txt
+META
+  cat > "$fake_sender" <<'FAKESENDER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${MOONLIGHT_FAKE_SENDER_FAIL:-no}" == "yes" ]]; then
+  echo "fake direct sender failed" >&2
+  exit 23
+fi
+state_path="${MOONLIGHT_TRANSFER_RESULT_STATE:?}"
+source_path="${1:?}"
+source_name="$(basename "$source_path")"
+imported_path="C:\\Moonlight Companion\\${source_name}"
+imported_path_b64="$(printf '%s' "$imported_path" | /usr/bin/base64 | tr -d '\n')"
+{
+  printf 'id=files:oversized-direct-retry-self-test\n'
+  printf 'kind=files\n'
+  printf 'bytes=2\n'
+  printf 'transport=ssh-direct\n'
+  printf 'confirmation=direct-ssh\n'
+  printf 'imported_paths=1\n'
+  printf 'imported_names_b64=b3ZlcnNpemVkIGNsaXBib2FyZCBmaWxlLnR4dA==\n'
+  printf 'clipboard_ready=no\n'
+  printf 'imported_path_1=%s\n' "$imported_path"
+  printf 'imported_path_1_b64=%s\n' "$imported_path_b64"
+} > "$state_path"
+echo "fake direct sender ok"
+FAKESENDER
+  chmod 700 "$fake_sender"
+
+  export MOONLIGHT_FAKE_SENDER_FAIL=yes
+  status=0
+  if send_oversized_files_direct_to_windows "$meta_path"; then
+    unset MOONLIGHT_FAKE_SENDER_FAIL
+    rm -rf "$self_test_dir"
+    echo "oversized direct retry self-test unexpectedly succeeded" >&2
+    return 1
+  else
+    status=$?
+  fi
+  unset MOONLIGHT_FAKE_SENDER_FAIL
+  if [[ "$status" != "1" || -f "$self_test_state" ]]; then
+    rm -rf "$self_test_dir"
+    echo "oversized direct retry self-test did not preserve retryable failure" >&2
+    return 1
+  fi
+
+  if ! send_oversized_files_direct_to_windows "$meta_path"; then
+    rm -rf "$self_test_dir"
+    echo "oversized direct retry self-test did not recover on retry" >&2
+    return 1
+  fi
+  actual_path="$(state_text_value "$(cat "$self_test_state")" imported_path_1)"
+  if [[ "$(state_text_value "$(cat "$self_test_state")" confirmation)" != "direct-ssh" ||
+        "$(state_text_value "$(cat "$self_test_state")" clipboard_ready)" != "no" ||
+        "$actual_path" != "C:\\Moonlight Companion\\oversized clipboard file.txt" ]]; then
+    [[ -f "$self_test_state" ]] && cat "$self_test_state" >&2
+    rm -rf "$self_test_dir"
+    echo "oversized direct retry self-test wrote incomplete latest state" >&2
+    return 1
+  fi
+
+  rm -rf "$self_test_dir"
+  echo "oversized_direct_retry=ok"
 }
 
 dir_size_bytes() {
@@ -686,6 +773,11 @@ if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_ACK_STATE_SELF_TEST:-no}")
   exit $?
 fi
 
+if [[ "$(normalize_yes_no "${MOONLIGHT_CLIPBOARD_SYNC_OVERSIZE_DIRECT_RETRY_SELF_TEST:-no}")" == "yes" ]]; then
+  run_oversized_direct_retry_self_test
+  exit $?
+fi
+
 tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "${tmp_root%/}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -736,8 +828,18 @@ while true; do
       elif [[ "$mac_id" == "$last_windows_id" || "$mac_id" == "$last_mac_id" ]]; then
         last_mac_id="$mac_id"
       elif (( mac_bytes > max_bytes )); then
-        if [[ "$mac_kind" == "files" ]] && send_oversized_files_direct_to_windows "$mac_meta"; then
-          last_mac_id="$mac_id"
+        if [[ "$mac_kind" == "files" ]]; then
+          if send_oversized_files_direct_to_windows "$mac_meta"; then
+            last_mac_id="$mac_id"
+          else
+            direct_status="$?"
+            if [[ "$direct_status" == "1" ]]; then
+              log "Mac -> Windows files (${mac_bytes}B) direct transfer failed; will retry while clipboard is unchanged"
+            else
+              log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"
+              last_mac_id="$mac_id"
+            fi
+          fi
         else
           log "skip Mac -> Windows ${mac_kind} (${mac_bytes}B); limit is ${max_bytes}B"
           last_mac_id="$mac_id"
