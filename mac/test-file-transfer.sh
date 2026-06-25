@@ -322,6 +322,40 @@ windows_receive_staging_count() {
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
 }
 
+windows_direct_temp_count() {
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+}
+
+remove_windows_direct_temp_artifacts() {
+  local script encoded
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
+}
+
+create_windows_blocking_transfer_dir() {
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$path = Join-Path \$env:TEMP ('moonlight-direct-blocker-' + [guid]::NewGuid().ToString('N')); Set-Content -LiteralPath \$path -Value 'moonlight direct transfer blocker' -Encoding UTF8; Write-Output \$path"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+}
+
+remove_windows_absolute_path() {
+  local path="$1"
+  local script encoded path_literal
+  path_literal="$(ps_single_quoted "$path")"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$path = ${path_literal}; if (Test-Path -LiteralPath \$path) { Remove-Item -LiteralPath \$path -Recurse -Force }"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
+}
+
 assert_windows_receive_staging_absent() {
   local count
   count="$(windows_receive_staging_count)"
@@ -861,6 +895,33 @@ if ! assert_windows_receive_staging_absent; then
 fi
 remove_windows_file "$limit_name"
 echo "Mac -> Windows oversized direct transfer ok."
+
+echo "Testing Mac -> Windows oversized direct transfer failure cleanup..."
+limit_cleanup_out="${tmp_dir}/mac-to-windows-limit-cleanup-send.txt"
+limit_cleanup_config="${tmp_dir}/moonlight-companion-limit-cleanup.conf"
+remove_windows_direct_temp_artifacts
+limit_cleanup_blocker="$(create_windows_blocking_transfer_dir)"
+if [[ -z "$limit_cleanup_blocker" ]]; then
+  echo "Could not create Windows blocking path for direct transfer cleanup test." >&2
+  exit 1
+fi
+printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\nMOONLIGHT_TRANSFER_OVERSIZE_DIRECT="yes"\nMOONLIGHT_TRANSFER_WINDOWS_DIR=%q\n' "$config" "$limit_cleanup_blocker" > "$limit_cleanup_config"
+if MOONLIGHT_COMPANION_CONFIG="$limit_cleanup_config" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_cleanup_out" 2>&1; then
+  remove_windows_absolute_path "$limit_cleanup_blocker"
+  echo "Mac -> Windows oversized direct transfer unexpectedly succeeded against a blocking receive path." >&2
+  cat "$limit_cleanup_out" >&2
+  exit 1
+fi
+remove_windows_absolute_path "$limit_cleanup_blocker"
+direct_temp_count="$(windows_direct_temp_count)"
+if [[ "$direct_temp_count" != "0" ]]; then
+  remove_windows_direct_temp_artifacts
+  echo "Mac -> Windows oversized direct transfer failure left direct temp artifacts on Windows." >&2
+  echo "direct temp artifact count: ${direct_temp_count}" >&2
+  cat "$limit_cleanup_out" >&2
+  exit 1
+fi
+echo "Mac -> Windows oversized direct transfer failure cleanup ok."
 
 echo "Testing Mac -> Windows oversized direct transfer disabled..."
 limit_disabled_out="${tmp_dir}/mac-to-windows-limit-disabled-send.txt"

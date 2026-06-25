@@ -881,6 +881,9 @@ function Get-UniqueDestinationPath($destDir, $name, $usedNames) {
 
 function Copy-PayloadFilesAtomically($payloadDir, $items, $destDir) {
     New-Item -ItemType Directory -Force -Path $destDir -ErrorAction Stop | Out-Null
+    if (-not (Test-Path -LiteralPath $destDir -PathType Container)) {
+        throw "receive folder path is not a directory: $destDir"
+    }
     $usedNames = New-Object 'System.Collections.Generic.HashSet[string]'
     $planned = @()
     foreach ($item in $items) {
@@ -897,6 +900,9 @@ function Copy-PayloadFilesAtomically($payloadDir, $items, $destDir) {
     $staged = @()
     $moved = @()
     $stagingItem = New-Item -ItemType Directory -Path $stagingDir -ErrorAction Stop
+    if ($null -eq $stagingItem -or -not (Test-Path -LiteralPath $stagingDir -PathType Container)) {
+        throw "could not create staging directory: $stagingDir"
+    }
     $stagingItem.Attributes = $stagingItem.Attributes -bor [System.IO.FileAttributes]::Hidden
     try {
         foreach ($entry in $planned) {

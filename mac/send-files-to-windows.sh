@@ -473,6 +473,9 @@ function Get-UniqueDestinationPath(\$destDir, \$name, \$usedNames) {
 
 function Copy-PayloadFilesAtomically(\$payloadDir, \$items, \$destDir) {
   New-Item -ItemType Directory -Force -Path \$destDir -ErrorAction Stop | Out-Null
+  if (-not (Test-Path -LiteralPath \$destDir -PathType Container)) {
+    throw "receive folder path is not a directory: \$destDir"
+  }
   \$usedNames = New-Object 'System.Collections.Generic.HashSet[string]'
   \$planned = @()
   foreach (\$item in \$items) {
@@ -489,6 +492,9 @@ function Copy-PayloadFilesAtomically(\$payloadDir, \$items, \$destDir) {
   \$staged = @()
   \$moved = @()
   \$stagingItem = New-Item -ItemType Directory -Path \$stagingDir -ErrorAction Stop
+  if (\$null -eq \$stagingItem -or -not (Test-Path -LiteralPath \$stagingDir -PathType Container)) {
+    throw "could not create staging directory: \$stagingDir"
+  }
   \$stagingItem.Attributes = \$stagingItem.Attributes -bor [System.IO.FileAttributes]::Hidden
   try {
     foreach (\$entry in \$planned) {
@@ -536,57 +542,74 @@ if ([string]::IsNullOrWhiteSpace(\$transferDir)) {
   \$transferDir = Join-Path \$env:USERPROFILE "Downloads\\Moonlight Companion"
 }
 
-New-Item -ItemType Directory -Force -Path \$remoteDir | Out-Null
-Move-Item -LiteralPath \$tmpZipPath -Destination \$zipPath -Force
-if (Test-Path -LiteralPath \$payloadDir) {
-  Remove-Item -LiteralPath \$payloadDir -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path \$payloadDir | Out-Null
-[System.IO.Compression.ZipFile]::ExtractToDirectory(\$zipPath, \$payloadDir)
-\$manifest = Get-Content -LiteralPath (Join-Path \$payloadDir "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-if (\$manifest.kind -ne "files" -or \$null -eq \$manifest.files) {
-  throw "direct receive-folder transfer only supports file payloads"
-}
-
-\$targetPaths = @(Copy-PayloadFilesAtomically \$payloadDir @(\$manifest.files) \$transferDir)
-
-\$archiveHash = (Get-FileHash -LiteralPath \$zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-\$fileCount = @(\$manifest.files).Count
-\$lines = @(
-  "archive_hash=\$archiveHash",
-  "id=\$(\$manifest.id)",
-  "kind=\$(\$manifest.kind)",
-  "bytes=\$(\$manifest.bytes)",
-  "files=\$fileCount",
-  "imported_paths=\$(\$targetPaths.Count)",
-  "clipboard_ready=no",
-  "direct_transfer=yes"
-)
-
-for (\$i = 0; \$i -lt \$targetPaths.Count; \$i++) {
-  \$lines += "imported_path_\$(\$i + 1)=\$(\$targetPaths[\$i])"
-}
-
-\$names = @()
-foreach (\$path in \$targetPaths) {
-  \$name = Split-Path -Leaf \$path
-  if (-not [string]::IsNullOrWhiteSpace(\$name)) {
-    \$names += \$name
+\$directTransferError = \$null
+try {
+  New-Item -ItemType Directory -Force -Path \$remoteDir | Out-Null
+  Move-Item -LiteralPath \$tmpZipPath -Destination \$zipPath -Force
+  if (Test-Path -LiteralPath \$payloadDir) {
+    Remove-Item -LiteralPath \$payloadDir -Recurse -Force
   }
-}
-\$namesForState = @(\$names | Select-Object -First 12)
-if (\$namesForState.Count -gt 0) {
-  \$namesText = [string]::Join([string][char]31, \$namesForState)
-  \$namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$namesText))
-  \$lines += "imported_names_b64=\$namesB64"
-}
+  New-Item -ItemType Directory -Force -Path \$payloadDir | Out-Null
+  [System.IO.Compression.ZipFile]::ExtractToDirectory(\$zipPath, \$payloadDir)
+  \$manifest = Get-Content -LiteralPath (Join-Path \$payloadDir "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+  if (\$manifest.kind -ne "files" -or \$null -eq \$manifest.files) {
+    throw "direct receive-folder transfer only supports file payloads"
+  }
+  \$manifestItems = @(\$manifest.files)
+  if (\$manifestItems.Count -le 0) {
+    throw "direct receive-folder transfer payload did not contain files"
+  }
 
-Write-KeyValueState \$statePath \$lines
-\$stateText = Get-Content -LiteralPath \$statePath -Raw -Encoding UTF8
-Remove-Item -LiteralPath \$payloadDir -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath \$zipPath -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath \$tmpZipPath -Force -ErrorAction SilentlyContinue
-Write-Output \$stateText
+  \$targetPaths = @(Copy-PayloadFilesAtomically \$payloadDir \$manifestItems \$transferDir)
+  if (\$targetPaths.Count -ne \$manifestItems.Count) {
+    throw "direct receive-folder transfer copied \$(\$targetPaths.Count) of \$(\$manifestItems.Count) item(s)"
+  }
+
+  \$archiveHash = (Get-FileHash -LiteralPath \$zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  \$fileCount = \$manifestItems.Count
+  \$lines = @(
+    "archive_hash=\$archiveHash",
+    "id=\$(\$manifest.id)",
+    "kind=\$(\$manifest.kind)",
+    "bytes=\$(\$manifest.bytes)",
+    "files=\$fileCount",
+    "imported_paths=\$(\$targetPaths.Count)",
+    "clipboard_ready=no",
+    "direct_transfer=yes"
+  )
+
+  for (\$i = 0; \$i -lt \$targetPaths.Count; \$i++) {
+    \$lines += "imported_path_\$(\$i + 1)=\$(\$targetPaths[\$i])"
+  }
+
+  \$names = @()
+  foreach (\$path in \$targetPaths) {
+    \$name = Split-Path -Leaf \$path
+    if (-not [string]::IsNullOrWhiteSpace(\$name)) {
+      \$names += \$name
+    }
+  }
+  \$namesForState = @(\$names | Select-Object -First 12)
+  if (\$namesForState.Count -gt 0) {
+    \$namesText = [string]::Join([string][char]31, \$namesForState)
+    \$namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$namesText))
+    \$lines += "imported_names_b64=\$namesB64"
+  }
+
+  Write-KeyValueState \$statePath \$lines
+  \$stateText = Get-Content -LiteralPath \$statePath -Raw -Encoding UTF8
+  Write-Output \$stateText
+} catch {
+  \$directTransferError = \$_.Exception.Message
+} finally {
+  Remove-Item -LiteralPath \$payloadDir -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath \$zipPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath \$tmpZipPath -Force -ErrorAction SilentlyContinue
+}
+if (\$null -ne \$directTransferError) {
+  [Console]::Error.WriteLine(\$directTransferError)
+  exit 1
+}
 POWERSHELL
   scp "${scp_opts[@]}" "$script_path" "${WINDOWS_SSH}:${remote_direct_script}" >/dev/null
 
@@ -651,9 +674,19 @@ tcp_ack_state=""
 transport=""
 if [[ "$oversized_payload" == "yes" ]]; then
   windows_import_state="$(send_direct_to_windows_receive_folder "$zip_path")"
+  imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
+  direct_state_id="$(printf '%s\n' "$windows_import_state" | state_value id)"
+  direct_transfer="$(printf '%s\n' "$windows_import_state" | state_value direct_transfer)"
+  if [[ "$direct_state_id" != "$payload_id" ||
+        "$direct_transfer" != "yes" ||
+        ! "$imported_paths" =~ ^[0-9]+$ ||
+        "$imported_paths" == "0" ]]; then
+    printf '%s\n' "$windows_import_state" >&2
+    echo "direct receive-folder transfer did not report a complete Windows import" >&2
+    exit 1
+  fi
   transport="ssh-direct"
   windows_import_confirmation="direct-ssh"
-  imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
   imported_names_b64="$(imported_names_b64_from_state "$windows_import_state")"
   imported_summary="$(imported_names_summary "$windows_import_state" "${imported_paths:-0}")"
   imported_suffix=""
