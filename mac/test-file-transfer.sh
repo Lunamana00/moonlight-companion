@@ -679,11 +679,17 @@ fi
 echo "Testing latest Mac receive clipboard restore..."
 printf 'Moonlight Companion clipboard overwrite test %s\n' "$stamp" | pbcopy
 w2m_restore_meta="${tmp_dir}/w2m-restore-meta.txt"
+w2m_restore_payload="${tmp_dir}/w2m-restore-set-payload"
 w2m_restore_lock="${tcp_state}.lock"
 printf 'restoring\n' > "$w2m_restore_lock"
-if ! "$helper" set-files "${tmp_dir}/w2m-restore-set-payload" "${transfer_mac_dir}/${w2m_collision_name}" > "$w2m_restore_meta"; then
+if ! "$helper" set-files "$w2m_restore_payload" "${transfer_mac_dir}/${w2m_collision_name}" > "$w2m_restore_meta"; then
   rm -f "$w2m_restore_lock"
   echo "Latest Mac receive clipboard restore failed to set the file clipboard." >&2
+  exit 1
+fi
+if [[ -e "${w2m_restore_payload}/files/${w2m_collision_name}" ]]; then
+  rm -f "$w2m_restore_lock"
+  echo "Latest Mac receive clipboard restore copied the received file instead of using metadata-only restore." >&2
   exit 1
 fi
 w2m_restore_id="$(meta_value id "$w2m_restore_meta")"

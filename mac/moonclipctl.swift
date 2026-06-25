@@ -52,11 +52,15 @@ let fm = FileManager.default
 let filenamesPasteboardType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
 
 func sha256Hex(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    hexString(SHA256.hash(data: data))
 }
 
 func sha256Hex(_ string: String) -> String {
     sha256Hex(Data(string.utf8))
+}
+
+func hexString<S: Sequence>(_ bytes: S) -> String where S.Element == UInt8 {
+    bytes.map { String(format: "%02x", $0) }.joined()
 }
 
 func ensureCleanDirectory(_ url: URL) throws {
@@ -193,8 +197,20 @@ func sanitizePathTreeNames(_ url: URL) throws -> URL {
 }
 
 func hashFile(_ url: URL) throws -> String {
-    let data = try Data(contentsOf: url)
-    return sha256Hex(data)
+    let handle = try FileHandle(forReadingFrom: url)
+    defer {
+        try? handle.close()
+    }
+
+    var hasher = SHA256()
+    while true {
+        let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+        if data.isEmpty {
+            break
+        }
+        hasher.update(data: data)
+    }
+    return hexString(hasher.finalize())
 }
 
 func hashDirectory(_ url: URL) throws -> String {
@@ -214,6 +230,83 @@ func hashDirectory(_ url: URL) throws -> String {
         }
     }
     return sha256Hex(lines.sorted().joined(separator: "\n"))
+}
+
+func pathTreeCanUseMetadataWithoutCopy(_ url: URL) throws -> Bool {
+    let safeName = windowsSafeFileName(url.lastPathComponent)
+    guard safeName == url.lastPathComponent.precomposedStringWithCanonicalMapping else {
+        return false
+    }
+
+    let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+    guard values.isDirectory == true else {
+        return true
+    }
+
+    guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey]) else {
+        return true
+    }
+
+    for case let item as URL in enumerator {
+        let itemSafeName = windowsSafeFileName(item.lastPathComponent)
+        if itemSafeName != item.lastPathComponent.precomposedStringWithCanonicalMapping {
+            return false
+        }
+    }
+    return true
+}
+
+func uniqueExportFileName(for source: URL, used: inout Set<String>) -> String {
+    let baseName = windowsSafeFileName(source.lastPathComponent)
+    let ext = (baseName as NSString).pathExtension
+    let stem = (baseName as NSString).deletingPathExtension
+    var candidate = baseName
+    var index = 2
+    while used.contains(candidate.lowercased()) {
+        if ext.isEmpty {
+            candidate = "\(stem)-\(index)"
+        } else {
+            candidate = "\(stem)-\(index).\(ext)"
+        }
+        index += 1
+    }
+    used.insert(candidate.lowercased())
+    return candidate
+}
+
+func exportExistingFilesMetadataWithoutCopy(_ urls: [URL]) throws -> Manifest? {
+    for source in urls {
+        guard source.isFileURL,
+              fm.fileExists(atPath: source.path),
+              try pathTreeCanUseMetadataWithoutCopy(source) else {
+            return nil
+        }
+    }
+
+    var used = Set<String>()
+    var items: [Manifest.Item] = []
+    var hashLines: [String] = []
+    var total: UInt64 = 0
+
+    for source in urls {
+        let exportName = uniqueExportFileName(for: source, used: &used)
+        let values = try source.resourceValues(forKeys: [.isDirectoryKey])
+        let isDirectory = values.isDirectory == true
+        let bytes = isDirectory ? directoryBytes(source) : fileBytes(source)
+        let itemHash = isDirectory ? try hashDirectory(source) : try hashFile(source)
+        let relPath = "files/\(exportName)"
+
+        total += bytes
+        items.append(Manifest.Item(name: exportName, path: relPath, isDirectory: isDirectory, bytes: bytes))
+        hashLines.append("\(isDirectory ? "d" : "f"):\(exportName):\(itemHash)")
+    }
+
+    guard !items.isEmpty else {
+        throw ClipError.unsupported
+    }
+
+    let contentHash = sha256Hex(hashLines.sorted().joined(separator: "\n"))
+    return Manifest(version: 2, origin: "mac", kind: "files", id: "files:\(contentHash)", bytes: total, textFile: nil, imageFile: nil, files: items)
 }
 
 func exportFiles(_ urls: [URL], to dir: URL) throws -> Manifest {
@@ -248,6 +341,14 @@ func exportFiles(_ urls: [URL], to dir: URL) throws -> Manifest {
 
     let contentHash = sha256Hex(hashLines.sorted().joined(separator: "\n"))
     return Manifest(version: 2, origin: "mac", kind: "files", id: "files:\(contentHash)", bytes: total, textFile: nil, imageFile: nil, files: items)
+}
+
+func exportFilesForClipboardSet(_ urls: [URL], to dir: URL) throws -> Manifest {
+    try ensureCleanDirectory(dir)
+    if let manifest = try exportExistingFilesMetadataWithoutCopy(urls) {
+        return manifest
+    }
+    return try exportFiles(urls, to: dir)
 }
 
 func exportImage(_ image: NSImage, to dir: URL) throws -> Manifest {
@@ -446,9 +547,8 @@ do {
         printManifest(manifest)
     case "set-files":
         guard CommandLine.arguments.count >= 4 else { throw ClipError.usage }
-        try ensureCleanDirectory(dir)
         let urls = CommandLine.arguments.dropFirst(3).map { URL(fileURLWithPath: $0).standardizedFileURL }
-        let manifest = try exportFiles(urls, to: dir)
+        let manifest = try exportFilesForClipboardSet(urls, to: dir)
         try setFileClipboard(urls)
         try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
         printManifest(manifest, fileURLs: urls)
