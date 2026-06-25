@@ -305,6 +305,26 @@ meta_value() {
   awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$path"
 }
 
+update_receive_state_normalized_id() {
+  local restored_id="$1"
+  local tmp_state="${tcp_state}.tmp"
+  awk -F= -v restored_id="$restored_id" '
+    BEGIN { updated = 0 }
+    $1 == "normalized_id" {
+      print "normalized_id=" restored_id
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) {
+        print "normalized_id=" restored_id
+      }
+    }
+  ' "$tcp_state" > "$tmp_state"
+  mv "$tmp_state" "$tcp_state"
+}
+
 collision_name() {
   local file_name="$1"
   local stem ext
@@ -655,9 +675,42 @@ if ! grep -Fqx "file_name_1=${w2m_collision_name}" "$tcp_state"; then
   [[ -f "$tcp_state" ]] && cat "$tcp_state" >&2
   exit 1
 fi
+
+echo "Testing latest Mac receive clipboard restore..."
+printf 'Moonlight Companion clipboard overwrite test %s\n' "$stamp" | pbcopy
+w2m_restore_payload="${tmp_dir}/w2m-restore-payload"
+w2m_restore_meta="${tmp_dir}/w2m-restore-meta.txt"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths \
+  "$w2m_restore_payload" "${transfer_mac_dir}/${w2m_collision_name}" > "$w2m_restore_meta"
+w2m_restore_id="$(meta_value id "$w2m_restore_meta")"
+if [[ -z "$w2m_restore_id" ]]; then
+  echo "Latest Mac receive clipboard restore did not calculate a payload id." >&2
+  exit 1
+fi
+w2m_restore_lock="${tcp_state}.lock"
+printf 'restoring\n' > "$w2m_restore_lock"
+if ! {
+  update_receive_state_normalized_id "$w2m_restore_id" &&
+    "$helper" set-files "${tmp_dir}/w2m-restore-set-payload" "${transfer_mac_dir}/${w2m_collision_name}" > "${tmp_dir}/w2m-restore-set-meta.txt"
+}; then
+  rm -f "$w2m_restore_lock"
+  echo "Latest Mac receive clipboard restore failed to set the file clipboard." >&2
+  exit 1
+fi
+rm -f "$w2m_restore_lock"
+if ! "$helper" export "${tmp_dir}/w2m-restored-clipboard-payload" > "${tmp_dir}/w2m-restored-clipboard-meta.txt" 2>/dev/null; then
+  echo "Latest Mac receive clipboard restore did not leave a readable file clipboard." >&2
+  exit 1
+fi
+if [[ "$(meta_value id "${tmp_dir}/w2m-restored-clipboard-meta.txt")" != "$w2m_restore_id" ]]; then
+  echo "Latest Mac receive clipboard restore produced an unexpected clipboard payload id." >&2
+  cat "${tmp_dir}/w2m-restored-clipboard-meta.txt" >&2
+  exit 1
+fi
 sleep 3
 assert_windows_path_absent "$w2m_name" "Leaf"
 assert_windows_path_absent "$w2m_collision_name" "Leaf"
+echo "Latest Mac receive clipboard restore ok."
 rm -f "${transfer_mac_dir}/${w2m_name}" "${transfer_mac_dir}/${w2m_collision_name}"
 echo "Windows -> Mac ok."
 

@@ -35,7 +35,7 @@ enum ClipError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: moonclipctl export|import|info <payload-dir> | export-paths <payload-dir> <path>..."
+            return "usage: moonclipctl export|import|info <payload-dir> | export-paths|set-files <payload-dir> <path>..."
         case .unsupported:
             return "unsupported-or-empty-clipboard"
         case .missingManifest:
@@ -360,21 +360,27 @@ func importClipboard(from dir: URL) throws -> ImportResult {
             urls = try copyFiles(urls, to: transferDir)
         }
         importedFileURLs = urls
-        pasteboard.clearContents()
-        let items = urls.map { url -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            item.setString(url.absoluteString, forType: .fileURL)
-            return item
-        }
-        if !pasteboard.writeObjects(items) {
-            throw ClipError.importFailed("files")
-        }
-        pasteboard.setPropertyList(urls.map(\.path), forType: filenamesPasteboardType)
+        try setFileClipboard(urls)
     default:
         throw ClipError.invalidManifest
     }
 
     return ImportResult(manifest: manifest, fileURLs: importedFileURLs)
+}
+
+func setFileClipboard(_ urls: [URL]) throws {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    let items = urls.map { url -> NSPasteboardItem in
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: .fileURL)
+        return item
+    }
+    let wroteObjects = pasteboard.writeObjects(items)
+    let wroteLegacyPaths = pasteboard.setPropertyList(urls.map(\.path), forType: filenamesPasteboardType)
+    if !wroteObjects && !wroteLegacyPaths {
+        throw ClipError.importFailed("files")
+    }
 }
 
 func expandedPath(_ value: String) -> String {
@@ -438,6 +444,14 @@ do {
         let manifest = try exportFiles(urls, to: dir)
         try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
         printManifest(manifest)
+    case "set-files":
+        guard CommandLine.arguments.count >= 4 else { throw ClipError.usage }
+        try ensureCleanDirectory(dir)
+        let urls = CommandLine.arguments.dropFirst(3).map { URL(fileURLWithPath: $0).standardizedFileURL }
+        let manifest = try exportFiles(urls, to: dir)
+        try setFileClipboard(urls)
+        try writeJSON(manifest, to: dir.appendingPathComponent("manifest.json"))
+        printManifest(manifest, fileURLs: urls)
     case "import":
         guard CommandLine.arguments.count == 3 else { throw ClipError.usage }
         let result = try importClipboard(from: dir)

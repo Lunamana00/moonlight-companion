@@ -1062,9 +1062,18 @@ exit "${status}"
             return
         }
 
-        markLatestMacReceiveRestoredToClipboard(existingURLs)
+        guard let restoredID = payloadIDForFileURLs(existingURLs) else {
+            statusLabel.stringValue = "Copy Failed"
+            detailLabel.stringValue = "Could not prepare the latest received files for clipboard restore."
+            return
+        }
 
-        if writeFileURLsToPasteboard(existingURLs) {
+        let copied = withLatestMacReceiveClipboardLock {
+            markLatestMacReceiveRestoredToClipboard(restoredID: restoredID)
+            return writeFileURLsToPasteboard(existingURLs)
+        }
+
+        if copied {
             latestMacReceiveURLs = existingURLs
             updateLatestMacReceiveButtonState()
             statusLabel.stringValue = "Mac Files Copied"
@@ -1076,6 +1085,41 @@ exit "${status}"
     }
 
     private func writeFileURLsToPasteboard(_ urls: [URL]) -> Bool {
+        if writeFileURLsToPasteboardUsingHelper(urls) {
+            return true
+        }
+
+        return writeFileURLsToPasteboardDirectly(urls)
+    }
+
+    private func writeFileURLsToPasteboardUsingHelper(_ urls: [URL]) -> Bool {
+        let helperURL = clipboardHelperURL()
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            return false
+        }
+
+        let payloadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moonlight-companion-set-files-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: payloadURL)
+        }
+
+        let task = Process()
+        task.executableURL = helperURL
+        task.arguments = ["set-files", payloadURL.path] + urls.map(\.path)
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func writeFileURLsToPasteboardDirectly(_ urls: [URL]) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         let wroteObjects = pasteboard.writeObjects(urls.map { $0 as NSURL })
@@ -1083,11 +1127,7 @@ exit "${status}"
         return wroteObjects || wroteLegacyPaths
     }
 
-    private func markLatestMacReceiveRestoredToClipboard(_ urls: [URL]) {
-        guard let restoredID = payloadIDForFileURLs(urls) else {
-            return
-        }
-
+    private func markLatestMacReceiveRestoredToClipboard(restoredID: String) {
         var state = SettingsFile.parse(url: latestMacReceiveStateURL())
         guard !state.isEmpty else {
             return
@@ -1098,6 +1138,19 @@ exit "${status}"
             state["windows_id"] = restoredID
         }
         writeSimpleState(state, to: latestMacReceiveStateURL())
+    }
+
+    private func withLatestMacReceiveClipboardLock<T>(_ body: () -> T) -> T {
+        let lockURL = URL(fileURLWithPath: latestMacReceiveStateURL().path + ".lock")
+        try? FileManager.default.createDirectory(
+            at: lockURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? "restoring\n".write(to: lockURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: lockURL)
+        }
+        return body()
     }
 
     private func payloadIDForFileURLs(_ urls: [URL]) -> String? {
