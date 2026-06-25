@@ -26,6 +26,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The GUI now revalidates the latest Windows-to-Mac received file paths while it is open, disabling reveal/copy actions when those files have been moved or deleted.
 - Oversized Mac-to-Windows drops can now bypass the clipboard and copy directly into the Windows receive folder over SSH, with GUI state marking that auto-paste is unavailable for that direct path.
 - Oversized Windows-to-Mac file clipboards now prepare an SSH fallback ZIP instead of being silently skipped, so the Mac sync agent can still pull large received files into the Mac receive folder.
+- Windows-to-Mac SSH fallback imports now retry transient ZIP/import failures and remove repeatedly failing stale fallback ZIPs instead of letting them stop or wedge the Mac sync loop.
 - macOS fallback polling now removes hash-verified consumed or stale Windows-to-Mac fallback ZIPs from the Windows sync folder, preventing duplicate receives after the Mac sync service restarts.
 - The file transfer self-test now uploads a Windows-to-Mac fallback ZIP to the remote sync folder and verifies that the Mac sync loop pulls, imports, records, and cleans up that SSH fallback path.
 - When direct oversized transfer is disabled, oversized Mac-to-Windows file drops are rejected before temporary payload export, avoiding unnecessary copy and hash work for files over the configured clipboard limit.

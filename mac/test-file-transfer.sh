@@ -176,6 +176,10 @@ windows_fallback_zip_exists() {
     "cmd.exe /c if exist \"${remote_windows_zip_cmd}\" (exit 0) else (exit 1)" >/dev/null 2>&1
 }
 
+sync_service_running() {
+  pgrep -f "sync-moonlight-clipboard.sh" >/dev/null 2>&1
+}
+
 wait_for_windows_fallback_zip_absent() {
   local attempts="${1:-80}"
   local index
@@ -1172,6 +1176,21 @@ assert_windows_path_absent "$w2m_fallback_name" "Leaf"
 remove_windows_fallback_zip
 rm -f "${transfer_mac_dir}/${w2m_fallback_name}"
 echo "Windows -> Mac SSH fallback file ok."
+
+echo "Testing Windows -> Mac stale fallback cleanup..."
+bad_fallback_zip="${tmp_dir}/windows-to-mac-bad-fallback.zip"
+printf 'not a zip %s\n' "$stamp" > "$bad_fallback_zip"
+remove_windows_fallback_zip
+upload_windows_fallback_zip "$bad_fallback_zip"
+if ! wait_for_windows_fallback_zip_absent 80; then
+  echo "Windows -> Mac stale fallback ZIP was not removed after repeated import failures." >&2
+  exit 1
+fi
+if ! sync_service_running; then
+  echo "Mac clipboard sync service exited while handling a bad Windows fallback ZIP." >&2
+  exit 1
+fi
+echo "Windows -> Mac stale fallback cleanup ok."
 
 echo "Testing Windows -> Mac spaced filename transfer..."
 w2m_spaced_name="moonlight-companion-transfer-test-spaced windows (${stamp}).txt"

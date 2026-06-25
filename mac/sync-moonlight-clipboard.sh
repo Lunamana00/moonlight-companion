@@ -27,6 +27,7 @@ helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
 interval="${MOONLIGHT_CLIPBOARD_INTERVAL:-0.8}"
 windows_interval="${MOONLIGHT_CLIPBOARD_WINDOWS_INTERVAL:-2.0}"
 max_bytes="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
+windows_fallback_max_failures="${MOONLIGHT_WINDOWS_FALLBACK_MAX_FAILURES:-3}"
 log_path="${MOONLIGHT_CLIPBOARD_LOG:-${HOME}/Library/Logs/moonlight-clipboard-sync.log}"
 tcp_enabled="${MOONLIGHT_CLIPBOARD_TCP_ENABLED:-${MOONLIGHT_CLIPBOARD_TCP:-yes}}"
 tcp_helper="${MOONLIGHT_CLIPBOARD_TCP_HELPER:-${runtime_dir}/mooncliptcp}"
@@ -75,6 +76,16 @@ normalize_yes_no() {
       printf 'no\n'
       ;;
   esac
+}
+
+normalize_positive_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$fallback"
+  fi
 }
 
 payload_id() {
@@ -381,6 +392,7 @@ end run
 }
 
 tcp_enabled="$(normalize_yes_no "$tcp_enabled")"
+windows_fallback_max_failures="$(normalize_positive_int "$windows_fallback_max_failures" 3)"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/moonlight-clipboard-sync.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -396,7 +408,8 @@ windows_payload="${runtime_dir}/imported-windows-payload"
 last_mac_id=""
 last_windows_id=""
 last_windows_archive_hash=""
-last_windows_fallback_archive_hash=""
+last_windows_failed_archive_hash=""
+last_windows_failed_archive_failures=0
 last_windows_poll="0"
 last_tcp_state_hash=""
 upload_transport="ssh"
@@ -448,9 +461,9 @@ while true; do
     last_windows_poll="$now"
     if download_from_windows "$windows_zip" 2>/dev/null; then
       archive_hash="$(file_hash "$windows_zip")"
-      if [[ "$archive_hash" != "$last_windows_archive_hash" && "$archive_hash" != "$last_windows_fallback_archive_hash" ]]; then
-        unzip_payload "$windows_zip" "$windows_payload"
-        if "$helper" import "$windows_payload" > "${tmp_dir}/windows-meta.txt" 2>/dev/null; then
+      if [[ "$archive_hash" != "$last_windows_archive_hash" ]]; then
+        if unzip_payload "$windows_zip" "$windows_payload" &&
+          "$helper" import "$windows_payload" > "${tmp_dir}/windows-meta.txt" 2>/dev/null; then
           win_id="$(payload_id "${tmp_dir}/windows-meta.txt")"
           win_kind="$(payload_kind "${tmp_dir}/windows-meta.txt")"
           win_bytes="$(payload_bytes "${tmp_dir}/windows-meta.txt")"
@@ -461,7 +474,8 @@ while true; do
           fi
           write_windows_receive_state "${tmp_dir}/windows-meta.txt" "$archive_hash" "$normalized_id"
           last_windows_archive_hash="$archive_hash"
-          last_windows_fallback_archive_hash="$archive_hash"
+          last_windows_failed_archive_hash=""
+          last_windows_failed_archive_failures=0
           last_windows_id="$win_id"
           last_mac_id="$normalized_id"
           if [[ "$win_kind" == "files" ]]; then
@@ -471,8 +485,21 @@ while true; do
           fi
           remove_downloaded_windows_zip "$archive_hash"
         else
-          last_windows_fallback_archive_hash="$archive_hash"
-          log "Windows -> Mac import failed"
+          if [[ "$archive_hash" == "$last_windows_failed_archive_hash" ]]; then
+            last_windows_failed_archive_failures=$((last_windows_failed_archive_failures + 1))
+          else
+            last_windows_failed_archive_hash="$archive_hash"
+            last_windows_failed_archive_failures=1
+          fi
+          if (( last_windows_failed_archive_failures >= windows_fallback_max_failures )); then
+            log "Windows -> Mac fallback import failed ${last_windows_failed_archive_failures} times; removing stale fallback ZIP"
+            remove_downloaded_windows_zip "$archive_hash"
+            last_windows_archive_hash="$archive_hash"
+            last_windows_failed_archive_hash=""
+            last_windows_failed_archive_failures=0
+          else
+            log "Windows -> Mac fallback import failed; will retry (${last_windows_failed_archive_failures}/${windows_fallback_max_failures})"
+          fi
         fi
       elif [[ "$archive_hash" == "$last_windows_archive_hash" ]]; then
         remove_downloaded_windows_zip "$archive_hash"
