@@ -16,6 +16,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The GUI file transfer test now streams its current step into the status line, so long end-to-end checks no longer look idle.
 - File drops made while a transfer, reveal, or transfer test is already running are now queued and sent after the current operation instead of starting overlapping transfer scripts.
 - Cancelling or failing a busy transfer operation now clears pending queued drops instead of starting them after the cancelled or failed operation exits.
+- Windows-to-Mac receives that arrive while the GUI is busy are now remembered and shown after the current operation finishes instead of being lost from the status line.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
 - Moonlight window, strip, and Companion file drops now show active drag feedback with the item count and dropped file names before release.

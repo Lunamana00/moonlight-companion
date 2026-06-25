@@ -177,6 +177,7 @@ exit "${status}"
     private var transferProgressLineBuffer = ""
     private var testTransferLineBuffer = ""
     private var queuedFileDrops: [QueuedFileDrop] = []
+    private var pendingLatestMacReceiveURLs: [URL] = []
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -620,7 +621,10 @@ exit "${status}"
 
         if !busy && startQueuedDropsWhenIdle {
             DispatchQueue.main.async { [weak self] in
-                self?.startNextQueuedFileDropIfIdle()
+                guard let self = self else { return }
+                if !self.startNextQueuedFileDropIfIdle() {
+                    self.showPendingLatestMacReceiveIfIdle()
+                }
             }
         }
     }
@@ -644,15 +648,17 @@ exit "${status}"
         return true
     }
 
-    private func startNextQueuedFileDropIfIdle() {
+    @discardableResult
+    private func startNextQueuedFileDropIfIdle() -> Bool {
         guard !isBusy,
               transferProcess == nil,
               !queuedFileDrops.isEmpty else {
-            return
+            return false
         }
 
         let nextDrop = queuedFileDrops.removeFirst()
         sendFilesToWindows(nextDrop.urls, source: nextDrop.source)
+        return true
     }
 
     private func startLatestMacReceiveMonitor() {
@@ -685,10 +691,29 @@ exit "${status}"
             return
         }
 
-        if !initial && !isBusy {
-            statusLabel.stringValue = "Files Received"
-            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+        if !initial {
+            if isBusy {
+                pendingLatestMacReceiveURLs = urls
+            } else {
+                showLatestMacReceiveStatus(urls)
+            }
         }
+    }
+
+    private func showPendingLatestMacReceiveIfIdle() {
+        guard !isBusy,
+              transferProcess == nil,
+              !pendingLatestMacReceiveURLs.isEmpty else {
+            return
+        }
+
+        showLatestMacReceiveStatus(pendingLatestMacReceiveURLs)
+    }
+
+    private func showLatestMacReceiveStatus(_ urls: [URL]) {
+        pendingLatestMacReceiveURLs = []
+        statusLabel.stringValue = "Files Received"
+        detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
