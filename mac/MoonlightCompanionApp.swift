@@ -782,19 +782,22 @@ exit "${status}"
     private func loadLatestWindowsReceiveState() {
         let state = SettingsFile.parse(url: latestWindowsReceiveStateURL())
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        latestWindowsReceiveID = windowsImportConfirmed(state) ? id : ""
+        updateLatestWindowsReceiveButtonState()
+    }
+
+    private func windowsImportConfirmed(_ state: [String: String]) -> Bool {
+        let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
-        latestWindowsReceiveID = (!id.isEmpty && confirmation != "pending" && importedPaths > 0) ? id : ""
-        updateLatestWindowsReceiveButtonState()
+        return !id.isEmpty && !confirmation.isEmpty && confirmation != "pending" && importedPaths > 0
     }
 
     private func recordLatestWindowsReceiveState(_ state: [String: String]) {
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let importedPaths = Int(state["imported_paths"] ?? "") ?? 0
-        guard !id.isEmpty,
-              confirmation != "pending",
-              importedPaths > 0 else {
+        guard windowsImportConfirmed(state) else {
             clearLatestWindowsReceiveState()
             return
         }
@@ -1941,11 +1944,17 @@ exit "${status}"
                     try? FileManager.default.removeItem(at: transferResultStateURL)
                     self?.recordLatestWindowsReceiveState(transferResult)
                     var detail = text?.isEmpty == false ? text! : "\(summary.detail) sent to Windows."
-                    var pasteSummary = "Ready on the Windows clipboard."
-                    if pasteAfterSend {
+                    let importConfirmed = self?.windowsImportConfirmed(transferResult) == true
+                    var pasteSummary = importConfirmed
+                        ? "Ready on the Windows clipboard."
+                        : "Windows import confirmation is pending."
+                    if pasteAfterSend && importConfirmed {
                         let pasted = self?.pasteIntoMoonlight() == true
                         pasteSummary = pasted ? "Pasted into the focused Moonlight app." : "Ready on the Windows clipboard; paste shortcut failed."
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
+                    } else if pasteAfterSend {
+                        pasteSummary = "Windows import confirmation is pending; paste manually after it lands."
+                        detail += " Skipped Ctrl+V because Windows import confirmation is pending."
                     }
                     self?.notifyMoonlightDropIfNeeded(source: source, title: "Files sent to Windows", body: "\(summary.notification) transferred. \(pasteSummary)")
                     if self?.settings.bool("MOONLIGHT_TRANSFER_REVEAL_WINDOWS_DIR") == true {
