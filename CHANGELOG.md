@@ -21,6 +21,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Failed oversized Mac-to-Windows direct transfers now clean up their temporary Windows payload directory and direct ZIP files.
 - Oversized Mac-to-Windows direct transfers now remove their temporary Windows helper script after success or failure.
 - Mac-to-Windows SSH fallback uploads now clear stale temporary ZIPs before retrying and after failed upload/move steps.
+- Windows now removes hash-verified consumed Mac-to-Windows fallback ZIPs after import, preventing duplicate receives after the Windows agent restarts.
 - Windows-to-Mac fallback ZIP compression now removes stale or failed temporary ZIPs without deleting the last complete fallback ZIP.
 - The automatic Moonlight screen drop overlay now detects file-promise drags too, so source apps that create files on drop can still use the whole stream window as the drop target.
 - Mac-to-Windows sends now reject missing or unreadable dropped items before packaging or opening network transfer paths, with clearer permission guidance in the GUI output.

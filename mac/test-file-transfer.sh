@@ -407,6 +407,23 @@ windows_mac_tmp_zip_exists() {
     "cmd.exe /c if exist \"${remote_dir}\\mac-to-windows.zip.tmp\" (exit 0) else (exit 1)" >/dev/null 2>&1
 }
 
+windows_mac_zip_exists() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c if exist \"${remote_dir}\\mac-to-windows.zip\" (exit 0) else (exit 1)" >/dev/null 2>&1
+}
+
+wait_for_windows_mac_zip_absent() {
+  local attempts="${1:-80}"
+  local index
+  for ((index = 0; index < attempts; index++)); do
+    if ! windows_mac_zip_exists; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 remove_windows_mac_upload_artifacts() {
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "cmd.exe /c del /Q \"${remote_dir}\\mac-to-windows.zip\" \"${remote_dir}\\mac-to-windows.zip.tmp\" 2>nul" >/dev/null 2>&1 || true
@@ -1048,8 +1065,14 @@ if ! wait_for_windows_file "$ssh_fallback_name"; then
   cat "$ssh_fallback_out" >&2
   exit 1
 fi
+if ! wait_for_windows_mac_zip_absent 80; then
+  remove_windows_mac_upload_artifacts
+  echo "Mac -> Windows SSH fallback did not consume the remote fallback ZIP after import." >&2
+  cat "$ssh_fallback_out" >&2
+  exit 1
+fi
 remove_windows_file "$ssh_fallback_name"
-echo "Mac -> Windows SSH fallback stale tmp cleanup ok."
+echo "Mac -> Windows SSH fallback cleanup ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"

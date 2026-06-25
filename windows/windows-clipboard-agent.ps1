@@ -650,6 +650,19 @@ function Get-FileHashString($path) {
     return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Remove-FileIfHashMatches($path, $expectedHash) {
+    if ([string]::IsNullOrWhiteSpace($expectedHash)) { return $false }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+
+    try {
+        if ((Get-FileHashString $path) -ne $expectedHash) { return $false }
+        Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Get-DirectoryBytes($path) {
     if (-not (Test-Path -LiteralPath $path)) { return 0 }
     $total = 0L
@@ -1288,6 +1301,7 @@ function Receive-ClipboardTcpPayload($client) {
             $script:lastMacId = $imported.id
             $script:lastWindowsId = $normalizedId
             Write-MacImportState $imported $macArchiveHash
+            Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
             Write-MacImportTcpAck $stream $imported
             Write-AgentLog ("Mac -> Windows TCP {0} ({1}B)" -f $imported.kind, $imported.bytes)
         }
@@ -1485,6 +1499,7 @@ try {
                         $lastMacId = $imported.id
                         $lastWindowsId = $normalizedId
                         Write-MacImportState $imported $macArchiveHash
+                        Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
                         Write-AgentLog ("Mac -> Windows {0} ({1}B)" -f $imported.kind, $imported.bytes)
                     }
                 }
