@@ -218,6 +218,29 @@ func parseAckLine(_ line: String) -> [String: String]? {
     return result
 }
 
+func tcpAckLine(imported: [String: String]) -> String {
+    var fields = [
+        "id=\(imported["id"] ?? "")",
+        "kind=\(imported["kind"] ?? "")",
+        "bytes=\(imported["bytes"] ?? "0")",
+        "files=\(imported["files"] ?? "0")",
+        "imported_paths=\(imported["file_paths"] ?? "0")"
+    ]
+    if let namesB64 = importedNamesBase64(imported), !namesB64.isEmpty {
+        fields.append("imported_names_b64=\(namesB64)")
+    }
+    return "MOONCLIPACK 1 \(fields.joined(separator: " "))\n"
+}
+
+func importedNamesBase64(_ imported: [String: String]) -> String? {
+    let names = Array(importedFileNames(imported).prefix(12))
+    guard !names.isEmpty else {
+        return nil
+    }
+    let text = names.joined(separator: "\u{1f}")
+    return Data(text.utf8).base64EncodedString()
+}
+
 func readPayload(fd: Int32, byteCount: UInt64, to path: String) throws {
     let url = URL(fileURLWithPath: path)
     try? fm.removeItem(at: url)
@@ -579,6 +602,8 @@ func receiveOne(fd: Int32, runtimeDir: String, helper: String, maxBytes: UInt64,
             windowsID: winID
         )
     )
+    receiveLock.setPhase("ack")
+    try? writeAll(fd: fd, data: Data(tcpAckLine(imported: imported).utf8))
     receiveLock.setPhase("notifying")
     notifyWindowsFilesReceived(imported, runtimeDir: runtimeDir)
     if imported["kind"] == "files" {

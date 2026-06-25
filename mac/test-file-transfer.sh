@@ -201,14 +201,20 @@ verify_windows_agent_settings() {
   local expected_max expected_oversize script encoded output
   expected_max="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
   expected_oversize="$(normalize_yes_no "${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}")"
-  script="\$ErrorActionPreference = 'Stop'; \$settings = Join-Path (Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync') 'windows-agent-settings.ps1'; . \$settings; Write-Output ('max=' + [string]\$MoonlightClipboardMaxBytes); Write-Output ('oversize=' + [string]\$MoonlightTransferOversizeDirect)"
+  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$settings = Join-Path \$dir 'windows-agent-settings.ps1'; . \$settings; Write-Output ('max=' + [string]\$MoonlightClipboardMaxBytes); Write-Output ('oversize=' + [string]\$MoonlightTransferOversizeDirect); \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$tokens = \$null; \$parseErrors = \$null; [System.Management.Automation.Language.Parser]::ParseFile(\$agent, [ref]\$tokens, [ref]\$parseErrors) | Out-Null; if (\$parseErrors.Count -gt 0) { foreach (\$parseError in \$parseErrors) { Write-Output ('parse_error=' + \$parseError.Message) }; exit 1 }; Write-Output 'agent_parse=ok'"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
-  output="$(
+  if ! output="$(
     ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
       "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
-  )"
-  if [[ "$output" != *"max=${expected_max}"* || "$output" != *"oversize=${expected_oversize}"* ]]; then
-    echo "Windows agent settings did not include clipboard max bytes or oversized direct transfer." >&2
+  )"; then
+    echo "Windows agent settings or script parse check failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"max=${expected_max}"* ||
+        "$output" != *"oversize=${expected_oversize}"* ||
+        "$output" != *"agent_parse=ok"* ]]; then
+    echo "Windows agent settings or script parse output was incomplete." >&2
     printf '%s\n' "$output" >&2
     return 1
   fi
@@ -977,11 +983,20 @@ w2m_collision_name="$(collision_name "$w2m_name")"
 printf 'Moonlight Companion Windows -> Mac test %s\n' "$stamp" > "$w2m_file"
 printf 'existing Mac receive file %s\n' "$stamp" > "${transfer_mac_dir}/${w2m_name}"
 payload_dir="${tmp_dir}/w2m-payload"
+payload_meta="${tmp_dir}/w2m-payload-meta.txt"
 zip_path="${tmp_dir}/windows-to-mac.zip"
-MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$payload_dir" "$w2m_file" >/dev/null
+w2m_tcp_ack="${tmp_dir}/w2m-tcp-ack.txt"
+MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$payload_dir" "$w2m_file" > "$payload_meta"
+w2m_id="$(meta_value id "$payload_meta")"
 zip_payload "$payload_dir" "$zip_path"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$zip_path"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$zip_path" > "$w2m_tcp_ack"
+if [[ "$(meta_value id "$w2m_tcp_ack")" != "$w2m_id" ||
+      "$(meta_value imported_paths "$w2m_tcp_ack")" != "1" ]]; then
+  echo "Windows -> Mac TCP transfer did not receive a Mac import acknowledgement." >&2
+  cat "$w2m_tcp_ack" >&2
+  exit 1
+fi
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_collision_name"; then
   echo "Windows -> Mac transfer did not create a collision-safe file in the Mac receive folder." >&2
   exit 1
@@ -1092,7 +1107,7 @@ printf 'Moonlight Companion Windows -> Mac spaced filename test %s\n' "$stamp" >
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_spaced_payload" "$w2m_spaced_file" >/dev/null
 zip_payload "$w2m_spaced_payload" "$w2m_spaced_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_spaced_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_spaced_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_spaced_name"; then
   echo "Windows -> Mac spaced filename transfer did not preserve the file name." >&2
   exit 1
@@ -1111,7 +1126,7 @@ printf 'Moonlight Companion Windows -> Mac apostrophe filename test %s\n' "$stam
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_apostrophe_payload" "$w2m_apostrophe_file" >/dev/null
 zip_payload "$w2m_apostrophe_payload" "$w2m_apostrophe_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_apostrophe_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_apostrophe_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_apostrophe_name"; then
   echo "Windows -> Mac apostrophe filename transfer did not preserve the file name." >&2
   exit 1
@@ -1130,7 +1145,7 @@ printf 'Moonlight Companion Windows -> Mac Korean filename test %s\n' "$stamp" >
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_korean_payload" "$w2m_korean_file" >/dev/null
 zip_payload "$w2m_korean_payload" "$w2m_korean_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_korean_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_korean_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_korean_name"; then
   echo "Windows -> Mac Korean filename transfer did not preserve the file name." >&2
   exit 1
@@ -1149,7 +1164,7 @@ w2m_image_hash="$(write_test_png "$w2m_image_file"; mac_file_sha256 "$w2m_image_
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_image_payload" "$w2m_image_file" >/dev/null
 zip_payload "$w2m_image_payload" "$w2m_image_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_image_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_image_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_image_name"; then
   echo "Windows -> Mac image file transfer did not create the image file." >&2
   exit 1
@@ -1173,7 +1188,7 @@ w2m_empty_hash="$(mac_file_sha256 "$w2m_empty_file")"
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_empty_payload" "$w2m_empty_file" >/dev/null
 zip_payload "$w2m_empty_payload" "$w2m_empty_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_empty_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_empty_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_empty_file_name"; then
   echo "Windows -> Mac empty file transfer did not create the empty file." >&2
   exit 1
@@ -1201,7 +1216,7 @@ printf 'Moonlight Companion Windows -> Mac multi folder test %s\n' "$stamp" > "$
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_multi_payload" "$w2m_multi_file" "$w2m_multi_dir" >/dev/null
 zip_payload "$w2m_multi_payload" "$w2m_multi_zip"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_multi_zip"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_multi_zip" >/dev/null
 if ! wait_for_mac_file "$transfer_mac_dir" "$w2m_multi_file_name"; then
   echo "Windows -> Mac multi-item transfer did not preserve the top-level file." >&2
   exit 1
@@ -1229,7 +1244,7 @@ printf 'Moonlight Companion Windows -> Mac folder test %s\n' "$stamp" > "${w2m_d
 MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths "$w2m_payload_dir" "$w2m_dir" >/dev/null
 zip_payload "$w2m_payload_dir" "$w2m_zip_path"
 MOONLIGHT_TRANSFER_NOTIFY=no MOONLIGHT_TRANSFER_REVEAL_MAC_DIR=no MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" \
-  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_zip_path"
+  "$tcp_helper" send 127.0.0.1 "$MOONLIGHT_CLIPBOARD_WINDOWS_TO_MAC_TCP_LOCAL_PORT" "$w2m_zip_path" >/dev/null
 if ! wait_for_mac_path "$transfer_mac_dir" "${w2m_dir_name}/${w2m_nested_path}" "File"; then
   echo "Windows -> Mac folder transfer did not preserve the nested file." >&2
   exit 1

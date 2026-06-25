@@ -61,6 +61,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Windows receive-result reveal now verifies the just-sent transfer id before selecting a single received item, avoiding stale receive-state selections.
 - Mac-to-Windows send results now show the actual Windows receive-folder file names, including names sanitized for Windows.
 - Mac-to-Windows TCP file drops now receive the Windows import acknowledgement on the same TCP connection, avoiding the extra SSH confirmation round trip when both sides are current.
+- Windows-to-Mac TCP file transfers now require a Mac import acknowledgement before the Windows agent considers TCP delivery complete; otherwise the existing SSH fallback ZIP stays available.
 - The file transfer self-test now requires the same-connection TCP acknowledgement when TCP clipboard transfer is enabled, while normal sends still keep the SSH state fallback.
 - Windows-to-Mac file arrival notifications and TCP logs now include received file names and total size.
 - The file transfer self-test now refreshes the Mac TCP receiver when its helper was rebuilt, so tests exercise the current receiver binary instead of an already-running older one.

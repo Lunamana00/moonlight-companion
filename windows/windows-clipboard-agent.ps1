@@ -1063,6 +1063,35 @@ function Read-TcpLine($stream) {
     throw "TCP header too long"
 }
 
+function Read-OptionalTcpLine($stream, [int]$timeoutMs) {
+    $previousTimeout = $stream.ReadTimeout
+    try {
+        $stream.ReadTimeout = $timeoutMs
+        return Read-TcpLine $stream
+    } catch {
+        return ""
+    } finally {
+        try { $stream.ReadTimeout = $previousTimeout } catch {}
+    }
+}
+
+function Parse-TcpAckLine([string]$line) {
+    if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+    $parts = $line.Trim().Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($parts.Count -lt 2 -or $parts[0] -ne "MOONCLIPACK" -or $parts[1] -ne "1") {
+        return $null
+    }
+
+    $ack = @{}
+    foreach ($part in $parts | Select-Object -Skip 2) {
+        $fields = $part.Split("=", 2)
+        if ($fields.Count -eq 2) {
+            $ack[$fields[0]] = $fields[1]
+        }
+    }
+    return $ack
+}
+
 function Write-TcpLine($stream, [string]$line) {
     try {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes(("{0}`n" -f $line))
@@ -1196,7 +1225,7 @@ function Receive-ClipboardTcpClients($listener) {
     }
 }
 
-function Send-ClipboardTcpPayload($zipPath, $port) {
+function Send-ClipboardTcpPayload($zipPath, $port, [string]$expectedId) {
     if ($port -le 0 -or $port -gt 65535) { return $false }
     if (-not (Test-Path -LiteralPath $zipPath)) { return $false }
 
@@ -1226,7 +1255,21 @@ function Send-ClipboardTcpPayload($zipPath, $port) {
         }
 
         $stream.Flush()
-        return $true
+        $ackLine = Read-OptionalTcpLine $stream 8000
+        $ack = Parse-TcpAckLine $ackLine
+        if ($null -ne $ack -and $ack["id"] -eq $expectedId) {
+            $ackId = $ack["id"]
+            $ackImportedPaths = $ack["imported_paths"]
+            Write-AgentLog ("Windows -> Mac TCP ack {0} ({1} imported)" -f $ackId, $ackImportedPaths)
+            return $true
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ackLine)) {
+            Write-AgentLog ("Windows -> Mac TCP sent without import ack for {0}; keeping SSH fallback ZIP" -f $expectedId)
+        } else {
+            Write-AgentLog ("Windows -> Mac TCP unexpected ack '{0}' for {1}; keeping SSH fallback ZIP" -f $ackLine, $expectedId)
+        }
+        return $false
     } catch {
         Write-AgentLog ("Windows -> Mac TCP send error: {0}" -f $_.Exception.Message)
         return $false
@@ -1364,7 +1407,8 @@ try {
                         } else {
                             Compress-Payload $exportDir $windowsZip $windowsTmpZip
                             $lastWindowsId = $exported.id
-                            if ($enableClipboardTcp -and (Send-ClipboardTcpPayload $windowsZip $clipboardWindowsToMacTcpPort)) {
+                            if ($enableClipboardTcp -and (Send-ClipboardTcpPayload $windowsZip $clipboardWindowsToMacTcpPort $exported.id)) {
+                                Remove-Item -LiteralPath $windowsZip -Force -ErrorAction SilentlyContinue
                                 Write-AgentLog ("Windows -> Mac TCP {0} ({1}B)" -f $exported.kind, $exported.bytes)
                             } else {
                                 if ($enableClipboardTcp) {
