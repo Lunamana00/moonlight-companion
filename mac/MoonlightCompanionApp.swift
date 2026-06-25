@@ -171,6 +171,7 @@ exit "${status}"
     private var openMacReceiveButton: NSButton!
     private var revealMacReceiveButton: NSButton!
     private var openWindowsReceiveButton: NSButton!
+    private var revealWindowsReceiveButton: NSButton!
     private var cancelTransferButton: NSButton!
     private var output = Data()
     private var transferProgressLineBuffer = ""
@@ -310,6 +311,8 @@ exit "${status}"
         revealMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        revealWindowsReceiveButton = NSButton(title: "Reveal Last Windows Receive", target: self, action: #selector(revealLatestWindowsReceive))
+        revealWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton = NSButton(title: "Cancel", target: self, action: #selector(cancelTransferOperation))
         cancelTransferButton.translatesAutoresizingMaskIntoConstraints = false
         cancelTransferButton.isEnabled = false
@@ -319,12 +322,18 @@ exit "${status}"
         transferDropButtons.spacing = 10
         transferDropButtons.translatesAutoresizingMaskIntoConstraints = false
         form.addArrangedSubview(row("Drop Actions", transferDropButtons))
-        let transferFolderButtons = NSStackView(views: [openMacReceiveButton, revealMacReceiveButton, openWindowsReceiveButton])
-        transferFolderButtons.orientation = .horizontal
-        transferFolderButtons.alignment = .centerY
-        transferFolderButtons.spacing = 10
-        transferFolderButtons.translatesAutoresizingMaskIntoConstraints = false
-        form.addArrangedSubview(row("Folders", transferFolderButtons))
+        let transferMacFolderButtons = NSStackView(views: [openMacReceiveButton, revealMacReceiveButton])
+        transferMacFolderButtons.orientation = .horizontal
+        transferMacFolderButtons.alignment = .centerY
+        transferMacFolderButtons.spacing = 10
+        transferMacFolderButtons.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("Mac Folders", transferMacFolderButtons))
+        let transferWindowsFolderButtons = NSStackView(views: [openWindowsReceiveButton, revealWindowsReceiveButton])
+        transferWindowsFolderButtons.orientation = .horizontal
+        transferWindowsFolderButtons.alignment = .centerY
+        transferWindowsFolderButtons.spacing = 10
+        transferWindowsFolderButtons.translatesAutoresizingMaskIntoConstraints = false
+        form.addArrangedSubview(row("Windows Folders", transferWindowsFolderButtons))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -597,6 +606,7 @@ exit "${status}"
         openMacReceiveButton?.isEnabled = !busy
         revealMacReceiveButton?.isEnabled = !busy
         openWindowsReceiveButton?.isEnabled = !busy
+        revealWindowsReceiveButton?.isEnabled = !busy
         cancelTransferButton?.isEnabled = transferProcess != nil
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
@@ -860,6 +870,25 @@ exit "${status}"
             } else {
                 self?.setBusy(false, status: "Open Failed", detail: detail)
                 self?.showFailure("Windows receive folder opener failed.")
+            }
+        }
+    }
+
+    @objc private func revealLatestWindowsReceive() {
+        guard saveSettings() else { return }
+
+        setBusy(true, status: "Revealing Windows Files", detail: "Asking Windows to select the latest received item.")
+        requestWindowsReceiveFolderOpen(selectLatestImport: true) { [weak self] succeeded, detail in
+            if detail == "cancelled" {
+                self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.")
+                return
+            }
+            if succeeded {
+                let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
+                self?.setBusy(false, status: status, detail: detail)
+            } else {
+                self?.setBusy(false, status: "Reveal Failed", detail: detail)
+                self?.showFailure("Windows receive reveal failed.")
             }
         }
     }

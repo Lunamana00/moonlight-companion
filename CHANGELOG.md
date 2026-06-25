@@ -11,6 +11,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Transfer cancellation now terminates the whole cancellable script job so stuck SSH/SCP child commands stop with the GUI action instead of lingering behind the cancelled request.
 - Mac-to-Windows GUI sends now show live transfer phases such as metadata collection, packaging, TCP/SSH send, and Windows receive confirmation.
 - Windows-to-Mac receives now record the latest imported Mac file paths, and the GUI can reveal the last received Mac files directly in Finder.
+- The GUI can now ask Windows to reveal the latest received Windows item on demand, mirroring the Mac-side latest receive reveal action.
 - The GUI now watches the latest Windows-to-Mac receive state and updates its status line when new Mac files arrive while Companion is open.
 - Windows-to-Mac receive loop prevention now also compares the normalized Mac clipboard id after refreshing TCP receive state, avoiding Unicode-sensitive file echo-backs.
 - Moonlight window, strip, and Companion file drops now read both modern file URL drag items and legacy Finder filename pasteboard entries, making drag detection more tolerant across macOS sources.
