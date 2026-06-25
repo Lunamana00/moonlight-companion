@@ -1877,6 +1877,15 @@ if ! grep -Fq "asked Windows to select the received item" <<<"$windows_reveal_ou
   printf '%s\n' "$windows_reveal_out" >&2
   exit 1
 fi
+windows_missing_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" --select-path "${m2w_state_path}.missing"
+)"
+if ! grep -Fq "asked Windows to open the receive folder; received item was unavailable" <<<"$windows_missing_reveal_out"; then
+  echo "Windows receive reveal did not report a missing explicit imported path." >&2
+  printf '%s\n' "$windows_missing_reveal_out" >&2
+  exit 1
+fi
 write_windows_import_state_with_b64_path "$m2w_state_id" "$m2w_state_path"
 windows_latest_b64_reveal_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \

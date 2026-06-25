@@ -69,6 +69,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Latest Windows receive state now keeps the confirmed Windows receive paths too, so later reveal actions can select the exact received item without depending on the current remote import state.
 - `Reveal Last Windows Receive` now keeps that received-name summary visible after the reveal/open action completes.
 - `Reveal Last Windows Receive` now opens the common containing folder for multi-item Windows receives when exact single-item selection is not available.
+- `Reveal Last Windows Receive` now clearly reports when the remembered Windows item is no longer available and clears the stale reveal state instead of presenting it as a normal folder open.
 - Windows receive-folder reveal now clears stale remote opener scripts from interrupted previous reveal attempts.
 - Automatic Windows receive-result reveal now waits for Windows import confirmation instead of opening Explorer while a fallback transfer is still pending.
 - GUI sends that need automatic paste or reveal now wait longer for fallback Windows import confirmation before declaring the result pending.

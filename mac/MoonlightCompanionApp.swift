@@ -1655,6 +1655,8 @@ exit "${status}"
             if succeeded {
                 if self?.windowsReceiveRevealStateExpired(detail) == true {
                     self?.clearLatestWindowsReceiveState()
+                    self?.setBusy(false, status: "Windows Receive Missing", detail: detail)
+                    return
                 }
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
                 let summary = self?.latestWindowsReceiveSummary ?? ""
