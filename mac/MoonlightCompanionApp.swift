@@ -175,6 +175,7 @@ exit "${status}"
     private var cancelTransferButton: NSButton!
     private var output = Data()
     private var transferProgressLineBuffer = ""
+    private var testTransferLineBuffer = ""
     private var process: Process?
     private var transferProcess: Process? {
         didSet {
@@ -711,6 +712,31 @@ exit "${status}"
         return filtered.isEmpty ? nil : filtered
     }
 
+    private func appendTestTransferOutput(_ data: Data) {
+        output.append(data)
+        guard let text = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        testTransferLineBuffer += text
+        while let newlineRange = testTransferLineBuffer.range(of: "\n") {
+            let line = String(testTransferLineBuffer[..<newlineRange.lowerBound])
+            let nextIndex = testTransferLineBuffer.index(after: newlineRange.lowerBound)
+            testTransferLineBuffer.removeSubrange(..<nextIndex)
+            updateTestTransferProgress(from: line)
+        }
+    }
+
+    private func updateTestTransferProgress(from line: String) {
+        let message = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return
+        }
+
+        statusLabel.stringValue = "Testing Transfer"
+        detailLabel.stringValue = message
+    }
+
     private func fail(_ message: String) {
         setBusy(false, status: "Failed", detail: message)
         showFailure(message)
@@ -958,6 +984,7 @@ exit "${status}"
         }
 
         output = Data()
+        testTransferLineBuffer = ""
         setBusy(true, status: "Testing Transfer", detail: "Checking Mac -> Windows and Windows -> Mac file transfer.")
 
         let task = Process()
@@ -974,7 +1001,7 @@ exit "${status}"
             let data = handle.availableData
             guard !data.isEmpty else { return }
             DispatchQueue.main.async {
-                self?.output.append(data)
+                self?.appendTestTransferOutput(data)
             }
         }
 
