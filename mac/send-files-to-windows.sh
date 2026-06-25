@@ -345,6 +345,11 @@ zip_payload() {
   )
 }
 
+cleanup_remote_mac_tmp() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_mac_tmp_cmd}\" 2>nul" >/dev/null 2>&1 || true
+}
+
 ensure_helpers() {
   progress "Preparing transfer helpers."
   if [[ ! -x "$helper" || "$source_helper" -nt "$helper" ]]; then
@@ -384,8 +389,15 @@ send_zip() {
 
   progress "Uploading payload over SSH fallback."
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
-  scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_mac_tmp}" >/dev/null
-  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"
+  cleanup_remote_mac_tmp
+  if ! scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_mac_tmp}" >/dev/null; then
+    cleanup_remote_mac_tmp
+    return 1
+  fi
+  if ! ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"; then
+    cleanup_remote_mac_tmp
+    return 1
+  fi
   transport="ssh"
 }
 

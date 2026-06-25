@@ -226,6 +226,11 @@ unzip_payload() {
   /usr/bin/ditto -x -k --noqtn "$zip_path" "$dest_dir"
 }
 
+cleanup_remote_mac_tmp() {
+  ssh "${ssh_opts[@]}" "$remote" \
+    "cmd.exe /c del /Q \"${remote_mac_tmp_cmd}\" 2>nul" >/dev/null 2>&1 || true
+}
+
 upload_to_windows() {
   local zip_path="$1"
   upload_transport="ssh"
@@ -237,8 +242,15 @@ upload_to_windows() {
     log "Mac -> Windows TCP unavailable; falling back to SSH payload"
   fi
 
-  scp "${scp_opts[@]}" "$zip_path" "${remote}:${remote_mac_tmp}" >/dev/null
-  ssh "${ssh_opts[@]}" "$remote" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"
+  cleanup_remote_mac_tmp
+  if ! scp "${scp_opts[@]}" "$zip_path" "${remote}:${remote_mac_tmp}" >/dev/null; then
+    cleanup_remote_mac_tmp
+    return 1
+  fi
+  if ! ssh "${ssh_opts[@]}" "$remote" "cmd.exe /c move /Y \"${remote_mac_tmp_cmd}\" \"${remote_mac_zip_cmd}\" >nul"; then
+    cleanup_remote_mac_tmp
+    return 1
+  fi
 }
 
 download_from_windows() {

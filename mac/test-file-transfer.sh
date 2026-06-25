@@ -324,7 +324,7 @@ windows_receive_staging_count() {
 
 windows_direct_temp_count() {
   local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp'), (Join-Path \$dir 'mac-to-windows-direct.ps1')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$paths = @((Join-Path \$dir 'direct-mac-payload'), (Join-Path \$dir 'mac-to-windows-direct.zip'), (Join-Path \$dir 'mac-to-windows-direct.zip.tmp'), (Join-Path \$dir 'mac-to-windows-direct.ps1')); \$count = 0; foreach (\$path in \$paths) { if (Test-Path -LiteralPath \$path) { \$count++ } }; Write-Output ([string]\$count)"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
@@ -332,15 +332,33 @@ windows_direct_temp_count() {
 
 remove_windows_direct_temp_artifacts() {
   local script encoded
-  script="\$ErrorActionPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force"
+  script="\$ErrorActionPreference = 'SilentlyContinue'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; Remove-Item -LiteralPath (Join-Path \$dir 'direct-mac-payload') -Recurse -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.zip.tmp') -Force; Remove-Item -LiteralPath (Join-Path \$dir 'mac-to-windows-direct.ps1') -Force"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null 2>&1 || true
 }
 
+write_stale_windows_mac_tmp_zip() {
+  local script encoded
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; New-Item -ItemType Directory -Force -Path \$dir | Out-Null; Set-Content -LiteralPath (Join-Path \$dir 'mac-to-windows.zip.tmp') -Value 'stale mac-to-windows tmp' -Encoding UTF8"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" >/dev/null
+}
+
+windows_mac_tmp_zip_exists() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c if exist \"${remote_dir}\\mac-to-windows.zip.tmp\" (exit 0) else (exit 1)" >/dev/null 2>&1
+}
+
+remove_windows_mac_upload_artifacts() {
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+    "cmd.exe /c del /Q \"${remote_dir}\\mac-to-windows.zip\" \"${remote_dir}\\mac-to-windows.zip.tmp\" 2>nul" >/dev/null 2>&1 || true
+}
+
 create_windows_blocking_transfer_dir() {
   local script encoded
-  script="\$ErrorActionPreference = 'Stop'; \$path = Join-Path \$env:TEMP ('moonlight-direct-blocker-' + [guid]::NewGuid().ToString('N')); Set-Content -LiteralPath \$path -Value 'moonlight direct transfer blocker' -Encoding UTF8; Write-Output \$path"
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$path = Join-Path \$env:TEMP ('moonlight-direct-blocker-' + [guid]::NewGuid().ToString('N')); Set-Content -LiteralPath \$path -Value 'moonlight direct transfer blocker' -Encoding UTF8; Write-Output \$path"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
   ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
     "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
@@ -946,6 +964,35 @@ if ! grep -Fq "payload too large:" "$limit_disabled_out" || ! grep -Fq "clipboar
   exit 1
 fi
 echo "Mac -> Windows oversized direct transfer disabled ok."
+
+echo "Testing Mac -> Windows SSH fallback stale tmp cleanup..."
+ssh_fallback_file="${tmp_dir}/moonlight-companion-transfer-test-ssh-fallback-${stamp}.txt"
+ssh_fallback_name="$(basename "$ssh_fallback_file")"
+ssh_fallback_out="${tmp_dir}/mac-to-windows-ssh-fallback-send.txt"
+ssh_fallback_config="${tmp_dir}/moonlight-companion-ssh-fallback.conf"
+printf 'Moonlight Companion SSH fallback cleanup test %s\n' "$stamp" > "$ssh_fallback_file"
+printf 'source %q\nMOONLIGHT_CLIPBOARD_TCP="no"\n' "$config" > "$ssh_fallback_config"
+remove_windows_mac_upload_artifacts
+write_stale_windows_mac_tmp_zip
+if ! MOONLIGHT_COMPANION_CONFIG="$ssh_fallback_config" "${script_dir}/send-files-to-windows.sh" "$ssh_fallback_file" > "$ssh_fallback_out" 2>&1; then
+  remove_windows_mac_upload_artifacts
+  echo "Mac -> Windows SSH fallback send failed." >&2
+  cat "$ssh_fallback_out" >&2
+  exit 1
+fi
+if windows_mac_tmp_zip_exists; then
+  remove_windows_mac_upload_artifacts
+  echo "Mac -> Windows SSH fallback left a stale tmp ZIP in the Windows sync folder." >&2
+  cat "$ssh_fallback_out" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$ssh_fallback_name"; then
+  echo "Mac -> Windows SSH fallback payload did not arrive in the Windows receive folder." >&2
+  cat "$ssh_fallback_out" >&2
+  exit 1
+fi
+remove_windows_file "$ssh_fallback_name"
+echo "Mac -> Windows SSH fallback stale tmp cleanup ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"
