@@ -1062,40 +1062,52 @@ exit "${status}"
             return
         }
 
-        guard let restoredID = payloadIDForFileURLs(existingURLs) else {
-            statusLabel.stringValue = "Copy Failed"
-            detailLabel.stringValue = "Could not prepare the latest received files for clipboard restore."
-            return
+        let result = withLatestMacReceiveClipboardLock {
+            restoreLatestMacReceiveToClipboard(existingURLs)
         }
 
-        let copied = withLatestMacReceiveClipboardLock {
-            markLatestMacReceiveRestoredToClipboard(restoredID: restoredID)
-            return writeFileURLsToPasteboard(existingURLs)
-        }
-
-        if copied {
+        if result == .copied {
             latestMacReceiveURLs = existingURLs
             updateLatestMacReceiveButtonState()
             statusLabel.stringValue = "Mac Files Copied"
             detailLabel.stringValue = "\(FileDropReader.dropSummary(for: existingURLs)) is ready to paste."
+        } else if result == .missingID {
+            statusLabel.stringValue = "Copy Failed"
+            detailLabel.stringValue = "Could not prepare the latest received files for clipboard restore."
         } else {
             statusLabel.stringValue = "Copy Failed"
             detailLabel.stringValue = "Could not put the latest received files on the Mac clipboard."
         }
     }
 
-    private func writeFileURLsToPasteboard(_ urls: [URL]) -> Bool {
-        if writeFileURLsToPasteboardUsingHelper(urls) {
-            return true
-        }
-
-        return writeFileURLsToPasteboardDirectly(urls)
+    private enum ReceiveClipboardRestoreResult {
+        case copied
+        case missingID
+        case pasteboardFailed
     }
 
-    private func writeFileURLsToPasteboardUsingHelper(_ urls: [URL]) -> Bool {
+    private func restoreLatestMacReceiveToClipboard(_ urls: [URL]) -> ReceiveClipboardRestoreResult {
+        if let restoredID = writeFileURLsToPasteboardUsingHelper(urls) {
+            markLatestMacReceiveRestoredToClipboard(restoredID: restoredID)
+            return .copied
+        }
+
+        guard let restoredID = payloadIDForFileURLs(urls) else {
+            return .missingID
+        }
+
+        guard writeFileURLsToPasteboardDirectly(urls) else {
+            return .pasteboardFailed
+        }
+
+        markLatestMacReceiveRestoredToClipboard(restoredID: restoredID)
+        return .copied
+    }
+
+    private func writeFileURLsToPasteboardUsingHelper(_ urls: [URL]) -> String? {
         let helperURL = clipboardHelperURL()
         guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
-            return false
+            return nil
         }
 
         let payloadURL = FileManager.default.temporaryDirectory
@@ -1105,18 +1117,27 @@ exit "${status}"
         }
 
         let task = Process()
+        let pipe = Pipe()
         task.executableURL = helperURL
         task.arguments = ["set-files", payloadURL.path] + urls.map(\.path)
-        task.standardOutput = Pipe()
+        task.standardOutput = pipe
         task.standardError = Pipe()
 
         do {
             try task.run()
             task.waitUntilExit()
-            return task.terminationStatus == 0
         } catch {
-            return false
+            return nil
         }
+        guard task.terminationStatus == 0 else {
+            return nil
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return SettingsFile.parse(text: text)["id"]?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func writeFileURLsToPasteboardDirectly(_ urls: [URL]) -> Bool {

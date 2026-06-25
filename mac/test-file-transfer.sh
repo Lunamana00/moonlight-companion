@@ -678,23 +678,23 @@ fi
 
 echo "Testing latest Mac receive clipboard restore..."
 printf 'Moonlight Companion clipboard overwrite test %s\n' "$stamp" | pbcopy
-w2m_restore_payload="${tmp_dir}/w2m-restore-payload"
 w2m_restore_meta="${tmp_dir}/w2m-restore-meta.txt"
-MOONLIGHT_TRANSFER_MAC_DIR="$transfer_mac_dir" "$helper" export-paths \
-  "$w2m_restore_payload" "${transfer_mac_dir}/${w2m_collision_name}" > "$w2m_restore_meta"
+w2m_restore_lock="${tcp_state}.lock"
+printf 'restoring\n' > "$w2m_restore_lock"
+if ! "$helper" set-files "${tmp_dir}/w2m-restore-set-payload" "${transfer_mac_dir}/${w2m_collision_name}" > "$w2m_restore_meta"; then
+  rm -f "$w2m_restore_lock"
+  echo "Latest Mac receive clipboard restore failed to set the file clipboard." >&2
+  exit 1
+fi
 w2m_restore_id="$(meta_value id "$w2m_restore_meta")"
 if [[ -z "$w2m_restore_id" ]]; then
+  rm -f "$w2m_restore_lock"
   echo "Latest Mac receive clipboard restore did not calculate a payload id." >&2
   exit 1
 fi
-w2m_restore_lock="${tcp_state}.lock"
-printf 'restoring\n' > "$w2m_restore_lock"
-if ! {
-  update_receive_state_normalized_id "$w2m_restore_id" &&
-    "$helper" set-files "${tmp_dir}/w2m-restore-set-payload" "${transfer_mac_dir}/${w2m_collision_name}" > "${tmp_dir}/w2m-restore-set-meta.txt"
-}; then
+if ! update_receive_state_normalized_id "$w2m_restore_id"; then
   rm -f "$w2m_restore_lock"
-  echo "Latest Mac receive clipboard restore failed to set the file clipboard." >&2
+  echo "Latest Mac receive clipboard restore did not update the receive state." >&2
   exit 1
 fi
 rm -f "$w2m_restore_lock"
