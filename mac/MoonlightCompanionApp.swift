@@ -177,6 +177,7 @@ exit "${status}"
     private var transferProgressLineBuffer = ""
     private var testTransferLineBuffer = ""
     private var queuedFileDrops: [QueuedFileDrop] = []
+    private var latestMacReceiveURLs: [URL] = []
     private var pendingLatestMacReceiveURLs: [URL] = []
     private var process: Process?
     private var transferProcess: Process? {
@@ -317,6 +318,7 @@ exit "${status}"
         openMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealMacReceiveButton = NSButton(title: "Reveal Last Mac Receive", target: self, action: #selector(revealLatestMacReceive))
         revealMacReceiveButton.translatesAutoresizingMaskIntoConstraints = false
+        revealMacReceiveButton.isEnabled = false
         openWindowsReceiveButton = NSButton(title: "Open Windows Folder", target: self, action: #selector(openWindowsReceiveFolder))
         openWindowsReceiveButton.translatesAutoresizingMaskIntoConstraints = false
         revealWindowsReceiveButton = NSButton(title: "Reveal Last Windows Receive", target: self, action: #selector(revealLatestWindowsReceive))
@@ -618,7 +620,7 @@ exit "${status}"
         dropOverlayButton?.isEnabled = !busy
         testTransferButton?.isEnabled = !busy
         openMacReceiveButton?.isEnabled = !busy
-        revealMacReceiveButton?.isEnabled = !busy
+        revealMacReceiveButton?.isEnabled = !busy && !latestMacReceiveURLs.isEmpty
         openWindowsReceiveButton?.isEnabled = !busy
         revealWindowsReceiveButton?.isEnabled = !busy
         cancelTransferButton?.isEnabled = transferProcess != nil
@@ -685,6 +687,8 @@ exit "${status}"
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: stateURL.path),
               let modifiedAt = attributes[.modificationDate] as? Date else {
             latestMacReceiveStateSignature = ""
+            latestMacReceiveURLs = []
+            updateLatestMacReceiveButtonState()
             return
         }
 
@@ -698,8 +702,12 @@ exit "${status}"
         let state = SettingsFile.parse(url: stateURL)
         let urls = latestMacReceiveFileURLs(from: state)
         guard !urls.isEmpty else {
+            latestMacReceiveURLs = []
+            updateLatestMacReceiveButtonState()
             return
         }
+        latestMacReceiveURLs = urls
+        updateLatestMacReceiveButtonState()
 
         if !initial {
             if isBusy {
@@ -724,6 +732,10 @@ exit "${status}"
         pendingLatestMacReceiveURLs = []
         statusLabel.stringValue = "Files Received"
         detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+    }
+
+    private func updateLatestMacReceiveButtonState() {
+        revealMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
     }
 
     private func consumeTransferCancellation(for task: Process) -> Bool {
