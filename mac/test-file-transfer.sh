@@ -430,6 +430,25 @@ verify_windows_agent_tcp_receive_timeout() {
   fi
 }
 
+verify_windows_agent_tcp_ack_read_limit() {
+  local script encoded output
+  script="\$ErrorActionPreference = 'Stop'; \$ProgressPreference = 'SilentlyContinue'; \$dir = Join-Path \$env:USERPROFILE '.moonlight-clipboard-sync'; \$agent = Join-Path \$dir 'windows-clipboard-agent.ps1'; \$env:MOONLIGHT_AGENT_LOAD_ONLY = 'yes'; . \$agent; Test-ClipboardTcpAckReadLimit; Remove-Item Env:MOONLIGHT_AGENT_LOAD_ONLY -ErrorAction SilentlyContinue"
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  if ! output="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}" 2>/dev/null | tr -d '\r'
+  )"; then
+    echo "Windows agent TCP ack read-limit guard failed." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  if [[ "$output" != *"tcp_ack_read_limit=ok"* ]]; then
+    echo "Windows agent TCP ack read-limit guard output was incomplete." >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
 verify_windows_agent_tcp_ack_path_fields() {
   local script encoded output
   script="$(cat <<'POWERSHELL'
@@ -1055,6 +1074,7 @@ if [[ "${MOONLIGHT_TRANSFER_TEST_SKIP_AGENT_DEPLOY:-no}" != "yes" ]]; then
   verify_windows_agent_file_import_guard
   verify_windows_agent_receive_staging_cleanup
   verify_windows_agent_tcp_receive_timeout
+  verify_windows_agent_tcp_ack_read_limit
   verify_windows_agent_tcp_ack_path_fields
   verify_windows_agent_compress_cleanup
   echo "Windows agent ready."

@@ -20,6 +20,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Latest receive path state now includes base64 path fields on both Mac and Windows, making reveal/copy actions more resilient while staying compatible with older plain-path state files.
 - Mac receive state readers now prefer base64 file path/name fields and keep plain state lines single-line, preserving exact paths for unusual macOS file names without corrupting later reveal/copy actions.
 - Mac-to-Windows TCP acknowledgements now carry base64 Windows receive-folder paths, so latest-receive reveal state remains available even if the follow-up SSH state read is slow.
+- Windows-to-Mac TCP acknowledgement reads now allow longer response lines while keeping incoming TCP headers tightly bounded, avoiding unnecessary SSH fallback retention for long received file names.
 - The file transfer self-test now verifies oversized direct Mac-to-Windows multi-item drops, including folder contents, empty nested folders, GUI receive state, and reveal behavior.
 - The file transfer self-test now verifies Windows-to-Mac SSH fallback multi-item pulls, including folder contents, empty nested folders, latest receive state, and loop-prevention.
 - Oversized direct Mac-to-Windows sends now clean stale direct-transfer artifacts before upload and after upload/setup failures, making immediate retry safer after an interrupted SSH/SCP step.

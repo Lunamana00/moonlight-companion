@@ -1194,11 +1194,15 @@ function Start-ClipboardTcpListener($port) {
     }
 }
 
-function Read-TcpLine($stream) {
+function Read-TcpLine($stream, [int]$maxBytes = 256) {
+    if ($maxBytes -lt 1) {
+        $maxBytes = 256
+    }
+
     $bytes = New-Object System.Collections.Generic.List[byte]
     $buffer = New-Object byte[] 1
 
-    while ($bytes.Count -lt 256) {
+    while ($bytes.Count -lt $maxBytes) {
         $read = $stream.Read($buffer, 0, 1)
         if ($read -le 0) {
             throw "unexpected eof while reading TCP header"
@@ -1218,7 +1222,7 @@ function Read-OptionalTcpLine($stream, [int]$timeoutMs) {
     $previousTimeout = $stream.ReadTimeout
     try {
         $stream.ReadTimeout = $timeoutMs
-        return Read-TcpLine $stream
+        return Read-TcpLine $stream 16384
     } catch {
         return ""
     } finally {
@@ -1424,6 +1428,41 @@ function Test-ClipboardTcpReceiveTimeout([int]$timeoutMs = 300) {
         if ($null -ne $client) { try { $client.Dispose() } catch {} }
         try { $listener.Stop() } catch {}
     }
+}
+
+function Test-ClipboardTcpAckReadLimit() {
+    $nameText = [string]::Join([string][char]31, @(
+        'moonlight-companion-very-long-received-file-name-alpha.txt',
+        'moonlight-companion-very-long-received-file-name-beta.txt',
+        'moonlight-companion-매우-긴-받은-파일-이름.txt',
+        'moonlight-companion-very-long-received-file-name-delta.txt'
+    ))
+    $namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($nameText))
+    $line = "MOONCLIPACK 1 id=files:long-ack kind=files bytes=1 files=4 imported_paths=4 imported_names_b64=$namesB64"
+
+    if ([System.Text.Encoding]::UTF8.GetByteCount($line) -le 256) {
+        throw "TCP ACK read-limit test line was not long enough"
+    }
+
+    $stream = [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes("$line`n"))
+    $readLine = Read-TcpLine $stream 16384
+    $ack = Parse-TcpAckLine $readLine
+    if ($null -eq $ack -or $ack["id"] -ne "files:long-ack" -or $ack["imported_names_b64"] -ne $namesB64) {
+        throw "long TCP ACK line did not parse correctly"
+    }
+
+    $headerFailed = $false
+    try {
+        $headerStream = [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes("$line`n"))
+        Read-TcpLine $headerStream | Out-Null
+    } catch {
+        $headerFailed = $true
+    }
+    if (-not $headerFailed) {
+        throw "default TCP header read limit accepted a long ACK-sized line"
+    }
+
+    Write-Output "tcp_ack_read_limit=ok"
 }
 
 function Send-ClipboardTcpPayload($zipPath, $port, [string]$expectedId) {
