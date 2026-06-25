@@ -209,6 +209,7 @@ exit "${status}"
     private var transferProgressLineBuffer = ""
     private var testTransferLineBuffer = ""
     private var queuedFileDrops: [QueuedFileDrop] = []
+    private var promisedFileReceiveQueues: [OperationQueue] = []
     private var latestMacReceiveURLs: [URL] = []
     private var pendingLatestMacReceiveURLs: [URL] = []
     private var latestWindowsReceiveID = ""
@@ -247,6 +248,7 @@ exit "${status}"
     private struct QueuedFileDrop {
         let urls: [URL]
         let source: FileDropSource
+        let cleanupURLs: [URL]
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -705,15 +707,16 @@ exit "${status}"
     }
 
     private func clearQueuedFileDrops() {
+        queuedFileDrops.forEach { cleanupTemporaryDropURLs($0.cleanupURLs) }
         queuedFileDrops.removeAll()
     }
 
-    private func queueFileDropIfBusy(_ urls: [URL], source: FileDropSource) -> Bool {
+    private func queueFileDropIfBusy(_ urls: [URL], source: FileDropSource, cleanupURLs: [URL] = []) -> Bool {
         guard isBusy || transferProcess != nil else {
             return false
         }
 
-        queuedFileDrops.append(QueuedFileDrop(urls: urls, source: source))
+        queuedFileDrops.append(QueuedFileDrop(urls: urls, source: source, cleanupURLs: cleanupURLs))
         let summary = fileTransferSummary(for: urls)
         let queueText = queuedFileDrops.count == 1
             ? "1 drop queued"
@@ -733,7 +736,7 @@ exit "${status}"
         }
 
         let nextDrop = queuedFileDrops.removeFirst()
-        sendFilesToWindows(nextDrop.urls, source: nextDrop.source)
+        sendFilesToWindows(nextDrop.urls, source: nextDrop.source, cleanupURLs: nextDrop.cleanupURLs)
         return true
     }
 
@@ -2008,14 +2011,18 @@ exit "${status}"
         return NSRect(x: x, y: y, width: frame.width, height: frame.height)
     }
 
-    private func sendFilesToWindows(_ urls: [URL], source: FileDropSource) {
+    private func sendFilesToWindows(_ urls: [URL], source: FileDropSource, cleanupURLs: [URL] = []) {
         guard !urls.isEmpty else { return }
-        guard saveSettings() else { return }
+        guard saveSettings() else {
+            cleanupTemporaryDropURLs(cleanupURLs)
+            return
+        }
         let pasteAfterSend = shouldPasteAfterSend(for: source)
         let summary = fileTransferSummary(for: urls)
 
         let senderURL = resourceURL.appendingPathComponent("mac/send-files-to-windows.sh")
         guard FileManager.default.isExecutableFile(atPath: senderURL.path) else {
+            cleanupTemporaryDropURLs(cleanupURLs)
             fail("File sender is missing or not executable: \(senderURL.path)")
             return
         }
@@ -2055,11 +2062,13 @@ exit "${status}"
                 if self?.consumeTransferCancellation(for: task) == true {
                     self?.transferProcess = nil
                     try? FileManager.default.removeItem(at: transferResultStateURL)
+                    self?.cleanupTemporaryDropURLs(cleanupURLs)
                     self?.setBusy(false, status: "Cancelled", detail: "\(summary.detail) send was cancelled.", startQueuedDropsWhenIdle: false)
                     return
                 }
                 self?.transferProcess = nil
                 let text = self?.filteredTransferOutputText()
+                self?.cleanupTemporaryDropURLs(cleanupURLs)
                 if task.terminationStatus == 0 {
                     let transferResult = SettingsFile.parse(url: transferResultStateURL)
                     try? FileManager.default.removeItem(at: transferResultStateURL)
@@ -2141,8 +2150,94 @@ exit "${status}"
             try task.run()
             transferProcess = task
         } catch {
+            cleanupTemporaryDropURLs(cleanupURLs)
             notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: error.localizedDescription)
             fail(error.localizedDescription)
+        }
+    }
+
+    private func cleanupTemporaryDropURLs(_ urls: [URL]) {
+        for url in urls {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func receivePromisedFilesToWindows(_ receivers: [NSFilePromiseReceiver], source: FileDropSource) {
+        guard !receivers.isEmpty else { return }
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moonlight-promised-drop-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        } catch {
+            fail("Could not prepare promised file drop: \(error.localizedDescription)")
+            return
+        }
+
+        let wasAlreadyBusy = isBusy || transferProcess != nil
+        if wasAlreadyBusy {
+            let itemText = receivers.count == 1 ? "1 promised item" : "\(receivers.count) promised items"
+            statusLabel.stringValue = "Files Queued"
+            detailLabel.stringValue = "Preparing \(itemText) from the drop; it will send after the current operation."
+        } else {
+            let itemText = receivers.count == 1 ? "1 promised item" : "\(receivers.count) promised items"
+            setBusy(true, status: "Preparing Drop", detail: "Receiving \(itemText) from the source app.")
+        }
+
+        let operationQueue = OperationQueue()
+        operationQueue.name = "Moonlight Companion promised file receiver"
+        operationQueue.maxConcurrentOperationCount = min(max(receivers.count, 1), 4)
+        promisedFileReceiveQueues.append(operationQueue)
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var promisedURLs = Array<URL?>(repeating: nil, count: receivers.count)
+        var errors: [String] = []
+
+        for (index, receiver) in receivers.enumerated() {
+            group.enter()
+            receiver.receivePromisedFiles(
+                atDestination: destination,
+                options: [:],
+                operationQueue: operationQueue
+            ) { url, error in
+                lock.lock()
+                promisedURLs[index] = url
+                if let error {
+                    errors.append(error.localizedDescription)
+                }
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
+            self.promisedFileReceiveQueues.removeAll { $0 === operationQueue }
+            let urls = promisedURLs.compactMap { $0 }
+            guard !urls.isEmpty else {
+                self.cleanupTemporaryDropURLs([destination])
+                if !wasAlreadyBusy {
+                    self.setBusy(false, status: "Drop Failed", detail: "The source app did not provide any promised files.", startQueuedDropsWhenIdle: false)
+                } else {
+                    self.statusLabel.stringValue = "Drop Failed"
+                    self.detailLabel.stringValue = "The source app did not provide any promised files."
+                }
+                if !errors.isEmpty {
+                    self.showFailure("Promised file drop failed.")
+                }
+                return
+            }
+
+            if !wasAlreadyBusy {
+                self.setBusy(false, status: "Drop Ready", detail: FileDropReader.dropSummary(for: urls), startQueuedDropsWhenIdle: false)
+            } else if !errors.isEmpty {
+                self.detailLabel.stringValue = "\(FileDropReader.dropSummary(for: urls)) ready; \(errors.count) promised item(s) could not be prepared."
+            }
+
+            if self.queueFileDropIfBusy(urls, source: source, cleanupURLs: [destination]) {
+                return
+            }
+            self.sendFilesToWindows(urls, source: source, cleanupURLs: [destination])
         }
     }
 
@@ -2328,6 +2423,7 @@ exit "${status}"
     @objc private func quit() {
         process?.terminate()
         transferProcess?.terminate()
+        promisedFileReceiveQueues.forEach { $0.cancelAllOperations() }
         latestMacReceiveTimer?.invalidate()
         dropOverlayTimer?.invalidate()
         dropOverlayWindow?.close()
@@ -2344,10 +2440,16 @@ extension AppDelegate: FileDropViewDelegate {
         }
         sendFilesToWindows(urls, source: source)
     }
+
+    func fileDropViewDidReceiveFilePromises(_ receivers: [NSFilePromiseReceiver], source: FileDropSource) {
+        hideMoonlightDropOverlay()
+        receivePromisedFilesToWindows(receivers, source: source)
+    }
 }
 
 protocol FileDropViewDelegate: AnyObject {
     func fileDropViewDidReceive(_ urls: [URL], source: FileDropSource)
+    func fileDropViewDidReceiveFilePromises(_ receivers: [NSFilePromiseReceiver], source: FileDropSource)
 }
 
 enum FileDropSource {
@@ -2361,7 +2463,10 @@ enum FileDropReader {
         .fileURL,
         .URL
     ]
-    static let readablePasteboardTypes = urlPasteboardTypes + [filenamesPasteboardType]
+    static let filePromisePasteboardTypes = NSFilePromiseReceiver.readableDraggedTypes.map {
+        NSPasteboard.PasteboardType($0)
+    }
+    static let readablePasteboardTypes = urlPasteboardTypes + [filenamesPasteboardType] + filePromisePasteboardTypes
 
     static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
         var urls: [URL] = []
@@ -2433,6 +2538,17 @@ enum FileDropReader {
         fileURLs(from: sender.draggingPasteboard)
     }
 
+    static func filePromiseReceivers(from pasteboard: NSPasteboard) -> [NSFilePromiseReceiver] {
+        pasteboard.readObjects(
+            forClasses: [NSFilePromiseReceiver.self],
+            options: nil
+        ) as? [NSFilePromiseReceiver] ?? []
+    }
+
+    static func filePromiseReceivers(from sender: NSDraggingInfo) -> [NSFilePromiseReceiver] {
+        filePromiseReceivers(from: sender.draggingPasteboard)
+    }
+
     static func dropSummary(for urls: [URL]) -> String {
         guard !urls.isEmpty else {
             return "No file selected"
@@ -2448,6 +2564,10 @@ enum FileDropReader {
             return "\(itemText): \(visibleNames), +\(remaining) more"
         }
         return "\(itemText): \(visibleNames)"
+    }
+
+    static func dropSummary(forPromisedFileCount count: Int) -> String {
+        count == 1 ? "1 promised item" : "\(count) promised items"
     }
 
     private static func shortenedDisplayName(_ name: String, maxCharacters: Int = 34) -> String {
@@ -2540,22 +2660,33 @@ final class MoonlightDropOverlayView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = FileDropReader.fileURLs(from: sender)
-        guard !urls.isEmpty else {
-            return false
+        if !urls.isEmpty {
+            setActiveDropURLs([])
+            delegate?.fileDropViewDidReceive(urls, source: .moonlightSurface)
+            return true
         }
+
+        let receivers = FileDropReader.filePromiseReceivers(from: sender)
+        guard !receivers.isEmpty else { return false }
         setActiveDropURLs([])
-        delegate?.fileDropViewDidReceive(urls, source: .moonlightSurface)
+        delegate?.fileDropViewDidReceiveFilePromises(receivers, source: .moonlightSurface)
         return true
     }
 
     private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
         let urls = FileDropReader.fileURLs(from: sender)
-        setActiveDropURLs(urls)
-        return urls.isEmpty ? [] : .copy
+        if !urls.isEmpty {
+            setActiveDropURLs(urls)
+            return .copy
+        }
+
+        let receivers = FileDropReader.filePromiseReceivers(from: sender)
+        setActiveDropURLs([], promisedFileCount: receivers.count)
+        return receivers.isEmpty ? [] : .copy
     }
 
-    private func setActiveDropURLs(_ urls: [URL]) {
-        if urls.isEmpty {
+    private func setActiveDropURLs(_ urls: [URL], promisedFileCount: Int = 0) {
+        if urls.isEmpty && promisedFileCount == 0 {
             layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.10).cgColor
             layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.70).cgColor
             titleLabel.stringValue = defaultTitle
@@ -2564,7 +2695,9 @@ final class MoonlightDropOverlayView: NSView {
             layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.18).cgColor
             layer?.borderColor = NSColor.systemGreen.withAlphaComponent(0.85).cgColor
             titleLabel.stringValue = defaultTitle
-            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+            detailLabel.stringValue = urls.isEmpty
+                ? FileDropReader.dropSummary(forPromisedFileCount: promisedFileCount)
+                : FileDropReader.dropSummary(for: urls)
         }
     }
 }
@@ -2660,22 +2793,33 @@ final class FileDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = fileURLs(from: sender)
-        guard !urls.isEmpty else {
-            return false
+        if !urls.isEmpty {
+            setActiveDropURLs([])
+            delegate?.fileDropViewDidReceive(urls, source: source)
+            return true
         }
+
+        let receivers = FileDropReader.filePromiseReceivers(from: sender)
+        guard !receivers.isEmpty else { return false }
         setActiveDropURLs([])
-        delegate?.fileDropViewDidReceive(urls, source: source)
+        delegate?.fileDropViewDidReceiveFilePromises(receivers, source: source)
         return true
     }
 
     private func dropOperation(for sender: NSDraggingInfo) -> NSDragOperation {
         let urls = fileURLs(from: sender)
-        setActiveDropURLs(urls)
-        return urls.isEmpty ? [] : .copy
+        if !urls.isEmpty {
+            setActiveDropURLs(urls)
+            return .copy
+        }
+
+        let receivers = FileDropReader.filePromiseReceivers(from: sender)
+        setActiveDropURLs([], promisedFileCount: receivers.count)
+        return receivers.isEmpty ? [] : .copy
     }
 
-    private func setActiveDropURLs(_ urls: [URL]) {
-        if urls.isEmpty {
+    private func setActiveDropURLs(_ urls: [URL], promisedFileCount: Int = 0) {
+        if urls.isEmpty && promisedFileCount == 0 {
             layer?.borderColor = NSColor.separatorColor.cgColor
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             titleLabel.stringValue = defaultTitle
@@ -2685,7 +2829,9 @@ final class FileDropView: NSView {
             layer?.borderColor = NSColor.systemGreen.cgColor
             layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.12).cgColor
             titleLabel.stringValue = "Drop to Windows"
-            detailLabel.stringValue = FileDropReader.dropSummary(for: urls)
+            detailLabel.stringValue = urls.isEmpty
+                ? FileDropReader.dropSummary(forPromisedFileCount: promisedFileCount)
+                : FileDropReader.dropSummary(for: urls)
             detailLabel.textColor = .labelColor
         }
     }
