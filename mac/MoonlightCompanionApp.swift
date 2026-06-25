@@ -2265,6 +2265,23 @@ exit "${status}"
                 return
             }
             let urls = promisedURLs.compactMap { $0 }
+            if !errors.isEmpty || urls.count != receivers.count {
+                self.cleanupTemporaryDropURLs([destination])
+                let detail = self.promisedFileDropFailureDetail(
+                    receivedCount: urls.count,
+                    expectedCount: receivers.count,
+                    errors: errors
+                )
+                if !wasAlreadyBusy {
+                    self.setBusy(false, status: "Drop Failed", detail: detail, startQueuedDropsWhenIdle: false)
+                } else {
+                    self.statusLabel.stringValue = "Drop Failed"
+                    self.detailLabel.stringValue = detail
+                }
+                self.notifyMoonlightDropIfNeeded(source: source, title: "File transfer failed", body: detail)
+                self.showFailure("Promised file drop failed.")
+                return
+            }
             guard !urls.isEmpty else {
                 self.cleanupTemporaryDropURLs([destination])
                 if !wasAlreadyBusy {
@@ -2281,8 +2298,6 @@ exit "${status}"
 
             if !wasAlreadyBusy {
                 self.setBusy(false, status: "Drop Ready", detail: FileDropReader.dropSummary(for: urls), startQueuedDropsWhenIdle: false)
-            } else if !errors.isEmpty {
-                self.detailLabel.stringValue = "\(FileDropReader.dropSummary(for: urls)) ready; \(errors.count) promised item(s) could not be prepared."
             }
 
             if self.queueFileDropIfBusy(urls, source: source, cleanupURLs: [destination]) {
@@ -2290,6 +2305,21 @@ exit "${status}"
             }
             self.sendFilesToWindows(urls, source: source, cleanupURLs: [destination])
         }
+    }
+
+    private func promisedFileDropFailureDetail(receivedCount: Int, expectedCount: Int, errors: [String]) -> String {
+        let missingCount = max(expectedCount - receivedCount, 0)
+        var detail = expectedCount == 1
+            ? "Could not prepare the promised file from the source app."
+            : "Could not prepare all \(expectedCount) promised files from the source app."
+        if missingCount > 0 {
+            detail += " \(missingCount) item(s) were not provided."
+        }
+        if let firstError = errors.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firstError.isEmpty {
+            detail += " \(firstError)"
+        }
+        return detail
     }
 
     private struct TransferSummary {
