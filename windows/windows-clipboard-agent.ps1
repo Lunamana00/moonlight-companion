@@ -25,6 +25,7 @@ $MoonlightClipboardMacToWindowsTcpPort = "47331"
 $MoonlightClipboardWindowsToMacTcpPort = "47332"
 $MoonlightTransferOversizeDirect = "yes"
 $MoonlightTransferWindowsDir = "%USERPROFILE%\Downloads\Moonlight Companion"
+$MoonlightMacFallbackMaxFailures = "3"
 $agentLoadOnly = "$env:MOONLIGHT_AGENT_LOAD_ONLY".Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -72,6 +73,12 @@ function Get-IntSetting($value, $defaultValue) {
             return $parsed
         }
     } catch {}
+    return $defaultValue
+}
+
+function Get-PositiveIntSetting($value, $defaultValue) {
+    $parsed = Get-IntSetting $value $defaultValue
+    if ($parsed -gt 0) { return $parsed }
     return $defaultValue
 }
 
@@ -1300,6 +1307,8 @@ function Receive-ClipboardTcpPayload($client) {
             $script:lastMacArchiveHash = $macArchiveHash
             $script:lastMacId = $imported.id
             $script:lastWindowsId = $normalizedId
+            $script:lastMacFailedArchiveHash = ""
+            $script:lastMacFailedArchiveFailures = 0
             Write-MacImportState $imported $macArchiveHash
             Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
             Write-MacImportTcpAck $stream $imported
@@ -1427,9 +1436,12 @@ if ($agentLoadOnly) {
 $lastMacArchiveHash = ""
 $lastMacId = ""
 $lastWindowsId = ""
+$lastMacFailedArchiveHash = ""
+$lastMacFailedArchiveFailures = 0
 $lastCapsLockHangulRequestId = ""
 $lastWindowsExportAt = [DateTime]::MinValue
-$maxBytes = Get-IntSetting $MoonlightClipboardMaxBytes 52428800
+$maxBytes = Get-PositiveIntSetting $MoonlightClipboardMaxBytes 52428800
+$macFallbackMaxFailures = Get-PositiveIntSetting $MoonlightMacFallbackMaxFailures 3
 $enableCapsLockHangul = Test-SettingEnabled $MoonlightCapsLockHangul $true
 $capsLockHangulTcpPort = Get-IntSetting $MoonlightCapsLockHangulTcpPort 47321
 $capsLockHangulHookInstalled = $false
@@ -1487,8 +1499,32 @@ try {
             if (Test-Path -LiteralPath $macZip) {
                 $macArchiveHash = Get-FileHashString $macZip
                 if ($macArchiveHash -ne $lastMacArchiveHash) {
-                    Expand-Payload $macZip $importDir
-                    $imported = Import-ClipboardPayload $importDir
+                    $imported = $null
+                    try {
+                        Expand-Payload $macZip $importDir
+                        $imported = Import-ClipboardPayload $importDir
+                    } catch {
+                        if ($macArchiveHash -eq $lastMacFailedArchiveHash) {
+                            $lastMacFailedArchiveFailures += 1
+                        } else {
+                            $lastMacFailedArchiveHash = $macArchiveHash
+                            $lastMacFailedArchiveFailures = 1
+                        }
+
+                        if ($lastMacFailedArchiveFailures -ge $macFallbackMaxFailures) {
+                            if (Remove-FileIfHashMatches $macZip $macArchiveHash) {
+                                $lastMacArchiveHash = $macArchiveHash
+                                $lastMacFailedArchiveHash = ""
+                                $lastMacFailedArchiveFailures = 0
+                                Write-AgentLog ("Mac -> Windows fallback import failed {0} times; removed stale fallback ZIP" -f $macFallbackMaxFailures)
+                            } else {
+                                Write-AgentLog ("Mac -> Windows fallback import failed {0} times; stale fallback ZIP removal deferred" -f $lastMacFailedArchiveFailures)
+                            }
+                        } else {
+                            Write-AgentLog ("Mac -> Windows fallback import failed; will retry ({0}/{1}): {2}" -f $lastMacFailedArchiveFailures, $macFallbackMaxFailures, $_.Exception.Message)
+                        }
+                    }
+
                     if ($null -ne $imported) {
                         $normalizedId = Get-ImportedPayloadNormalizedId $imported
                         if ([string]::IsNullOrWhiteSpace($normalizedId)) {
@@ -1498,6 +1534,8 @@ try {
                         $lastMacArchiveHash = $macArchiveHash
                         $lastMacId = $imported.id
                         $lastWindowsId = $normalizedId
+                        $lastMacFailedArchiveHash = ""
+                        $lastMacFailedArchiveFailures = 0
                         Write-MacImportState $imported $macArchiveHash
                         Remove-FileIfHashMatches $macZip $macArchiveHash | Out-Null
                         Write-AgentLog ("Mac -> Windows {0} ({1}B)" -f $imported.kind, $imported.bytes)
