@@ -34,6 +34,7 @@ struct CompanionSettings {
         "MOONLIGHT_TRANSFER_MAC_DIR",
         "MOONLIGHT_TRANSFER_WINDOWS_DIR",
         "MOONLIGHT_TRANSFER_DROP_OVERLAY",
+        "MOONLIGHT_TRANSFER_OVERSIZE_DIRECT",
         "MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_AUTO_PASTE",
         "MOONLIGHT_TRANSFER_NOTIFY",
@@ -343,6 +344,7 @@ exit "${status}"
         form.addArrangedSubview(row("Mac Receive Dir", text("MOONLIGHT_TRANSFER_MAC_DIR", width: 520)))
         form.addArrangedSubview(row("Windows Receive Dir", text("MOONLIGHT_TRANSFER_WINDOWS_DIR", width: 520)))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_DROP_OVERLAY", title: "Use Moonlight window as file drop target"))
+        form.addArrangedSubview(check("MOONLIGHT_TRANSFER_OVERSIZE_DIRECT", title: "Send oversized drops directly to Windows receive folder"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_SCREEN_DROP_AUTO_PASTE", title: "Paste after Moonlight window or strip drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_AUTO_PASTE", title: "Paste after Companion fallback drops"))
         form.addArrangedSubview(check("MOONLIGHT_TRANSFER_NOTIFY", title: "Notify on file transfers"))
@@ -856,6 +858,11 @@ exit "${status}"
         return !id.isEmpty && !confirmation.isEmpty && confirmation != "pending" && importedPaths > 0
     }
 
+    private func windowsClipboardReady(_ state: [String: String]) -> Bool {
+        let value = state["clipboard_ready"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return value.isEmpty || value == "1" || value == "y" || value == "yes" || value == "true" || value == "on"
+    }
+
     private func recordLatestWindowsReceiveState(_ state: [String: String]) {
         let id = state["id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let confirmation = state["confirmation"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -870,6 +877,7 @@ exit "${status}"
         let values = [
             "bytes": state["bytes"] ?? "",
             "confirmation": confirmation,
+            "clipboard_ready": state["clipboard_ready"] ?? "",
             "id": id,
             "imported_names_b64": state["imported_names_b64"] ?? "",
             "imported_paths": "\(importedPaths)",
@@ -2056,13 +2064,17 @@ exit "${status}"
                     self?.recordLatestWindowsReceiveState(transferResult)
                     var detail = text?.isEmpty == false ? text! : "\(summary.detail) sent to Windows."
                     let importConfirmed = self?.windowsImportConfirmed(transferResult) == true
+                    let clipboardReady = self?.windowsClipboardReady(transferResult) == true
                     var pasteSummary = importConfirmed
-                        ? "Ready on the Windows clipboard."
+                        ? (clipboardReady ? "Ready on the Windows clipboard." : "Copied to the Windows receive folder.")
                         : "Windows import confirmation is pending."
-                    if pasteAfterSend && importConfirmed {
+                    if pasteAfterSend && importConfirmed && clipboardReady {
                         let pasted = self?.pasteIntoMoonlight() == true
                         pasteSummary = pasted ? "Pasted into the focused Moonlight app." : "Ready on the Windows clipboard; paste shortcut failed."
                         detail += pasted ? " Sent Ctrl+V to Moonlight." : " Could not send Ctrl+V to Moonlight."
+                    } else if pasteAfterSend && importConfirmed {
+                        pasteSummary = "Copied to the Windows receive folder; paste is unavailable for direct oversized transfers."
+                        detail += " Skipped Ctrl+V because this transfer went directly to the Windows receive folder."
                     } else if pasteAfterSend {
                         pasteSummary = "Windows import confirmation is pending; paste manually after it lands."
                         detail += " Skipped Ctrl+V because Windows import confirmation is pending."

@@ -12,8 +12,9 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - Existing user settings now keep the Companion control window hidden on launch unless `MOONLIGHT_COMPANION_SHOW_WINDOW_ON_LAUNCH` is enabled, and background failures no longer raise modal alerts over the current workspace.
 - Automatic Moonlight drop overlays now avoid forced frontmost ordering, while manually shown overlays can still be brought above the stream when requested.
 - The GUI now revalidates the latest Windows-to-Mac received file paths while it is open, disabling reveal/copy actions when those files have been moved or deleted.
-- Oversized Mac-to-Windows file drops are now rejected before temporary payload export, avoiding unnecessary copy and hash work for files over the configured clipboard limit.
-- Oversized Mac-to-Windows file drops now report human-readable sizes and suggest splitting the transfer or using a file sync tool.
+- Oversized Mac-to-Windows drops can now bypass the clipboard and copy directly into the Windows receive folder over SSH, with GUI state marking that auto-paste is unavailable for that direct path.
+- When direct oversized transfer is disabled, oversized Mac-to-Windows file drops are rejected before temporary payload export, avoiding unnecessary copy and hash work for files over the configured clipboard limit.
+- When direct oversized transfer is disabled, oversized Mac-to-Windows file drops report human-readable sizes and suggest splitting the transfer or using a file sync tool.
 - Mac-to-Windows GUI sends now show live transfer phases such as metadata collection, packaging, TCP/SSH send, and Windows receive confirmation.
 - Moonlight window and strip drops now send automatic `Ctrl+V` only after Windows import confirmation, avoiding stale pastes when a fallback transfer is still pending.
 - Windows-to-Mac receives now record the latest imported Mac file paths, and the GUI can reveal the last received Mac files directly in Finder.

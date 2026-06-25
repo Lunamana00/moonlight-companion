@@ -558,23 +558,52 @@ if [[ "$(meta_value kind "$empty_snapshot_meta")" != "empty" || "$(meta_value id
 fi
 echo "Helper empty clipboard snapshot ok."
 
-echo "Testing Mac -> Windows payload size limit message..."
+echo "Testing Mac -> Windows oversized direct transfer..."
 limit_file="${tmp_dir}/moonlight-companion-transfer-test-limit-${stamp}.txt"
+limit_name="$(basename "$limit_file")"
 limit_out="${tmp_dir}/mac-to-windows-limit-send.txt"
+limit_state="${tmp_dir}/mac-to-windows-limit-state.txt"
 limit_config="${tmp_dir}/moonlight-companion-limit.conf"
 printf 'Moonlight Companion payload limit test %s\n' "$stamp" > "$limit_file"
-printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\n' "$config" > "$limit_config"
-if MOONLIGHT_COMPANION_CONFIG="$limit_config" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_out" 2>&1; then
-  echo "Mac -> Windows payload size limit did not reject an oversized payload." >&2
+printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\nMOONLIGHT_TRANSFER_OVERSIZE_DIRECT="yes"\n' "$config" > "$limit_config"
+if ! MOONLIGHT_COMPANION_CONFIG="$limit_config" MOONLIGHT_TRANSFER_RESULT_STATE="$limit_state" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_out" 2>&1; then
+  echo "Mac -> Windows oversized payload did not use direct receive-folder transfer." >&2
   cat "$limit_out" >&2
   exit 1
 fi
-if ! grep -Fq "payload too large:" "$limit_out" || ! grep -Fq "clipboard transfer limit" "$limit_out" || ! grep -Fq "file sync tool" "$limit_out"; then
-  echo "Mac -> Windows payload size limit did not explain the oversized payload clearly." >&2
+if ! grep -Fq "sent oversized" "$limit_out" || ! grep -Fq "not placed on the Windows clipboard" "$limit_out"; then
+  echo "Mac -> Windows oversized payload did not explain the direct receive-folder fallback clearly." >&2
   cat "$limit_out" >&2
   exit 1
 fi
-echo "Mac -> Windows payload size limit message ok."
+if [[ ! -f "$limit_state" || "$(meta_value confirmation "$limit_state")" != "direct-ssh" || "$(meta_value clipboard_ready "$limit_state")" != "no" ]]; then
+  echo "Mac -> Windows oversized payload did not write direct-transfer GUI state." >&2
+  [[ -f "$limit_state" ]] && cat "$limit_state" >&2
+  exit 1
+fi
+if ! wait_for_windows_file "$limit_name"; then
+  echo "Mac -> Windows oversized payload did not arrive in the Windows receive folder." >&2
+  cat "$limit_out" >&2
+  exit 1
+fi
+remove_windows_file "$limit_name"
+echo "Mac -> Windows oversized direct transfer ok."
+
+echo "Testing Mac -> Windows oversized direct transfer disabled..."
+limit_disabled_out="${tmp_dir}/mac-to-windows-limit-disabled-send.txt"
+limit_disabled_config="${tmp_dir}/moonlight-companion-limit-disabled.conf"
+printf 'source %q\nMOONLIGHT_CLIPBOARD_MAX_BYTES="1"\nMOONLIGHT_TRANSFER_OVERSIZE_DIRECT="no"\n' "$config" > "$limit_disabled_config"
+if MOONLIGHT_COMPANION_CONFIG="$limit_disabled_config" "${script_dir}/send-files-to-windows.sh" "$limit_file" > "$limit_disabled_out" 2>&1; then
+  echo "Mac -> Windows oversized payload was not rejected when direct transfer was disabled." >&2
+  cat "$limit_disabled_out" >&2
+  exit 1
+fi
+if ! grep -Fq "payload too large:" "$limit_disabled_out" || ! grep -Fq "clipboard transfer limit" "$limit_disabled_out"; then
+  echo "Mac -> Windows oversized rejection did not explain the disabled direct-transfer case." >&2
+  cat "$limit_disabled_out" >&2
+  exit 1
+fi
+echo "Mac -> Windows oversized direct transfer disabled ok."
 
 echo "Testing Mac -> Windows file transfer..."
 m2w_file="${tmp_dir}/moonlight-companion-transfer-test-mac-to-windows-${stamp}.txt"

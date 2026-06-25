@@ -19,6 +19,8 @@ MOONLIGHT_CLIPBOARD_MAX_BYTES="${MOONLIGHT_CLIPBOARD_MAX_BYTES:-52428800}"
 MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT:-47331}"
 MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT="${MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_LOCAL_PORT:-$MOONLIGHT_CLIPBOARD_MAC_TO_WINDOWS_TCP_PORT}"
 MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS="${MOONLIGHT_TRANSFER_CONFIRM_TIMEOUT_MS:-1800}"
+MOONLIGHT_TRANSFER_OVERSIZE_DIRECT="${MOONLIGHT_TRANSFER_OVERSIZE_DIRECT:-yes}"
+MOONLIGHT_TRANSFER_WINDOWS_DIR="${MOONLIGHT_TRANSFER_WINDOWS_DIR:-%USERPROFILE%\\Downloads\\Moonlight Companion}"
 
 runtime_dir="${MOONLIGHT_CLIPBOARD_RUNTIME_DIR:-${HOME}/Library/Application Support/MoonlightClipboardSync}"
 helper="${MOONLIGHT_CLIPBOARD_HELPER:-${runtime_dir}/moonclipctl}"
@@ -32,6 +34,10 @@ remote_mac_zip="${remote_dir}/mac-to-windows.zip"
 remote_mac_tmp="${remote_dir}/mac-to-windows.zip.tmp"
 remote_mac_zip_cmd="${remote_dir}\\mac-to-windows.zip"
 remote_mac_tmp_cmd="${remote_dir}\\mac-to-windows.zip.tmp"
+remote_direct_zip="${remote_dir}/mac-to-windows-direct.zip"
+remote_direct_tmp="${remote_dir}/mac-to-windows-direct.zip.tmp"
+remote_direct_script="${remote_dir}/mac-to-windows-direct.ps1"
+remote_direct_script_cmd="${remote_dir}\\mac-to-windows-direct.ps1"
 
 ssh_opts=(
   -q
@@ -130,6 +136,12 @@ reject_oversized_payload() {
   echo "payload too large: ${bytes_text} exceeds the ${max_bytes_text} clipboard transfer limit. Split the transfer or use a file sync tool for large files." >&2
   log "skip File drop Mac -> Windows ${kind:-files} (${payload_bytes}B); limit is ${MOONLIGHT_CLIPBOARD_MAX_BYTES}B"
   exit 1
+}
+
+ps_single_quoted() {
+  local value="$1"
+  value=${value//\'/\'\'}
+  printf "'%s'" "$value"
 }
 
 payload_value() {
@@ -245,6 +257,7 @@ write_transfer_result_state() {
     printf 'confirmation=%s\n' "${windows_import_confirmation:-pending}"
     printf 'imported_paths=%s\n' "${imported_paths:-0}"
     printf 'imported_names_b64=%s\n' "${imported_names_b64:-}"
+    printf 'clipboard_ready=%s\n' "${clipboard_ready:-yes}"
   } > "$tmp_path" 2>/dev/null && mv "$tmp_path" "$state_path" 2>/dev/null || rm -f "$tmp_path"
 }
 
@@ -344,6 +357,174 @@ send_zip() {
   transport="ssh"
 }
 
+send_direct_to_windows_receive_folder() {
+  local zip_path="$1"
+  local transfer_dir_literal script_path state
+  transfer_dir_literal="$(ps_single_quoted "$MOONLIGHT_TRANSFER_WINDOWS_DIR")"
+  script_path="${tmp_dir}/mac-to-windows-direct.ps1"
+
+  progress "Uploading oversized payload directly to the Windows receive folder."
+  ssh "${ssh_opts[@]}" "$WINDOWS_SSH" "cmd.exe /c if not exist ${remote_dir} mkdir ${remote_dir}" >/dev/null
+  scp "${scp_opts[@]}" "$zip_path" "${WINDOWS_SSH}:${remote_direct_tmp}" >/dev/null
+
+  cat > "$script_path" <<POWERSHELL
+\$ErrorActionPreference = "Stop"
+\$ProgressPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function Get-NormalizedFileName(\$name) {
+  if ([string]::IsNullOrWhiteSpace(\$name)) { return "file" }
+  \$safeName = \$name.Normalize([System.Text.NormalizationForm]::FormC)
+  foreach (\$invalidChar in [System.IO.Path]::GetInvalidFileNameChars()) {
+    \$safeName = \$safeName.Replace([string]\$invalidChar, "_")
+  }
+  \$safeName = \$safeName.TrimEnd([char[]]@(" ", "."))
+  if ([string]::IsNullOrWhiteSpace(\$safeName) -or \$safeName -eq "." -or \$safeName -eq "..") {
+    \$safeName = "file"
+  }
+
+  \$reservedNames = @(
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+  )
+  \$stem = [System.IO.Path]::GetFileNameWithoutExtension(\$safeName)
+  if (\$reservedNames -contains \$stem.ToUpperInvariant()) {
+    \$safeName = "_\$safeName"
+  }
+
+  return \$safeName
+}
+
+function Normalize-PathTreeNames(\$path) {
+  if (-not (Test-Path -LiteralPath \$path)) { return \$path }
+
+  \$item = Get-Item -LiteralPath \$path -Force -ErrorAction Stop
+  if (\$item.PSIsContainer) {
+    Get-ChildItem -LiteralPath \$item.FullName -Force | ForEach-Object {
+      Normalize-PathTreeNames \$_.FullName | Out-Null
+    }
+  }
+
+  \$name = Split-Path -Leaf \$item.FullName
+  \$normalizedName = Get-NormalizedFileName \$name
+  if (\$name -eq \$normalizedName) { return \$item.FullName }
+
+  \$parent = Split-Path -Parent \$item.FullName
+  \$candidate = \$normalizedName
+  \$stem = [System.IO.Path]::GetFileNameWithoutExtension(\$normalizedName)
+  \$ext = [System.IO.Path]::GetExtension(\$normalizedName)
+  \$index = 2
+  while (Test-Path -LiteralPath (Join-Path \$parent \$candidate)) {
+    \$candidate = if ([string]::IsNullOrEmpty(\$ext)) { "\$stem-\$index" } else { "\$stem-\$index\$ext" }
+    \$index++
+  }
+
+  \$dest = Join-Path \$parent \$candidate
+  Move-Item -LiteralPath \$item.FullName -Destination \$dest -Force -ErrorAction Stop
+  return \$dest
+}
+
+function Copy-ItemUniqueNamed(\$source, \$destDir, \$name) {
+  New-Item -ItemType Directory -Force -Path \$destDir -ErrorAction Stop | Out-Null
+  \$normalizedName = Get-NormalizedFileName \$name
+  \$stem = [System.IO.Path]::GetFileNameWithoutExtension(\$normalizedName)
+  \$ext = [System.IO.Path]::GetExtension(\$normalizedName)
+  \$candidate = \$normalizedName
+  \$index = 2
+  while (Test-Path -LiteralPath (Join-Path \$destDir \$candidate)) {
+    \$candidate = if ([string]::IsNullOrEmpty(\$ext)) { "\$stem-\$index" } else { "\$stem-\$index\$ext" }
+    \$index++
+  }
+  \$dest = Join-Path \$destDir \$candidate
+  Copy-Item -LiteralPath \$source -Destination \$dest -Recurse -Force -ErrorAction Stop
+  if (-not (Test-Path -LiteralPath \$dest)) {
+    throw "copy did not create destination: \$dest"
+  }
+  return Normalize-PathTreeNames \$dest
+}
+
+function Write-KeyValueState(\$path, [string[]]\$lines) {
+  \$tmpPath = "\$path.tmp"
+  Set-Content -LiteralPath \$tmpPath -Value \$lines -Encoding UTF8
+  Move-Item -LiteralPath \$tmpPath -Destination \$path -Force
+}
+
+\$remoteDir = Join-Path \$env:USERPROFILE ".moonlight-clipboard-sync"
+\$zipPath = Join-Path \$remoteDir "mac-to-windows-direct.zip"
+\$tmpZipPath = Join-Path \$remoteDir "mac-to-windows-direct.zip.tmp"
+\$payloadDir = Join-Path \$remoteDir "direct-mac-payload"
+\$statePath = Join-Path \$remoteDir "mac-to-windows-import-state.txt"
+\$transferDir = [Environment]::ExpandEnvironmentVariables(${transfer_dir_literal})
+if ([string]::IsNullOrWhiteSpace(\$transferDir)) {
+  \$transferDir = Join-Path \$env:USERPROFILE "Downloads\\Moonlight Companion"
+}
+
+New-Item -ItemType Directory -Force -Path \$remoteDir | Out-Null
+Move-Item -LiteralPath \$tmpZipPath -Destination \$zipPath -Force
+if (Test-Path -LiteralPath \$payloadDir) {
+  Remove-Item -LiteralPath \$payloadDir -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path \$payloadDir | Out-Null
+[System.IO.Compression.ZipFile]::ExtractToDirectory(\$zipPath, \$payloadDir)
+\$manifest = Get-Content -LiteralPath (Join-Path \$payloadDir "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+if (\$manifest.kind -ne "files" -or \$null -eq \$manifest.files) {
+  throw "direct receive-folder transfer only supports file payloads"
+}
+
+\$targetPaths = @()
+foreach (\$item in @(\$manifest.files)) {
+  \$sourcePath = Join-Path \$payloadDir \$item.path
+  \$targetPaths += Copy-ItemUniqueNamed \$sourcePath \$transferDir \$item.name
+}
+
+\$archiveHash = (Get-FileHash -LiteralPath \$zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+\$fileCount = @(\$manifest.files).Count
+\$lines = @(
+  "archive_hash=\$archiveHash",
+  "id=\$(\$manifest.id)",
+  "kind=\$(\$manifest.kind)",
+  "bytes=\$(\$manifest.bytes)",
+  "files=\$fileCount",
+  "imported_paths=\$(\$targetPaths.Count)",
+  "clipboard_ready=no",
+  "direct_transfer=yes"
+)
+
+for (\$i = 0; \$i -lt \$targetPaths.Count; \$i++) {
+  \$lines += "imported_path_\$(\$i + 1)=\$(\$targetPaths[\$i])"
+}
+
+\$names = @()
+foreach (\$path in \$targetPaths) {
+  \$name = Split-Path -Leaf \$path
+  if (-not [string]::IsNullOrWhiteSpace(\$name)) {
+    \$names += \$name
+  }
+}
+\$namesForState = @(\$names | Select-Object -First 12)
+if (\$namesForState.Count -gt 0) {
+  \$namesText = [string]::Join([string][char]31, \$namesForState)
+  \$namesB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$namesText))
+  \$lines += "imported_names_b64=\$namesB64"
+}
+
+Write-KeyValueState \$statePath \$lines
+\$stateText = Get-Content -LiteralPath \$statePath -Raw -Encoding UTF8
+Remove-Item -LiteralPath \$payloadDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath \$zipPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath \$tmpZipPath -Force -ErrorAction SilentlyContinue
+Write-Output \$stateText
+POWERSHELL
+  scp "${scp_opts[@]}" "$script_path" "${WINDOWS_SSH}:${remote_direct_script}" >/dev/null
+
+  state="$(
+    ssh "${ssh_opts[@]}" "$WINDOWS_SSH" \
+      "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${remote_direct_script_cmd}"
+  )"
+  printf '%s\n' "$state"
+}
+
 if [[ $# -lt 1 ]]; then
   echo "usage: send-files-to-windows.sh <path>..." >&2
   exit 2
@@ -359,8 +540,13 @@ done
 MOONLIGHT_CLIPBOARD_MAX_BYTES="$(normalize_positive_int "$MOONLIGHT_CLIPBOARD_MAX_BYTES" 52428800)"
 progress "Checking transfer size."
 source_bytes="$(source_payload_bytes "$@")"
+oversized_payload="no"
 if (( source_bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
-  reject_oversized_payload "$source_bytes"
+  if [[ "$(normalize_yes_no "$MOONLIGHT_TRANSFER_OVERSIZE_DIRECT")" != "yes" ]]; then
+    reject_oversized_payload "$source_bytes"
+  fi
+  oversized_payload="yes"
+  progress "Payload exceeds the clipboard limit; using direct receive-folder transfer."
 fi
 
 ensure_helpers
@@ -386,19 +572,45 @@ if [[ -z "$bytes" ]]; then
 fi
 
 if (( bytes > MOONLIGHT_CLIPBOARD_MAX_BYTES )); then
-  reject_oversized_payload "$bytes"
+  if [[ "$(normalize_yes_no "$MOONLIGHT_TRANSFER_OVERSIZE_DIRECT")" != "yes" ]]; then
+    reject_oversized_payload "$bytes"
+  fi
+  oversized_payload="yes"
 fi
 
 progress "Packaging ${kind:-files} payload (${bytes}B)."
 zip_payload "$payload_dir" "$zip_path"
 tcp_ack_state=""
 transport=""
+if [[ "$oversized_payload" == "yes" ]]; then
+  windows_import_state="$(send_direct_to_windows_receive_folder "$zip_path")"
+  transport="ssh-direct"
+  windows_import_confirmation="direct-ssh"
+  imported_paths="$(printf '%s\n' "$windows_import_state" | state_value imported_paths)"
+  imported_names_b64="$(imported_names_b64_from_state "$windows_import_state")"
+  imported_summary="$(imported_names_summary "$windows_import_state" "${imported_paths:-0}")"
+  imported_suffix=""
+  if [[ -n "$imported_summary" ]]; then
+    imported_suffix=": ${imported_summary}"
+  fi
+  clipboard_ready="no"
+  write_transfer_result_state
+  log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}; direct receive-folder copy"
+  if [[ "${imported_paths:-0}" == "1" ]]; then
+    printf 'sent oversized %s payload (%sB) via %s; Windows copied 1 item to the receive folder%s; not placed on the Windows clipboard\n' "${kind:-files}" "$bytes" "$transport" "$imported_suffix"
+  else
+    printf 'sent oversized %s payload (%sB) via %s; Windows copied %s items to the receive folder%s; not placed on the Windows clipboard\n' "${kind:-files}" "$bytes" "$transport" "${imported_paths:-0}" "$imported_suffix"
+  fi
+  exit 0
+fi
+
 send_zip "$zip_path"
 log "File drop Mac -> Windows ${kind:-files} (${bytes}B) via ${transport}"
 windows_import_state=""
 windows_import_confirmation=""
 imported_paths="0"
 imported_names_b64=""
+clipboard_ready="yes"
 progress "Waiting for Windows receive confirmation."
 if wait_for_windows_import "$payload_id"; then
   log "File drop Mac -> Windows import confirmed via ${windows_import_confirmation:-unknown}"
