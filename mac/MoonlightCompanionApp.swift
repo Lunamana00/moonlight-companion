@@ -58,6 +58,10 @@ private func moonlightWindowsImportConfirmed(id: String, confirmation: String, i
         !importedPaths.isEmpty
 }
 
+private func moonlightWindowsReceiveDetailIsPartiallyMissing(_ detail: String) -> Bool {
+    detail.contains("some received items were unavailable")
+}
+
 private struct MoonlightWindowsReceiveClipboardRestoreOutput {
     let detail: String
     let remainingPaths: [String]
@@ -2318,7 +2322,7 @@ exit "${status}"
     }
 
     private func windowsReceiveRevealStatePartiallyMissing(_ detail: String) -> Bool {
-        detail.contains("some received items were unavailable")
+        moonlightWindowsReceiveDetailIsPartiallyMissing(detail)
     }
 
     private func requestWindowsReceiveClipboardRestore(
@@ -3059,7 +3063,8 @@ exit "${status}"
                                 self?.clearLatestWindowsReceiveState()
                             } else if succeeded {
                                 var revealedResult = transferResult
-                                if !remainingPaths.isEmpty {
+                                if self?.windowsReceiveRevealStatePartiallyMissing(openDetail) == true,
+                                   !remainingPaths.isEmpty {
                                     revealedResult["imported_paths"] = "\(remainingPaths.count)"
                                     revealedResult["imported_names_b64"] = ""
                                     for (index, path) in remainingPaths.enumerated() {
@@ -4052,6 +4057,14 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             parsedOpenOutput.remainingPaths == [firstPath],
             "Windows receive opener parser did not return remaining reveal paths"
+        )
+        try expect(
+            moonlightWindowsReceiveDetailIsPartiallyMissing("asked Windows to open the receive folder; some received items were unavailable"),
+            "partial Windows reveal detail was not recognized"
+        )
+        try expect(
+            !moonlightWindowsReceiveDetailIsPartiallyMissing("asked Windows to open the containing folder for multiple received items"),
+            "complete Windows reveal detail was treated as partial"
         )
         try expect(
             moonlightWindowsImportConfirmed(
