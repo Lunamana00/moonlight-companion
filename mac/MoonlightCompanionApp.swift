@@ -250,10 +250,17 @@ private func moonlightParseWindowsReceiveMachineOutput(
 }
 
 private func moonlightMacReceiveAvailabilityDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
+    let names = moonlightMacReceiveSummaryNames(summary, count: availableCount)
     if totalCount > availableCount {
-        return "\(availableCount) of \(totalCount) received items still available: \(summary)"
+        return "\(availableCount) of \(totalCount) received items are still available in the Mac receive folder: \(names)."
     }
-    return summary
+    if availableCount == 1 {
+        return "\(names) is ready in the Mac receive folder."
+    }
+    if availableCount > 1 {
+        return "\(availableCount) received items are ready in the Mac receive folder: \(names)."
+    }
+    return "The latest files are ready in the Mac receive folder."
 }
 
 private func moonlightMacReceiveCopyDetail(availableCount: Int, totalCount: Int, summary: String) -> String {
@@ -4339,18 +4346,26 @@ private func runMacReceiveAvailabilitySelfTest() -> Int32 {
     do {
         try expect(
             moonlightMacReceiveAvailabilityDetail(
+                availableCount: 1,
+                totalCount: 1,
+                summary: "1 item: alpha.txt"
+            ) == "alpha.txt is ready in the Mac receive folder.",
+            "single complete receive availability summary was not natural"
+        )
+        try expect(
+            moonlightMacReceiveAvailabilityDetail(
                 availableCount: 2,
                 totalCount: 2,
-                summary: "alpha.txt, beta folder"
-            ) == "alpha.txt, beta folder",
-            "complete receive availability summary was changed"
+                summary: "2 items: alpha.txt, beta folder"
+            ) == "2 received items are ready in the Mac receive folder: alpha.txt, beta folder.",
+            "plural complete receive availability summary was not natural"
         )
         try expect(
             moonlightMacReceiveAvailabilityDetail(
                 availableCount: 1,
                 totalCount: 2,
-                summary: "alpha.txt"
-            ) == "1 of 2 received items still available: alpha.txt",
+                summary: "1 item: alpha.txt"
+            ) == "1 of 2 received items are still available in the Mac receive folder: alpha.txt.",
             "partial receive availability summary was not explicit"
         )
         try expect(

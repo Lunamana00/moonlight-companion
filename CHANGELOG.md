@@ -73,6 +73,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - `Reveal Last Mac Receive` and `Copy Last Mac Receive` now report when only some remembered received items are still available, while keeping the remaining usable items revealable or copyable.
 - After a partial `Reveal Last Mac Receive` or `Copy Last Mac Receive`, the GUI now trims the remembered latest Mac receive state to the remaining available files so follow-up actions stop retrying missing items.
 - `Copy Last Mac Receive` now uses item-count-aware ready-to-paste status text, so single and multi-item restores read naturally.
+- Windows-to-Mac receive notices now use item-count-aware ready-in-folder status text, matching the latest Windows receive notices.
 - Oversized Mac-to-Windows drops can now bypass the ZIP clipboard payload limit and copy directly into the Windows receive folder over SSH, with GUI state reporting whether the Windows agent put the received paths back onto the Windows clipboard.
 - Oversized Windows-to-Mac file clipboards now prepare an SSH fallback ZIP instead of being silently skipped, so the Mac sync agent can still pull large received files into the Mac receive folder.
 - Windows-to-Mac SSH fallback imports now retry transient ZIP/import failures and remove repeatedly failing stale fallback ZIPs instead of letting them stop or wedge the Mac sync loop.
