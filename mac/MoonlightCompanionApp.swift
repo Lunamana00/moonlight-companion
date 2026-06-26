@@ -62,6 +62,32 @@ private func moonlightWindowsReceiveDetailIsPartiallyMissing(_ detail: String) -
     detail.contains("some received items were unavailable")
 }
 
+private func moonlightPrunedWindowsReceiveState(
+    _ state: [String: String],
+    remainingPaths: [String],
+    clipboardReadyOverride: String? = nil
+) -> [String: String] {
+    let paths = remainingPaths
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard !paths.isEmpty else { return state }
+
+    var values = state
+    if let clipboardReadyOverride {
+        values["clipboard_ready"] = clipboardReadyOverride
+    }
+    values["imported_names_b64"] = ""
+    values["imported_paths"] = "\(paths.count)"
+    for key in Array(values.keys) where key.range(of: #"^imported_path_\d+(_b64)?$"#, options: .regularExpression) != nil {
+        values.removeValue(forKey: key)
+    }
+    for (index, path) in paths.enumerated() {
+        values["imported_path_\(index + 1)"] = path
+        values["imported_path_\(index + 1)_b64"] = Data(path.utf8).base64EncodedString()
+    }
+    return values
+}
+
 private struct MoonlightWindowsReceiveClipboardRestoreOutput {
     let detail: String
     let remainingPaths: [String]
@@ -1324,7 +1350,10 @@ exit "${status}"
         updateLatestWindowsReceiveButtonState()
     }
 
-    private func pruneLatestWindowsReceiveState(to remainingPaths: [String]) {
+    private func pruneLatestWindowsReceiveState(
+        to remainingPaths: [String],
+        clipboardReadyOverride: String? = nil
+    ) {
         let paths = remainingPaths
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -1340,14 +1369,11 @@ exit "${status}"
         if (state["kind"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state["kind"] = "files"
         }
-        state["clipboard_ready"] = "yes"
-        state["imported_names_b64"] = ""
-        state["imported_paths"] = "\(paths.count)"
-        for (index, path) in paths.enumerated() {
-            state["imported_path_\(index + 1)"] = path
-            state["imported_path_\(index + 1)_b64"] = base64StateValue(path)
-        }
-        recordLatestWindowsReceiveState(state)
+        recordLatestWindowsReceiveState(moonlightPrunedWindowsReceiveState(
+            state,
+            remainingPaths: paths,
+            clipboardReadyOverride: clipboardReadyOverride
+        ))
     }
 
     private func clearLatestWindowsReceiveState() {
@@ -2292,7 +2318,7 @@ exit "${status}"
                 }
                 let partial = self?.windowsReceiveRevealStatePartiallyMissing(detail) == true
                 if partial && !remainingPaths.isEmpty {
-                    self?.pruneLatestWindowsReceiveState(to: remainingPaths)
+                    self?.pruneLatestWindowsReceiveState(to: remainingPaths, clipboardReadyOverride: "yes")
                 }
                 let summary = self?.latestWindowsReceiveSummary ?? ""
                 let resultDetail: String
@@ -4065,6 +4091,41 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             !moonlightWindowsReceiveDetailIsPartiallyMissing("asked Windows to open the containing folder for multiple received items"),
             "complete Windows reveal detail was treated as partial"
+        )
+        let prunedRevealState = moonlightPrunedWindowsReceiveState(
+            [
+                "clipboard_ready": "no",
+                "confirmation": "direct-ssh",
+                "id": "files:partial-windows",
+                "imported_names_b64": Data("alpha.txt\u{1f}missing.txt".utf8).base64EncodedString(),
+                "imported_path_1": firstPath,
+                "imported_path_2": "C:\\Receive\\missing.txt",
+                "imported_path_2_b64": Data("C:\\Receive\\missing.txt".utf8).base64EncodedString(),
+                "imported_paths": "2",
+                "kind": "files"
+            ],
+            remainingPaths: [firstPath]
+        )
+        try expect(
+            prunedRevealState["clipboard_ready"] == "no",
+            "Windows receive reveal pruning changed clipboard readiness"
+        )
+        try expect(
+            prunedRevealState["imported_paths"] == "1" &&
+                prunedRevealState["imported_path_1"] == firstPath &&
+                prunedRevealState["imported_path_2"] == nil &&
+                prunedRevealState["imported_path_2_b64"] == nil &&
+                prunedRevealState["imported_names_b64"] == "",
+            "Windows receive pruning did not rewrite remaining imported paths"
+        )
+        let prunedCopyState = moonlightPrunedWindowsReceiveState(
+            prunedRevealState,
+            remainingPaths: [firstPath],
+            clipboardReadyOverride: "yes"
+        )
+        try expect(
+            prunedCopyState["clipboard_ready"] == "yes",
+            "Windows receive copy pruning did not mark clipboard readiness"
         )
         try expect(
             moonlightWindowsImportConfirmed(
