@@ -92,6 +92,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - After a partial `Reveal Last Windows Receive`, the GUI now trims the remembered latest Windows receive state to the remaining available paths so follow-up actions stop retrying missing items.
 - Partial `Reveal Last Windows Receive` pruning now preserves the previous Windows clipboard-ready state instead of marking files clipboard-ready when only Explorer was opened.
 - `Reveal Last Windows Receive` status text now distinguishes selected items, containing-folder opens, and receive-folder opens for items spread across different folders.
+- Automatic Windows receive-result reveal now uses the same explicit selected/containing-folder/different-folder status text as `Reveal Last Windows Receive`.
 - Automatic Windows receive-result reveal now preserves the original received-name summary after complete reveals instead of rewriting it from opener path output.
 - The GUI can now copy the latest Mac-to-Windows received files back onto the Windows clipboard, making overwritten or missed Windows file clipboards recoverable without resending the files.
 - `Copy Last Windows Receive` now restores the remaining available paths to the Windows clipboard when only some remembered receive items are missing, and reports the partial availability instead of failing the whole action.

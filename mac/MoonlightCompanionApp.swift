@@ -101,6 +101,27 @@ private func moonlightWindowsReceiveRevealResultDetail(
     return "Opened the Windows receive folder for \(trimmedSummary)."
 }
 
+private func moonlightWindowsReceiveAutoRevealSuffix(
+    summary: String,
+    openerDetail: String,
+    remainingPathCount: Int,
+    succeeded: Bool,
+    expired: Bool
+) -> String {
+    guard succeeded else {
+        return " Windows receive folder open failed: \(openerDetail)"
+    }
+    if expired {
+        return " \(openerDetail)."
+    }
+    let detail = moonlightWindowsReceiveRevealResultDetail(
+        summary: summary,
+        openerDetail: openerDetail,
+        remainingPathCount: remainingPathCount
+    )
+    return " \(detail)"
+}
+
 private func moonlightPrunedWindowsReceiveState(
     _ state: [String: String],
     remainingPaths: [String],
@@ -3119,7 +3140,8 @@ exit "${status}"
                                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
                                 return
                             }
-                            if self?.windowsReceiveRevealStateExpired(openDetail) == true {
+                            let expired = self?.windowsReceiveRevealStateExpired(openDetail) == true
+                            if expired {
                                 self?.clearLatestWindowsReceiveState()
                             } else if succeeded {
                                 var revealedResult = transferResult
@@ -3141,9 +3163,20 @@ exit "${status}"
                                 }
                                 self?.recordLatestWindowsReceiveState(revealedResult)
                             }
-                            let suffix = succeeded
-                                ? " \(openDetail)."
-                                : " Windows receive folder open failed: \(openDetail)"
+                            var revealSummary = self?.windowsImportSummary(transferResult) ?? ""
+                            if revealSummary.isEmpty {
+                                revealSummary = summary.detail
+                            }
+                            let revealPathCount = remainingPaths.isEmpty
+                                ? (self?.latestWindowsImportedPaths(from: transferResult).count ?? 0)
+                                : remainingPaths.count
+                            let suffix = moonlightWindowsReceiveAutoRevealSuffix(
+                                summary: revealSummary,
+                                openerDetail: openDetail,
+                                remainingPathCount: revealPathCount,
+                                succeeded: succeeded,
+                                expired: expired
+                            )
                             self?.setBusy(false, status: "Files Sent", detail: detail + suffix)
                         }
                     } else {
@@ -4165,6 +4198,36 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
                 remainingPathCount: 2
             ) == "Opened the Windows receive folder for the remaining Windows receive items from alpha.txt, beta.png, gamma.mov because they are in different folders; some received items were unavailable.",
             "partial multi-item Windows receive different-folder detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveAutoRevealSuffix(
+                summary: "alpha.txt, beta.png",
+                openerDetail: "asked Windows to open the containing folder for multiple received items",
+                remainingPathCount: 2,
+                succeeded: true,
+                expired: false
+            ) == " Opened the containing folder for alpha.txt, beta.png in Windows.",
+            "automatic Windows receive reveal suffix did not use the explicit reveal detail"
+        )
+        try expect(
+            moonlightWindowsReceiveAutoRevealSuffix(
+                summary: "alpha.txt",
+                openerDetail: "asked Windows to open the receive folder; received item was unavailable",
+                remainingPathCount: 0,
+                succeeded: true,
+                expired: true
+            ) == " asked Windows to open the receive folder; received item was unavailable.",
+            "automatic Windows receive expired reveal suffix did not preserve the opener detail"
+        )
+        try expect(
+            moonlightWindowsReceiveAutoRevealSuffix(
+                summary: "alpha.txt",
+                openerDetail: "opener failed",
+                remainingPathCount: 1,
+                succeeded: false,
+                expired: false
+            ) == " Windows receive folder open failed: opener failed",
+            "automatic Windows receive reveal failure suffix was not explicit"
         )
         let prunedRevealState = moonlightPrunedWindowsReceiveState(
             [
