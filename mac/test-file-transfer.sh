@@ -1755,6 +1755,46 @@ if ! grep -Fq "asked Windows to open the containing folder for multiple received
   printf '%s\n' "$limit_multi_reveal_out" >&2
   exit 1
 fi
+limit_multi_partial_common_reveal_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
+    "${script_dir}/open-windows-receive-folder.sh" \
+      --select-path "$limit_multi_path_1" \
+      --select-path "$limit_multi_path_2" \
+      --select-path "${limit_multi_path_1}.missing"
+)"
+if ! grep -Fq "asked Windows to open the containing folder for remaining received items; some received items were unavailable" <<<"$limit_multi_partial_common_reveal_out"; then
+  echo "Windows receive reveal did not open the common parent for multiple remaining explicit imported paths while reporting partially missing items." >&2
+  printf '%s\n' "$limit_multi_partial_common_reveal_out" >&2
+  exit 1
+fi
+if grep -Fq "MOONLIGHT_OPEN_PATH_" <<<"$limit_multi_partial_common_reveal_out"; then
+  echo "Windows receive reveal leaked machine-readable multi-item partial path output without an explicit request." >&2
+  printf '%s\n' "$limit_multi_partial_common_reveal_out" >&2
+  exit 1
+fi
+limit_multi_partial_common_reveal_machine_out="$(
+  MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes MOONLIGHT_OPEN_MACHINE_OUTPUT=yes \
+    "${script_dir}/open-windows-receive-folder.sh" \
+      --select-path "$limit_multi_path_1" \
+      --select-path "$limit_multi_path_2" \
+      --select-path "${limit_multi_path_1}.missing"
+)"
+if ! grep -Fq "asked Windows to open the containing folder for remaining received items; some received items were unavailable" <<<"$limit_multi_partial_common_reveal_machine_out"; then
+  echo "Windows receive reveal machine output did not keep the multi-item partial-missing containing-folder detail." >&2
+  printf '%s\n' "$limit_multi_partial_common_reveal_machine_out" >&2
+  exit 1
+fi
+limit_multi_partial_common_path_1_b64="$(awk -F= '$1 == "MOONLIGHT_OPEN_PATH_1_B64" {print substr($0, length($1) + 2); exit}' <<<"$limit_multi_partial_common_reveal_machine_out")"
+limit_multi_partial_common_path_2_b64="$(awk -F= '$1 == "MOONLIGHT_OPEN_PATH_2_B64" {print substr($0, length($1) + 2); exit}' <<<"$limit_multi_partial_common_reveal_machine_out")"
+if [[ -z "$limit_multi_partial_common_path_1_b64" ||
+      -z "$limit_multi_partial_common_path_2_b64" ||
+      "$(decode_b64_value "$limit_multi_partial_common_path_1_b64")" != "$limit_multi_path_1" ||
+      "$(decode_b64_value "$limit_multi_partial_common_path_2_b64")" != "$limit_multi_path_2" ||
+      "$(grep -Fc "MOONLIGHT_OPEN_PATH_" <<<"$limit_multi_partial_common_reveal_machine_out")" != "2" ]]; then
+  echo "Windows receive reveal did not report both remaining multi-item partial reveal paths." >&2
+  printf '%s\n' "$limit_multi_partial_common_reveal_machine_out" >&2
+  exit 1
+fi
 limit_multi_copy_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" \
     "${script_dir}/copy-windows-receive-to-clipboard.sh" \
