@@ -134,6 +134,33 @@ private func moonlightMacReceiveCopyDetail(availableCount: Int, totalCount: Int,
     return "\(availableCount) received items are ready to paste: \(names)."
 }
 
+private func moonlightPrunedMacReceiveState(
+    _ state: [String: String],
+    remainingURLs: [URL]
+) -> [String: String] {
+    let urls = remainingURLs.filter { !$0.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    guard !urls.isEmpty else { return state }
+
+    var values = state
+    for key in Array(values.keys) where key.hasPrefix("file_path_") || key.hasPrefix("file_name_") {
+        values.removeValue(forKey: key)
+    }
+    if (values["kind"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        values["kind"] = "files"
+    }
+    values["files"] = "\(urls.count)"
+    values["file_paths"] = "\(urls.count)"
+    for (index, url) in urls.enumerated() {
+        let path = url.path
+        let name = url.lastPathComponent
+        values["file_path_\(index + 1)"] = path
+        values["file_path_\(index + 1)_b64"] = Data(path.utf8).base64EncodedString()
+        values["file_name_\(index + 1)"] = name
+        values["file_name_\(index + 1)_b64"] = Data(name.utf8).base64EncodedString()
+    }
+    return values
+}
+
 private func moonlightMacReceiveSummaryNames(_ summary: String, count: Int) -> String {
     let prefix = count == 1 ? "1 item: " : "\(count) items: "
     guard summary.hasPrefix(prefix) else {
@@ -1145,6 +1172,23 @@ exit "${status}"
         )
     }
 
+    private func pruneLatestMacReceiveState(to remainingURLs: [URL]) {
+        let urls = remainingURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !urls.isEmpty else { return }
+
+        let state = SettingsFile.parse(url: latestMacReceiveStateURL())
+        let values = moonlightPrunedMacReceiveState(state, remainingURLs: urls)
+        writeSimpleState(values, to: latestMacReceiveStateURL())
+        latestMacReceiveURLs = urls
+        latestMacReceiveTotalCount = urls.count
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: latestMacReceiveStateURL().path),
+           let modifiedAt = attributes[.modificationDate] as? Date {
+            let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+            latestMacReceiveStateSignature = "\(modifiedAt.timeIntervalSince1970):\(size)"
+        }
+        updateLatestMacReceiveButtonState()
+    }
+
     private func updateLatestMacReceiveButtonState() {
         revealMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
         copyMacReceiveButton?.isEnabled = !isBusy && !latestMacReceiveURLs.isEmpty
@@ -1855,6 +1899,9 @@ exit "${status}"
             totalCount: urls.count,
             summary: FileDropReader.dropSummary(for: existingURLs)
         )
+        if existingURLs.count < urls.count {
+            pruneLatestMacReceiveState(to: existingURLs)
+        }
     }
 
     @objc private func copyLatestMacReceive() {
@@ -1886,6 +1933,9 @@ exit "${status}"
                 totalCount: urls.count,
                 summary: FileDropReader.dropSummary(for: existingURLs)
             )
+            if existingURLs.count < urls.count {
+                pruneLatestMacReceiveState(to: existingURLs)
+            }
         } else if result == .missingID {
             statusLabel.stringValue = "Copy Failed"
             detailLabel.stringValue = "Could not prepare the latest received files for clipboard restore."
@@ -4042,6 +4092,49 @@ private func runMacReceiveAvailabilitySelfTest() -> Int32 {
                 summary: "2 items: alpha.txt, beta folder"
             ) == "2 received items are ready to paste: alpha.txt, beta folder. Some received items were unavailable.",
             "plural partial receive copy summary was not explicit"
+        )
+        let remainingURL = URL(fileURLWithPath: "/tmp/Moonlight Companion/alpha.txt")
+        let prunedState = moonlightPrunedMacReceiveState(
+            [
+                "archive_hash": "hash:original",
+                "file_name_1": "old-alpha.txt",
+                "file_name_2": "missing.txt",
+                "file_name_2_b64": Data("missing.txt".utf8).base64EncodedString(),
+                "file_path_1": "/tmp/Moonlight Companion/old-alpha.txt",
+                "file_path_2": "/tmp/Moonlight Companion/missing.txt",
+                "file_path_2_b64": Data("/tmp/Moonlight Companion/missing.txt".utf8).base64EncodedString(),
+                "file_paths": "2",
+                "files": "2",
+                "kind": "files",
+                "normalized_id": "mac:original",
+                "windows_id": "windows:original"
+            ],
+            remainingURLs: [remainingURL]
+        )
+        try expect(
+            prunedState["normalized_id"] == "mac:original" &&
+                prunedState["windows_id"] == "windows:original" &&
+                prunedState["archive_hash"] == "hash:original",
+            "Mac receive pruning did not preserve receive identity fields"
+        )
+        try expect(
+            prunedState["file_paths"] == "1" &&
+                prunedState["files"] == "1" &&
+                prunedState["file_path_1"] == remainingURL.path &&
+                prunedState["file_name_1"] == "alpha.txt",
+            "Mac receive pruning did not rewrite remaining file fields"
+        )
+        try expect(
+            prunedState["file_path_2"] == nil &&
+                prunedState["file_path_2_b64"] == nil &&
+                prunedState["file_name_2"] == nil &&
+                prunedState["file_name_2_b64"] == nil,
+            "Mac receive pruning left stale missing-item fields behind"
+        )
+        try expect(
+            Data(base64Encoded: prunedState["file_path_1_b64"] ?? "")
+                .flatMap { String(data: $0, encoding: .utf8) } == remainingURL.path,
+            "Mac receive pruning did not write a decodable remaining path"
         )
         print("mac-receive-availability self-test ok")
         return 0
