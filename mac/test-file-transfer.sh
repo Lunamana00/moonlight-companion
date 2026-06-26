@@ -1777,8 +1777,8 @@ limit_multi_partial_reveal_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes \
     "${script_dir}/open-windows-receive-folder.sh" --select-path "$limit_multi_path_1" --select-path "$limit_multi_path_2"
 )"
-if ! grep -Fq "asked Windows to open the receive folder; some received items were unavailable" <<<"$limit_multi_partial_reveal_out"; then
-  echo "Windows receive reveal did not report partially missing explicit imported paths." >&2
+if ! grep -Fq "asked Windows to select the remaining received item; some received items were unavailable" <<<"$limit_multi_partial_reveal_out"; then
+  echo "Windows receive reveal did not select the remaining explicit imported path while reporting partially missing items." >&2
   printf '%s\n' "$limit_multi_partial_reveal_out" >&2
   exit 1
 fi
@@ -1791,8 +1791,8 @@ limit_multi_partial_reveal_machine_out="$(
   MOONLIGHT_COMPANION_CONFIG="$config" MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN=yes MOONLIGHT_OPEN_MACHINE_OUTPUT=yes \
     "${script_dir}/open-windows-receive-folder.sh" --select-path "$limit_multi_path_1" --select-path "$limit_multi_path_2"
 )"
-if ! grep -Fq "asked Windows to open the receive folder; some received items were unavailable" <<<"$limit_multi_partial_reveal_machine_out"; then
-  echo "Windows receive reveal machine output did not keep the human partial-missing detail." >&2
+if ! grep -Fq "asked Windows to select the remaining received item; some received items were unavailable" <<<"$limit_multi_partial_reveal_machine_out"; then
+  echo "Windows receive reveal machine output did not keep the human partial-missing select detail." >&2
   printf '%s\n' "$limit_multi_partial_reveal_machine_out" >&2
   exit 1
 fi

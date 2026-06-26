@@ -87,6 +87,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - `Reveal Last Windows Receive` now keeps that received-name summary visible after the reveal/open action completes.
 - `Reveal Last Windows Receive` now opens the common containing folder for multi-item Windows receives when exact single-item selection is not available.
 - `Reveal Last Windows Receive` now clearly reports when the remembered Windows item is no longer available and clears the stale reveal state instead of presenting it as a normal folder open.
+- Partial `Reveal Last Windows Receive` now selects the remaining received item, or opens the remaining items' containing folder, instead of only opening the top-level receive folder.
 - After a partial `Reveal Last Windows Receive`, the GUI now trims the remembered latest Windows receive state to the remaining available paths so follow-up actions stop retrying missing items.
 - Partial `Reveal Last Windows Receive` pruning now preserves the previous Windows clipboard-ready state instead of marking files clipboard-ready when only Explorer was opened.
 - Automatic Windows receive-result reveal now preserves the original received-name summary after complete reveals instead of rewriting it from opener path output.

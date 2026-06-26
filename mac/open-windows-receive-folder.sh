@@ -145,13 +145,15 @@ if (\$explicitPaths.Count -gt 0) {
     }
   }
 
-  if (\$validPaths.Count -gt 0 -and \$validPaths.Count -lt \$explicitPaths.Count) {
-    \$targetPath = \$dir
-    \$openResult = "folder-explicit-partial-missing"
-  } elseif (\$validPaths.Count -eq 1) {
+  \$partialMissing = \$validPaths.Count -gt 0 -and \$validPaths.Count -lt \$explicitPaths.Count
+  if (\$validPaths.Count -eq 1) {
     \$targetPath = \$validPaths[0]
     \$selectedLatestImport = \$true
-    \$openResult = "selected-explicit"
+    if (\$partialMissing) {
+      \$openResult = "selected-explicit-partial-missing"
+    } else {
+      \$openResult = "selected-explicit"
+    }
   } elseif (\$validPaths.Count -gt 1) {
     \$commonParent = Split-Path -Parent \$validPaths[0]
     foreach (\$path in \$validPaths) {
@@ -163,10 +165,18 @@ if (\$explicitPaths.Count -gt 0) {
     }
     if (-not [string]::IsNullOrWhiteSpace(\$commonParent) -and (Test-Path -LiteralPath \$commonParent)) {
       \$targetPath = \$commonParent
-      \$openResult = "folder-explicit-common-parent"
+      if (\$partialMissing) {
+        \$openResult = "folder-explicit-common-parent-partial-missing"
+      } else {
+        \$openResult = "folder-explicit-common-parent"
+      }
     } else {
       \$targetPath = \$dir
-      \$openResult = "folder-explicit-multi-parent"
+      if (\$partialMissing) {
+        \$openResult = "folder-explicit-multi-parent-partial-missing"
+      } else {
+        \$openResult = "folder-explicit-multi-parent"
+      }
     }
   } else {
     \$openResult = "folder-explicit-missing-item"
@@ -261,6 +271,10 @@ case "$open_result" in
     printf 'asked Windows to select the received item\n'
     print_open_machine_paths
     ;;
+  selected-explicit-partial-missing)
+    printf 'asked Windows to select the remaining received item; some received items were unavailable\n'
+    print_open_machine_paths
+    ;;
   selected)
     printf 'asked Windows to select the latest received item\n'
     print_open_machine_paths
@@ -273,8 +287,16 @@ case "$open_result" in
     printf 'asked Windows to open the containing folder for multiple received items\n'
     print_open_machine_paths
     ;;
+  folder-explicit-common-parent-partial-missing)
+    printf 'asked Windows to open the containing folder for remaining received items; some received items were unavailable\n'
+    print_open_machine_paths
+    ;;
   folder-explicit-multi-parent)
     printf 'asked Windows to open the receive folder for multiple received items in different folders\n'
+    print_open_machine_paths
+    ;;
+  folder-explicit-multi-parent-partial-missing)
+    printf 'asked Windows to open the receive folder for remaining received items in different folders; some received items were unavailable\n'
     print_open_machine_paths
     ;;
   folder-explicit-missing-item)

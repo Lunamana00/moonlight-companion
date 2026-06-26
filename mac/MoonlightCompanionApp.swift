@@ -2263,6 +2263,9 @@ exit "${status}"
                 let resultDetail: String
                 if summary.isEmpty {
                     resultDetail = detail
+                } else if partial && detail.contains("select") {
+                    let itemText = remainingPaths.count == 1 ? "item" : "items"
+                    resultDetail = "Selected the remaining Windows receive \(itemText) for \(summary); some received items were unavailable."
                 } else if partial {
                     resultDetail = "Opened the Windows receive folder for \(summary); some received items were unavailable."
                 } else if detail.contains("select") {
