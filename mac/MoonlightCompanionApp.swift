@@ -67,12 +67,35 @@ private func moonlightParseWindowsReceiveClipboardRestoreOutput(
     _ text: String?,
     fallbackDetail: String
 ) -> MoonlightWindowsReceiveClipboardRestoreOutput {
+    moonlightParseWindowsReceiveMachineOutput(
+        text,
+        fallbackDetail: fallbackDetail,
+        machinePrefix: "MOONLIGHT_COPY"
+    )
+}
+
+private func moonlightParseWindowsReceiveFolderOpenOutput(
+    _ text: String?,
+    fallbackDetail: String
+) -> MoonlightWindowsReceiveClipboardRestoreOutput {
+    moonlightParseWindowsReceiveMachineOutput(
+        text,
+        fallbackDetail: fallbackDetail,
+        machinePrefix: "MOONLIGHT_OPEN"
+    )
+}
+
+private func moonlightParseWindowsReceiveMachineOutput(
+    _ text: String?,
+    fallbackDetail: String,
+    machinePrefix: String
+) -> MoonlightWindowsReceiveClipboardRestoreOutput {
     let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !trimmed.isEmpty else {
         return MoonlightWindowsReceiveClipboardRestoreOutput(detail: fallbackDetail, remainingPaths: [])
     }
 
-    let pathPrefix = "MOONLIGHT_COPY_PATH_"
+    let pathPrefix = "\(machinePrefix)_PATH_"
     let pathSuffix = "_B64"
     var detailLines: [String] = []
     var pathsByIndex: [Int: String] = [:]
@@ -101,7 +124,7 @@ private func moonlightParseWindowsReceiveClipboardRestoreOutput(
             }
         }
 
-        if line.hasPrefix("MOONLIGHT_COPY_") {
+        if line.hasPrefix("MOONLIGHT_COPY_") || line.hasPrefix("MOONLIGHT_OPEN_") {
             continue
         }
         detailLines.append(line)
@@ -875,7 +898,6 @@ exit "${status}"
         task.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
-        environment["MOONLIGHT_COPY_MACHINE_OUTPUT"] = "yes"
         task.environment = environment
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -2154,7 +2176,7 @@ exit "${status}"
         guard saveSettings() else { return }
 
         setBusy(true, status: "Opening Windows Folder", detail: "Asking Windows to open the receive folder.")
-        requestWindowsReceiveFolderOpen(selectLatestImport: false) { [weak self] succeeded, detail in
+        requestWindowsReceiveFolderOpen(selectLatestImport: false) { [weak self] succeeded, detail, _ in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive folder open was cancelled.", startQueuedDropsWhenIdle: false)
@@ -2190,7 +2212,7 @@ exit "${status}"
             selectLatestImport: selectPaths.isEmpty,
             expectedImportID: expectedImportID,
             selectPaths: selectPaths
-        ) { [weak self] succeeded, detail in
+        ) { [weak self] succeeded, detail, remainingPaths in
             if detail == "cancelled" {
                 self?.clearQueuedFileDrops()
                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
@@ -2203,8 +2225,11 @@ exit "${status}"
                     return
                 }
                 let status = detail.contains("select") ? "Windows Files Revealed" : "Windows Folder Opened"
-                let summary = self?.latestWindowsReceiveSummary ?? ""
                 let partial = self?.windowsReceiveRevealStatePartiallyMissing(detail) == true
+                if partial && !remainingPaths.isEmpty {
+                    self?.pruneLatestWindowsReceiveState(to: remainingPaths)
+                }
+                let summary = self?.latestWindowsReceiveSummary ?? ""
                 let resultDetail: String
                 if summary.isEmpty {
                     resultDetail = detail
@@ -2323,6 +2348,7 @@ exit "${status}"
         task.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        environment["MOONLIGHT_COPY_MACHINE_OUTPUT"] = "yes"
         task.environment = environment
 
         task.terminationHandler = { [weak self] task in
@@ -2358,11 +2384,11 @@ exit "${status}"
         selectLatestImport: Bool,
         expectedImportID: String? = nil,
         selectPaths: [String] = [],
-        completion: @escaping (Bool, String) -> Void
+        completion: @escaping (Bool, String, [String]) -> Void
     ) {
         let openerURL = resourceURL.appendingPathComponent("mac/open-windows-receive-folder.sh")
         guard FileManager.default.isExecutableFile(atPath: openerURL.path) else {
-            completion(false, "Windows receive folder opener is missing or not executable: \(openerURL.path)")
+            completion(false, "Windows receive folder opener is missing or not executable: \(openerURL.path)", [])
             return
         }
 
@@ -2385,23 +2411,27 @@ exit "${status}"
         task.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["MOONLIGHT_COMPANION_CONFIG"] = SettingsFile.userURL.path
+        environment["MOONLIGHT_OPEN_MACHINE_OUTPUT"] = "yes"
         task.environment = environment
 
         task.terminationHandler = { [weak self] task in
             let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
             let text = String(data: outputData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let detail = text?.isEmpty == false ? text! : "Windows folder opener exited with status \(task.terminationStatus)."
+            let output = moonlightParseWindowsReceiveFolderOpenOutput(
+                text,
+                fallbackDetail: "Windows folder opener exited with status \(task.terminationStatus)."
+            )
             DispatchQueue.main.async {
                 let cancelled = self?.consumeTransferCancellation(for: task) == true
                 if self?.transferProcess === task {
                     self?.transferProcess = nil
                 }
                 if cancelled {
-                    completion(false, "cancelled")
+                    completion(false, "cancelled", [])
                     return
                 }
-                completion(task.terminationStatus == 0, detail)
+                completion(task.terminationStatus == 0, output.detail, output.remainingPaths)
             }
         }
 
@@ -2409,7 +2439,7 @@ exit "${status}"
             try task.run()
             transferProcess = task
         } catch {
-            completion(false, error.localizedDescription)
+            completion(false, error.localizedDescription, [])
         }
     }
 
@@ -3019,7 +3049,7 @@ exit "${status}"
                             selectLatestImport: true,
                             expectedImportID: transferResult["id"],
                             selectPaths: self?.latestWindowsImportedPaths(from: transferResult) ?? []
-                        ) { [weak self] succeeded, openDetail in
+                        ) { [weak self] succeeded, openDetail, remainingPaths in
                             if openDetail == "cancelled" {
                                 self?.clearQueuedFileDrops()
                                 self?.setBusy(false, status: "Cancelled", detail: "Windows receive reveal was cancelled.", startQueuedDropsWhenIdle: false)
@@ -3029,6 +3059,14 @@ exit "${status}"
                                 self?.clearLatestWindowsReceiveState()
                             } else if succeeded {
                                 var revealedResult = transferResult
+                                if !remainingPaths.isEmpty {
+                                    revealedResult["imported_paths"] = "\(remainingPaths.count)"
+                                    revealedResult["imported_names_b64"] = ""
+                                    for (index, path) in remainingPaths.enumerated() {
+                                        revealedResult["imported_path_\(index + 1)"] = path
+                                        revealedResult["imported_path_\(index + 1)_b64"] = self?.base64StateValue(path) ?? ""
+                                    }
+                                }
                                 if (Int(revealedResult["imported_paths"] ?? "") ?? 0) <= 0 {
                                     revealedResult["imported_paths"] = "1"
                                 }
@@ -3998,6 +4036,22 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             parsedCopyOutput.remainingPaths == [firstPath, secondPath],
             "clipboard restore parser did not return remaining paths in index order"
+        )
+        let parsedOpenOutput = moonlightParseWindowsReceiveFolderOpenOutput(
+            """
+            asked Windows to open the receive folder; some received items were unavailable
+            MOONLIGHT_OPEN_RESULT=folder-explicit-partial-missing
+            MOONLIGHT_OPEN_PATH_1_B64=\(Data(firstPath.utf8).base64EncodedString())
+            """,
+            fallbackDetail: "fallback"
+        )
+        try expect(
+            parsedOpenOutput.detail == "asked Windows to open the receive folder; some received items were unavailable",
+            "Windows receive opener parser leaked machine-readable open state into detail"
+        )
+        try expect(
+            parsedOpenOutput.remainingPaths == [firstPath],
+            "Windows receive opener parser did not return remaining reveal paths"
         )
         try expect(
             moonlightWindowsImportConfirmed(

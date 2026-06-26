@@ -20,6 +20,7 @@ select_latest_import="no"
 expected_id=""
 select_paths=()
 dry_run="$(printf '%s' "${MOONLIGHT_OPEN_WINDOWS_RECEIVE_DRY_RUN:-no}" | tr '[:upper:]' '[:lower:]')"
+machine_output="$(printf '%s' "${MOONLIGHT_OPEN_MACHINE_OUTPUT:-no}" | tr '[:upper:]' '[:lower:]')"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -131,6 +132,11 @@ function Decode-StateBase64([string]\$value) {
   }
 }
 
+function ConvertTo-StateBase64([string]\$value) {
+  if (\$null -eq \$value) { return "" }
+  return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(\$value))
+}
+
 if (\$explicitPaths.Count -gt 0) {
   \$validPaths = @()
   foreach (\$path in \$explicitPaths) {
@@ -214,6 +220,11 @@ if (-not \$dryRun) {
   Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
 }
 Write-Output ("MOONLIGHT_OPEN_RESULT={0}" -f \$openResult)
+if (\$null -ne \$validPaths -and \$validPaths.Count -gt 0) {
+  for (\$i = 0; \$i -lt \$validPaths.Count; \$i++) {
+    Write-Output ("MOONLIGHT_OPEN_PATH_{0}_B64={1}" -f (\$i + 1), (ConvertTo-StateBase64 \$validPaths[\$i]))
+  }
+}
 POWERSHELL
 
 script_tmp="$(mktemp "${TMPDIR:-/tmp}/moonlight-open-windows-receive.XXXXXX.ps1")"
@@ -237,27 +248,41 @@ remote_output="$(
 )"
 open_result="$(printf '%s\n' "$remote_output" | awk -F= '$1 == "MOONLIGHT_OPEN_RESULT" {sub(/\r$/, "", $2); print $2; exit}')"
 
+print_open_machine_paths() {
+  case "$machine_output" in
+    1|y|yes|true|on) ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' "$remote_output" | awk '/^MOONLIGHT_OPEN_PATH_[0-9]+_B64=/ { sub(/\r$/, ""); print }'
+}
+
 case "$open_result" in
   selected-explicit)
     printf 'asked Windows to select the received item\n'
+    print_open_machine_paths
     ;;
   selected)
     printf 'asked Windows to select the latest received item\n'
+    print_open_machine_paths
     ;;
   folder-explicit-multi-item)
     printf 'asked Windows to open the receive folder for multiple received items\n'
+    print_open_machine_paths
     ;;
   folder-explicit-common-parent)
     printf 'asked Windows to open the containing folder for multiple received items\n'
+    print_open_machine_paths
     ;;
   folder-explicit-multi-parent)
     printf 'asked Windows to open the receive folder for multiple received items in different folders\n'
+    print_open_machine_paths
     ;;
   folder-explicit-missing-item)
     printf 'asked Windows to open the receive folder; received item was unavailable\n'
     ;;
   folder-explicit-partial-missing)
     printf 'asked Windows to open the receive folder; some received items were unavailable\n'
+    print_open_machine_paths
     ;;
   folder-id-mismatch)
     printf 'asked Windows to open the receive folder; latest item did not match this transfer\n'
