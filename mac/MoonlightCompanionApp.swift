@@ -62,6 +62,45 @@ private func moonlightWindowsReceiveDetailIsPartiallyMissing(_ detail: String) -
     detail.contains("some received items were unavailable")
 }
 
+private func moonlightWindowsReceiveRevealResultDetail(
+    summary: String,
+    openerDetail: String,
+    remainingPathCount: Int
+) -> String {
+    let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedSummary.isEmpty else {
+        return openerDetail
+    }
+
+    let partial = moonlightWindowsReceiveDetailIsPartiallyMissing(openerDetail)
+    let itemText = remainingPathCount == 1 ? "item" : "items"
+    if openerDetail.contains("select") {
+        if partial {
+            return "Selected the remaining Windows receive \(itemText) from \(trimmedSummary); some received items were unavailable."
+        }
+        return "Selected \(trimmedSummary) in Windows."
+    }
+
+    if openerDetail.contains("containing folder") {
+        if partial {
+            return "Opened the containing folder for the remaining Windows receive \(itemText) from \(trimmedSummary); some received items were unavailable."
+        }
+        return "Opened the containing folder for \(trimmedSummary) in Windows."
+    }
+
+    if openerDetail.contains("different folders") {
+        if partial {
+            return "Opened the Windows receive folder for the remaining Windows receive \(itemText) from \(trimmedSummary) because they are in different folders; some received items were unavailable."
+        }
+        return "Opened the Windows receive folder for \(trimmedSummary) because the received items are in different folders."
+    }
+
+    if partial {
+        return "Opened the Windows receive folder for \(trimmedSummary); some received items were unavailable."
+    }
+    return "Opened the Windows receive folder for \(trimmedSummary)."
+}
+
 private func moonlightPrunedWindowsReceiveState(
     _ state: [String: String],
     remainingPaths: [String],
@@ -2260,19 +2299,11 @@ exit "${status}"
                     self?.pruneLatestWindowsReceiveState(to: remainingPaths)
                 }
                 let summary = self?.latestWindowsReceiveSummary ?? ""
-                let resultDetail: String
-                if summary.isEmpty {
-                    resultDetail = detail
-                } else if partial && detail.contains("select") {
-                    let itemText = remainingPaths.count == 1 ? "item" : "items"
-                    resultDetail = "Selected the remaining Windows receive \(itemText) for \(summary); some received items were unavailable."
-                } else if partial {
-                    resultDetail = "Opened the Windows receive folder for \(summary); some received items were unavailable."
-                } else if detail.contains("select") {
-                    resultDetail = "Selected \(summary) in Windows."
-                } else {
-                    resultDetail = "Opened the Windows receive folder for \(summary)."
-                }
+                let resultDetail = moonlightWindowsReceiveRevealResultDetail(
+                    summary: summary,
+                    openerDetail: detail,
+                    remainingPathCount: remainingPaths.count
+                )
                 self?.setBusy(false, status: status, detail: resultDetail)
             } else {
                 self?.clearQueuedFileDrops()
@@ -4094,6 +4125,46 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
         try expect(
             !moonlightWindowsReceiveDetailIsPartiallyMissing("asked Windows to open the containing folder for multiple received items"),
             "complete Windows reveal detail was treated as partial"
+        )
+        try expect(
+            moonlightWindowsReceiveRevealResultDetail(
+                summary: "alpha.txt",
+                openerDetail: "asked Windows to select the received item",
+                remainingPathCount: 1
+            ) == "Selected alpha.txt in Windows.",
+            "single Windows receive reveal detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveRevealResultDetail(
+                summary: "alpha.txt, beta.png",
+                openerDetail: "asked Windows to open the containing folder for multiple received items",
+                remainingPathCount: 2
+            ) == "Opened the containing folder for alpha.txt, beta.png in Windows.",
+            "multi-item Windows receive containing-folder detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveRevealResultDetail(
+                summary: "alpha.txt, beta.png",
+                openerDetail: "asked Windows to open the receive folder for multiple received items in different folders",
+                remainingPathCount: 2
+            ) == "Opened the Windows receive folder for alpha.txt, beta.png because the received items are in different folders.",
+            "multi-item Windows receive different-folder detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveRevealResultDetail(
+                summary: "alpha.txt, beta.png, gamma.mov",
+                openerDetail: "asked Windows to open the containing folder for remaining received items; some received items were unavailable",
+                remainingPathCount: 2
+            ) == "Opened the containing folder for the remaining Windows receive items from alpha.txt, beta.png, gamma.mov; some received items were unavailable.",
+            "partial multi-item Windows receive containing-folder detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveRevealResultDetail(
+                summary: "alpha.txt, beta.png, gamma.mov",
+                openerDetail: "asked Windows to open the receive folder for remaining received items in different folders; some received items were unavailable",
+                remainingPathCount: 2
+            ) == "Opened the Windows receive folder for the remaining Windows receive items from alpha.txt, beta.png, gamma.mov because they are in different folders; some received items were unavailable.",
+            "partial multi-item Windows receive different-folder detail was not explicit"
         )
         let prunedRevealState = moonlightPrunedWindowsReceiveState(
             [
