@@ -122,6 +122,27 @@ private func moonlightWindowsReceiveAutoRevealSuffix(
     return " \(detail)"
 }
 
+private func moonlightWindowsReceiveAvailabilityDetail(summary: String, pathCount: Int) -> String {
+    let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedSummary.isEmpty else {
+        if pathCount == 1 {
+            return "1 item is ready in the Windows receive folder."
+        }
+        if pathCount > 1 {
+            return "\(pathCount) items are ready in the Windows receive folder."
+        }
+        return "The latest files are ready in the Windows receive folder."
+    }
+
+    if pathCount == 1 {
+        return "\(trimmedSummary) is ready in the Windows receive folder."
+    }
+    if pathCount > 1 {
+        return "\(pathCount) items are ready in the Windows receive folder: \(trimmedSummary)."
+    }
+    return "Ready in the Windows receive folder: \(trimmedSummary)"
+}
+
 private func moonlightPrunedWindowsReceiveState(
     _ state: [String: String],
     remainingPaths: [String],
@@ -1508,17 +1529,7 @@ exit "${status}"
         pendingLatestWindowsReceiveSummary = ""
         pendingLatestWindowsReceivePathCount = 0
         statusLabel.stringValue = "Windows Files Received"
-        if summary.isEmpty {
-            if pathCount == 1 {
-                detailLabel.stringValue = "1 item is ready in the Windows receive folder."
-            } else if pathCount > 1 {
-                detailLabel.stringValue = "\(pathCount) items are ready in the Windows receive folder."
-            } else {
-                detailLabel.stringValue = "The latest files are ready in the Windows receive folder."
-            }
-        } else {
-            detailLabel.stringValue = "Ready in the Windows receive folder: \(summary)"
-        }
+        detailLabel.stringValue = moonlightWindowsReceiveAvailabilityDetail(summary: summary, pathCount: pathCount)
     }
 
     private func macFileClipboardFailureStateURL() -> URL {
@@ -4228,6 +4239,22 @@ private func runWindowsReceiveSummarySelfTest() -> Int32 {
                 expired: false
             ) == " Windows receive folder open failed: opener failed",
             "automatic Windows receive reveal failure suffix was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveAvailabilityDetail(summary: "", pathCount: 1) == "1 item is ready in the Windows receive folder.",
+            "single Windows receive availability fallback detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveAvailabilityDetail(summary: "", pathCount: 2) == "2 items are ready in the Windows receive folder.",
+            "multi-item Windows receive availability fallback detail was not explicit"
+        )
+        try expect(
+            moonlightWindowsReceiveAvailabilityDetail(summary: "alpha.txt", pathCount: 1) == "alpha.txt is ready in the Windows receive folder.",
+            "single Windows receive availability summary was not natural"
+        )
+        try expect(
+            moonlightWindowsReceiveAvailabilityDetail(summary: "alpha.txt, beta.png", pathCount: 2) == "2 items are ready in the Windows receive folder: alpha.txt, beta.png.",
+            "multi-item Windows receive availability summary was not count-aware"
         )
         let prunedRevealState = moonlightPrunedWindowsReceiveState(
             [

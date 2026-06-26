@@ -32,6 +32,7 @@ All notable changes to Moonlight Companion are tracked here and mirrored to GitH
 - The Companion status line now clears stale Mac and Windows file clipboard failure notices after the underlying clipboard issue is resolved, avoiding lingering false failure states.
 - Background Mac-to-Windows file clipboard sync now records confirmed TCP receive paths for the GUI's latest Windows receive action, and the open GUI watches that state so files copied from Finder are easier to reveal later.
 - The GUI status line now reports background Mac-to-Windows file clipboard receives while Companion is open, including receives that finish while another GUI operation is busy.
+- Background Mac-to-Windows receive notices now use item-count-aware status text when the confirmed Windows receive names are known.
 - Oversized background Mac-to-Windows file clipboards now use the same direct Windows receive-folder transfer as oversized GUI drops instead of being silently skipped at the clipboard payload limit.
 - Oversized direct Mac-to-Windows transfers now ask the Windows GUI agent to put the received file paths onto the Windows clipboard after the receive-folder copy, so large drops can still be pasted when clipboard handoff succeeds.
 - Oversized direct Mac-to-Windows clipboard handoff now updates the Windows agent's echo-prevention state, so received large files are not immediately exported back to Mac as a new Windows-to-Mac copy.
